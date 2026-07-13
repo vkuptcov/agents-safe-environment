@@ -5,5 +5,5 @@
 # Visual Studio Code
 .vscode/
 
-# Local launcher build
-/codex-safe
+# Local build artifacts
+/bin/

@@ -78,6 +78,12 @@ mkdir -p "${probe_home}"
 chown "${host_uid}:${host_gid}" "${probe_home}" /var/run/docker.sock
 chmod 0700 "${probe_home}"
 chmod 0600 /var/run/docker.sock
+install \
+    --owner="${host_uid}" \
+    --group="${host_gid}" \
+    --mode=0644 \
+    /etc/codex-safe/bashrc \
+    "${probe_home}/.bashrc"
 
 exec setpriv \
     --reuid="${host_uid}" \

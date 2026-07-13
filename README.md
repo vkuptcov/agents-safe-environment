@@ -45,14 +45,21 @@ filesystem, and Sysbox installation support this workload; run the smoke test be
 From the repository root:
 
 ```bash
-go build -o ./codex-safe ./cmd/codex-safe
+make build
 docker build -t codex-safe-mvp:local -f container/Dockerfile .
+```
+
+The launcher is written to `bin/codex-safe`. Run the local checks with:
+
+```bash
+make test
 ```
 
 The image pins Ubuntu 24.04 by digest. It also pins the official `crun` 1.28 binary by SHA-256 for the nested daemon.
 The nested runtime preserves the absolute bind-mount contract, including project paths that contain spaces.
 
 The environment includes Git, Docker Engine and CLI, Docker Compose V2, `make`, `less`, and `rg`.
+Interactive Bash sessions also load the system completion framework, including Make target completion.
 
 ## Run a probe
 
@@ -65,7 +72,7 @@ codex-safe [--project PATH] [--image REF] -- COMMAND [ARG...]
 Start an interactive shell in the current project:
 
 ```bash
-./codex-safe -- bash
+./bin/codex-safe -- bash
 ```
 
 Inside that shell, Compose uses the private nested Docker daemon:
@@ -79,13 +86,13 @@ When stdin and stdout are attached to a terminal, the launcher allocates a Docke
 For pipelines and redirected output it keeps stdin attached without forcing a TTY:
 
 ```bash
-printf 'git status --short\n' | ./codex-safe -- bash
+printf 'git status --short\n' | ./bin/codex-safe -- bash
 ```
 
 For example, run Git and inspect the private Docker daemon from the current project:
 
 ```bash
-./codex-safe --project . --image codex-safe-mvp:local -- \
+./bin/codex-safe --project . --image codex-safe-mvp:local -- \
     bash -lc 'git status --short && docker info --format "{{.ID}} {{.DefaultRuntime}}"'
 ```
 

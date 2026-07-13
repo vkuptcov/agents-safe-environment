@@ -19,6 +19,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         bash \
+        bash-completion \
         ca-certificates \
         docker-compose-v2 \
         docker.io \
@@ -30,6 +31,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY container/entrypoint.sh /usr/local/bin/codex-safe-entrypoint
+COPY container/bashrc /etc/codex-safe/bashrc
 COPY --from=crun --chmod=0755 /crun /usr/local/bin/crun
 
 RUN chmod 0755 /usr/local/bin/codex-safe-entrypoint \

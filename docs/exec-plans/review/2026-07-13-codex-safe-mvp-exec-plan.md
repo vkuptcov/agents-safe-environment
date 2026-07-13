@@ -217,6 +217,19 @@ Done when: Compose V2, `make`, `less`, and `rg` are available, and a Compose ser
 4. Prove the Compose-managed container is invisible to host Docker and leaves no object after outer shutdown.
 5. Document the included tools and Compose usage in the README.
 
+### Phase 12: Local Build Layout and Bash Completion
+
+Purpose: Standardize local build output and make interactive Make workflows behave like a normal development shell.
+Status: done
+Done when: builds write only to `bin/`, Make targets run the local checks, and Bash completes Make targets.
+
+1. Ignore `bin/` and make `bin/codex-safe` the documented local binary path.
+2. Add `Makefile` targets named `build` and `test`.
+3. Install `bash-completion` in the outer image.
+4. Copy a project-owned Bash startup file into the ephemeral probe home before starting the interactive command.
+5. Source the system completion framework from that startup file.
+6. Extend the smoke probe to load and verify the registered Make completion handler.
+
 ## Validation Gates
 
 - `gofmt -w cmd internal` completes, and a subsequent diff contains no Go formatting changes.
@@ -228,6 +241,7 @@ Done when: Compose V2, `make`, `less`, and `rg` are available, and a Compose ser
 - `tests/smoke/sysbox-linked-worktree.sh` passes on Linux with `sysbox-runc` registered.
 - A real PTY probe accepts `pwd`, `docker info`, and `exit`; a non-TTY pipe reaches `bash` stdin.
 - The smoke probe executes Compose V2, `make`, `less`, and `rg`, and manages a nested Compose service.
+- `make build` writes `bin/codex-safe`; `make test` passes; the smoke probe registers Make target completion.
 - `git diff --check` reports no whitespace errors.
 - `awk 'length($0) > 120 { print FILENAME ":" FNR ":" $0 }' README.md docs/*/*.md docs/*/*/*.md` prints nothing.
 - `grep -RIn '[[:blank:]]$' README.md docs` prints nothing.
@@ -280,3 +294,6 @@ Done when: Compose V2, `make`, `less`, and `rg` are available, and a Compose ser
 - 2026-07-13: Added Compose V2, `make`, `less`, and `rg` after the first interactive project run exposed the missing
   tools. The smoke harness now starts a real nested service with `docker compose up -d`, verifies host-daemon
   invisibility, and removes the Compose project before shutdown.
+- 2026-07-13: Standardized local builds under `bin/`, added `make build` and `make test`, and enabled Make target
+  completion through a project-owned `.bashrc` in the ephemeral home. The smoke probe now requires the `_make`
+  completion handler to load successfully, and an interactive PTY probe expands `make bu<Tab>` to `make build`.

@@ -152,6 +152,10 @@ for expected_command in less make rg; do
     fi
 done
 docker compose version >/dev/null
+if ! bash -ic '_completion_loader make; complete -p make' >/dev/null 2>&1; then
+    echo "smoke probe: Make completion is not registered" >&2
+    exit 1
+fi
 
 git -c safe.directory="${linked_worktree}" -C "${linked_worktree}" status --short >/dev/null
 printf 'staged by Sysbox probe\n' >"${linked_worktree}/phase7-staged.txt"
