@@ -97,7 +97,7 @@ Done when: tests prove mount modes, path identity, ordering, duplicate removal, 
 ### Phase 3: Docker Invocation
 
 Purpose: Turn a mount plan and probe command into a fail-closed Sysbox launch.
-Status: to be done
+Status: done
 Done when: tests prove the invocation uses Sysbox, omits unsafe access, and preserves the probe argv and exit status.
 
 1. Add `internal/launcher/docker.go` with injectable command execution for tests.
