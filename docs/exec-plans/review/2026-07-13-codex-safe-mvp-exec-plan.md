@@ -1,6 +1,6 @@
 # Exec Plan: Codex Safe Infrastructure MVP
 
-- Status: active
+- Status: in review
 - Created: 2026-07-13
 - Design: [`docs/design-docs/codex-safe.md`](../../design-docs/codex-safe.md)
 - Scope:
@@ -28,14 +28,14 @@ interactive terminal behavior, and production hardening.
 - Focused Go tests and the real-host Sysbox smoke test pass.
 - The README documents prerequisites, build steps, probe usage, evidence, and intentional omissions.
 
-## Current Baseline
+## Starting Baseline
 
 The repository contains the proposed design document but no Go module, launcher, container image, tests, or user-facing
 setup instructions. The available local toolchain is Go 1.26.5 and Git 2.43.0.
 
-The accessible host runs Docker Engine 28.3.3 with `overlay2` and cgroup v2. Docker has `sysbox-runc` registered, and
-the installed runtime reports Sysbox CE 0.7.0. Actual Sysbox container startup, mount behavior, and nested Docker remain
-unverified until the real-host smoke gates in Phases 7 and 8 run.
+The accessible host ran Docker Engine 28.3.3 with `overlay2` and cgroup v2. Docker had `sysbox-runc` registered, and
+the installed runtime reported Sysbox CE 0.7.0. Sysbox container startup, mount behavior, and nested Docker were still
+unverified at the start of implementation.
 
 ## Implementation Decisions
 
@@ -184,7 +184,7 @@ Done when: nested state is absent from the host daemon and its worktree marker p
 ### Phase 9: MVP Documentation
 
 Purpose: Make the infrastructure proof reproducible without presenting it as a finished Codex launcher.
-Status: to be done
+Status: done
 Done when: a maintainer can build, run, verify, and correctly interpret the MVP from the README alone.
 
 1. Add `README.md` with Linux, Docker, Git, Go, and Sysbox prerequisites.
@@ -230,4 +230,18 @@ Done when: a maintainer can build, run, verify, and correctly interpret the MVP 
 
 ## Progress Notes
 
-- Add dated notes before moving this plan to `completed/`, including deviations from this plan and their rationale.
+- 2026-07-13: Implemented Phases 1 through 8 as separate commits and kept the launcher dependency-free outside the Go
+  standard library. The host-side launcher never builds a shell command and never mounts the host Docker socket.
+- 2026-07-13: The first real Sysbox write probe exposed host-ownership and nested-socket access requirements. The
+  entrypoint now keeps `dockerd` as container root, grants only the invoking UID/GID access to its private socket, and
+  runs the probe with that identity and an ephemeral home directory. The worktree, common Git directory, and nested
+  marker remained host-editable in the final smoke test.
+- 2026-07-13: Ubuntu's nested `runc` 1.3.4 could not bind a Sysbox mount to a target path containing spaces and failed
+  while reapplying `MS_NOATIME`. The image now pins official `crun` 1.28 binaries by SHA-256 for `amd64` and `arm64`
+  and uses `crun` as the nested daemon's default runtime. This preserved identical absolute paths without a mount
+  bridge or a less-isolated outer container.
+- 2026-07-13: All validation gates passed on Docker Engine 28.3.3 with Sysbox CE 0.7.0, cgroup v2, and `overlay2`.
+  The final smoke test proved the Sysbox runtime, mount modes, read-only primary checkout, writable linked-worktree
+  Git metadata, distinct daemon IDs, host-sentinel isolation, nested bind access, host UID/GID ownership, and cleanup.
+- 2026-07-13: Added the MVP README and moved this plan to review. Codex installation, `~/.codex`, resource limits,
+  terminal integration, and production image policy remain intentionally deferred to later plans.

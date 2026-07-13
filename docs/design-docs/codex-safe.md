@@ -411,7 +411,7 @@ Before the first release, inspect the actual outer-container configuration throu
 ## Implementation Plan
 
 The minimal infrastructure proof is tracked in
-[`2026-07-13-codex-safe-mvp-exec-plan.md`](../exec-plans/active/2026-07-13-codex-safe-mvp-exec-plan.md).
+[`2026-07-13-codex-safe-mvp-exec-plan.md`](../exec-plans/review/2026-07-13-codex-safe-mvp-exec-plan.md).
 
 ## References
 
