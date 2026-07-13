@@ -123,7 +123,7 @@ Done when: the built binary validates its flags, invokes the launcher, and retur
 ### Phase 5: Nested Docker Image
 
 Purpose: Provide a reproducible outer image that starts a private Docker daemon before the probe.
-Status: to be done
+Status: done
 Done when: the image starts its nested daemon with bounded readiness and executes the probe as the foreground command.
 
 1. Add `container/Dockerfile` based on Ubuntu 24.04 and pin the resolved base digest.
