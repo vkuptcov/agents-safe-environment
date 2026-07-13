@@ -80,7 +80,7 @@ Done when: the Go launcher describes both supported repository layouts without s
 ### Phase 2: Mount Planning
 
 Purpose: Convert discovered Git paths into a minimal and deterministic mount set.
-Status: to be done
+Status: done
 Done when: tests prove mount modes, path identity, ordering, duplicate removal, and conflict rejection.
 
 1. Add `internal/launcher/plan.go` with typed `Mount` and `Plan` values.
