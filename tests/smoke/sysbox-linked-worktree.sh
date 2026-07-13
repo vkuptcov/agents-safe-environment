@@ -10,6 +10,9 @@ nested_directory="${linked_worktree}/nested directory"
 probe_script="${linked_worktree}/smoke-probe.sh"
 ready_marker="${linked_worktree}/.codex-safe-ready-${run_id}"
 continue_marker="${linked_worktree}/.codex-safe-continue-${run_id}"
+phase7_marker="${linked_worktree}/.codex-safe-phase7-${run_id}"
+staged_relative="phase7-staged.txt"
+staged_file="${linked_worktree}/${staged_relative}"
 binary="${temp_root}/codex-safe"
 outer_log="${temp_root}/outer.log"
 sentinel_name="codex-safe-host-sentinel-${run_id}"
@@ -18,6 +21,7 @@ outer_container=""
 
 cleanup() {
     local status=$?
+    local cleanup_failed=false
     trap - EXIT INT TERM
     set +e
 
@@ -31,6 +35,14 @@ cleanup() {
     fi
     docker rm --force "${sentinel_name}" >/dev/null 2>&1 || true
     rm -rf "${temp_root}"
+
+    if [[ -e "${temp_root}" ]]; then
+        echo "smoke: cleanup could not remove ${temp_root}" >&2
+        cleanup_failed=true
+    fi
+    if [[ "${cleanup_failed}" == true ]] && (( status == 0 )); then
+        status=1
+    fi
 
     exit "${status}"
 }
@@ -76,6 +88,30 @@ find_outer_container() {
     return 1
 }
 
+assert_equal() {
+    local actual=$1
+    local expected=$2
+    local description=$3
+
+    if [[ "${actual}" != "${expected}" ]]; then
+        echo "smoke: ${description}: got ${actual@Q}, expected ${expected@Q}" >&2
+        return 1
+    fi
+}
+
+assert_report_line() {
+    local expected=$1
+    local report=$2
+    local description=$3
+
+    if ! grep --fixed-strings --line-regexp --quiet "${expected}" <<<"${report}"; then
+        echo "smoke: missing ${description}: ${expected}" >&2
+        echo "smoke: actual report:" >&2
+        printf '%s\n' "${report}" >&2
+        return 1
+    fi
+}
+
 mkdir -p "${primary_repo}"
 git init -b main "${primary_repo}" >/dev/null
 git -C "${primary_repo}" config user.name "Codex Safe Smoke"
@@ -92,6 +128,30 @@ set -Eeuo pipefail
 
 ready_marker=$1
 continue_marker=$2
+linked_worktree=$3
+primary_repo=$4
+phase7_marker=$5
+run_id=$6
+
+git -c safe.directory="${linked_worktree}" -C "${linked_worktree}" status --short >/dev/null
+printf 'staged by Sysbox probe\n' >"${linked_worktree}/phase7-staged.txt"
+git -c safe.directory="${linked_worktree}" -C "${linked_worktree}" add phase7-staged.txt
+
+common_git_dir="$(
+    git -c safe.directory="${linked_worktree}" \
+        -C "${linked_worktree}" \
+        rev-parse --path-format=absolute --git-common-dir
+)"
+common_marker="${common_git_dir}/codex-safe-write-${run_id}"
+printf 'common Git directory is writable\n' >"${common_marker}"
+rm -f "${common_marker}"
+
+if printf 'forbidden write\n' >>"${primary_repo}/baseline.txt" 2>/tmp/primary-write-error; then
+    echo "smoke probe: primary checkout unexpectedly accepted a write" >&2
+    exit 1
+fi
+
+printf 'phase7 complete\n' >"${phase7_marker}"
 
 printf 'ready\n' >"${ready_marker}"
 for (( attempt = 1; attempt <= 120; attempt++ )); do
@@ -127,7 +187,13 @@ docker run \
     --project "${nested_directory}" \
     --image codex-safe-mvp:local \
     -- \
-    "${probe_script}" "${ready_marker}" "${continue_marker}" \
+    "${probe_script}" \
+    "${ready_marker}" \
+    "${continue_marker}" \
+    "${linked_worktree}" \
+    "${primary_repo}" \
+    "${phase7_marker}" \
+    "${run_id}" \
     >"${outer_log}" 2>&1 &
 launcher_pid=$!
 
@@ -145,6 +211,40 @@ if [[ -z "${outer_container}" ]]; then
 fi
 
 echo "smoke: outer container ${outer_container} reached the inspection barrier"
+
+runtime="$(docker inspect --format '{{.HostConfig.Runtime}}' "${outer_container}")"
+privileged="$(docker inspect --format '{{.HostConfig.Privileged}}' "${outer_container}")"
+working_dir="$(docker inspect --format '{{.Config.WorkingDir}}' "${outer_container}")"
+mount_report="$(
+    docker inspect \
+        --format '{{range .Mounts}}{{printf "%s|%s|%t|%s\n" .Source .Destination .RW .Propagation}}{{end}}' \
+        "${outer_container}"
+)"
+
+assert_equal "${runtime}" "sysbox-runc" "outer runtime"
+assert_equal "${privileged}" "false" "outer privileged mode"
+assert_equal "${working_dir}" "${nested_directory}" "outer working directory"
+assert_report_line \
+    "${primary_repo}|${primary_repo}|false|rprivate" \
+    "${mount_report}" \
+    "read-only primary checkout mount"
+assert_report_line \
+    "${primary_repo}/.git|${primary_repo}/.git|true|rprivate" \
+    "${mount_report}" \
+    "read-write common Git mount"
+assert_report_line \
+    "${linked_worktree}|${linked_worktree}|true|rprivate" \
+    "${mount_report}" \
+    "read-write linked worktree mount"
+if grep --fixed-strings --quiet '/var/run/docker.sock' <<<"${mount_report}"; then
+    echo "smoke: outer container unexpectedly mounts the host Docker socket" >&2
+    exit 1
+fi
+if [[ ! -f "${phase7_marker}" ]]; then
+    echo "smoke: probe did not complete Phase 7 assertions" >&2
+    exit 1
+fi
+
 touch "${continue_marker}"
 
 set +e
@@ -156,6 +256,21 @@ if (( launcher_status != 0 )); then
     echo "smoke: launcher exited with status ${launcher_status}" >&2
     cat "${outer_log}" >&2
     exit "${launcher_status}"
+fi
+
+staged_paths="$(git -C "${linked_worktree}" diff --cached --name-only)"
+assert_report_line "${staged_relative}" "${staged_paths}" "staged linked-worktree file"
+assert_equal "$(cat "${staged_file}")" "staged by Sysbox probe" "staged file contents"
+assert_equal "$(cat "${primary_repo}/baseline.txt")" "primary baseline" "primary checkout baseline"
+bad_owner="$(
+    find "${linked_worktree}" "${primary_repo}/.git" \
+        ! -uid "$(id -u)" \
+        -print \
+        -quit
+)"
+if [[ -n "${bad_owner}" ]]; then
+    echo "smoke: Sysbox write left a path not owned by the invoking user: ${bad_owner}" >&2
+    exit 1
 fi
 
 echo "smoke: harness completed"

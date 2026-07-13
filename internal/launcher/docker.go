@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -33,6 +34,8 @@ type Docker struct {
 	Stdin         io.Reader
 	Stdout        io.Writer
 	Stderr        io.Writer
+	HostUID       int
+	HostGID       int
 	NameGenerator func() (string, error)
 }
 
@@ -45,6 +48,8 @@ func NewDocker() *Docker {
 		Stdin:         os.Stdin,
 		Stdout:        os.Stdout,
 		Stderr:        os.Stderr,
+		HostUID:       os.Getuid(),
+		HostGID:       os.Getgid(),
 		NameGenerator: randomSessionName,
 	}
 }
@@ -69,7 +74,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, probe
 		return err
 	}
 
-	args, err := BuildDockerArgs(plan, image, probe, sessionName)
+	args, err := BuildDockerArgs(plan, image, probe, sessionName, docker.HostUID, docker.HostGID)
 	if err != nil {
 		return err
 	}
@@ -101,6 +106,9 @@ func (docker *Docker) validateConfiguration() error {
 	}
 	if docker.NameGenerator == nil {
 		return errors.New("session name generator is nil")
+	}
+	if docker.HostUID < 0 || docker.HostGID < 0 {
+		return fmt.Errorf("invalid host identity %d:%d", docker.HostUID, docker.HostGID)
 	}
 	return nil
 }
@@ -137,7 +145,14 @@ func (docker *Docker) preflight(ctx context.Context, image string) error {
 }
 
 // BuildDockerArgs returns argv for one outer-container launch without invoking a shell.
-func BuildDockerArgs(plan Plan, image string, probe []string, sessionName string) ([]string, error) {
+func BuildDockerArgs(
+	plan Plan,
+	image string,
+	probe []string,
+	sessionName string,
+	hostUID int,
+	hostGID int,
+) ([]string, error) {
 	if strings.TrimSpace(image) == "" {
 		return nil, errors.New("container image is required")
 	}
@@ -146,6 +161,9 @@ func BuildDockerArgs(plan Plan, image string, probe []string, sessionName string
 	}
 	if err := validateSessionName(sessionName); err != nil {
 		return nil, err
+	}
+	if hostUID < 0 || hostGID < 0 {
+		return nil, fmt.Errorf("invalid host identity %d:%d", hostUID, hostGID)
 	}
 	if err := validateMountPath("working directory", plan.WorkingDir); err != nil {
 		return nil, err
@@ -164,6 +182,10 @@ func BuildDockerArgs(plan Plan, image string, probe []string, sessionName string
 		sessionName,
 		"--label",
 		sessionLabel + "=" + sessionName,
+		"--env",
+		"CODEX_SAFE_HOST_UID=" + strconv.Itoa(hostUID),
+		"--env",
+		"CODEX_SAFE_HOST_GID=" + strconv.Itoa(hostGID),
 		"--workdir",
 		plan.WorkingDir,
 	}

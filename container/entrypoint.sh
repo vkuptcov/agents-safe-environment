@@ -73,7 +73,19 @@ if [[ "${ready}" != true ]]; then
     exit 1
 fi
 
-"$@" &
+readonly host_uid="${CODEX_SAFE_HOST_UID:-}"
+readonly host_gid="${CODEX_SAFE_HOST_GID:-}"
+if [[ ! "${host_uid}" =~ ^[0-9]+$ ]] || [[ ! "${host_gid}" =~ ^[0-9]+$ ]]; then
+    echo "codex-safe-entrypoint: CODEX_SAFE_HOST_UID and CODEX_SAFE_HOST_GID must be numeric" >&2
+    exit 2
+fi
+
+setpriv \
+    --reuid="${host_uid}" \
+    --regid="${host_gid}" \
+    --clear-groups \
+    -- \
+    "$@" &
 probe_pid=$!
 
 set +e

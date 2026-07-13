@@ -22,7 +22,7 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 	}
 	probe := []string{"printf", "%s\\n", "value with spaces; $(not-a-shell)"}
 
-	args, err := BuildDockerArgs(plan, "codex-safe-mvp:local", probe, "codex-safe-test")
+	args, err := BuildDockerArgs(plan, "codex-safe-mvp:local", probe, "codex-safe-test", 1000, 1000)
 	if err != nil {
 		t.Fatalf("BuildDockerArgs() error = %v", err)
 	}
@@ -35,6 +35,10 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 		"codex-safe-test",
 		"--label",
 		"codex-safe.session=codex-safe-test",
+		"--env",
+		"CODEX_SAFE_HOST_UID=1000",
+		"--env",
+		"CODEX_SAFE_HOST_GID=1000",
 		"--workdir",
 		plan.WorkingDir,
 	}
@@ -71,7 +75,7 @@ func TestBuildDockerArgsIncludesMountModesInOrder(t *testing.T) {
 			{Source: "/primary/.git", Target: "/primary/.git"},
 			{Source: "/worktree", Target: "/worktree"},
 		},
-	}, "image", []string{"true"}, "session")
+	}, "image", []string{"true"}, "session", 1000, 1000)
 	if err != nil {
 		t.Fatalf("BuildDockerArgs() error = %v", err)
 	}
@@ -211,9 +215,11 @@ func TestDockerLaunchRejectsUnsupportedOS(t *testing.T) {
 
 func testDocker(runner CommandRunner) *Docker {
 	return &Docker{
-		Binary: "docker",
-		GOOS:   "linux",
-		Runner: runner,
+		Binary:  "docker",
+		GOOS:    "linux",
+		Runner:  runner,
+		HostUID: 1000,
+		HostGID: 1000,
 		NameGenerator: func() (string, error) {
 			return "codex-safe-test", nil
 		},

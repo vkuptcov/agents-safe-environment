@@ -153,7 +153,7 @@ Done when: the harness starts a linked-worktree probe, pauses it for inspection,
 ### Phase 7: Sysbox and Worktree Proof
 
 Purpose: Prove the live outer container has the intended isolation and Git mount behavior.
-Status: to be done
+Status: done
 Done when: runtime inspection and in-container assertions prove Sysbox isolation and linked-worktree Git access.
 
 1. Inspect the live outer container and assert:
