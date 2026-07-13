@@ -205,6 +205,18 @@ Done when: a `bash` probe stays open in a terminal, accepts commands, and exits 
 4. Add unit coverage for TTY and non-TTY Docker arguments.
 5. Verify a real PTY session and piped stdin against the target linked-worktree project.
 
+### Phase 11: Compose and Shell Tooling
+
+Purpose: Provide the basic project commands required by the first real interactive workflow.
+Status: done
+Done when: Compose V2, `make`, `less`, and `rg` are available, and a Compose service starts on the nested daemon.
+
+1. Install Ubuntu's `docker-compose-v2`, `make`, `less`, and `ripgrep` packages in the outer image.
+2. Verify each command exists in the real-host smoke probe.
+3. Start and stop an Alpine service with `docker compose up -d` and `docker compose down`.
+4. Prove the Compose-managed container is invisible to host Docker and leaves no object after outer shutdown.
+5. Document the included tools and Compose usage in the README.
+
 ## Validation Gates
 
 - `gofmt -w cmd internal` completes, and a subsequent diff contains no Go formatting changes.
@@ -215,6 +227,7 @@ Done when: a `bash` probe stays open in a terminal, accepts commands, and exits 
 - `docker build -t codex-safe-mvp:local -f container/Dockerfile .` succeeds.
 - `tests/smoke/sysbox-linked-worktree.sh` passes on Linux with `sysbox-runc` registered.
 - A real PTY probe accepts `pwd`, `docker info`, and `exit`; a non-TTY pipe reaches `bash` stdin.
+- The smoke probe executes Compose V2, `make`, `less`, and `rg`, and manages a nested Compose service.
 - `git diff --check` reports no whitespace errors.
 - `awk 'length($0) > 120 { print FILENAME ":" FNR ":" $0 }' README.md docs/*/*.md docs/*/*/*.md` prints nothing.
 - `grep -RIn '[[:blank:]]$' README.md docs` prints nothing.
@@ -264,3 +277,6 @@ Done when: a `bash` probe stays open in a terminal, accepts commands, and exits 
   stdin and the entrypoint started the probe as a background child. Phase 10 added automatic PTY detection,
   unconditional stdin attachment, and a foreground `exec` after daemon readiness. The exact reported project path
   passed interactive input, nested `docker info`, Ctrl-C, clean `exit`, piped input, and the full smoke harness.
+- 2026-07-13: Added Compose V2, `make`, `less`, and `rg` after the first interactive project run exposed the missing
+  tools. The smoke harness now starts a real nested service with `docker compose up -d`, verifies host-daemon
+  invisibility, and removes the Compose project before shutdown.

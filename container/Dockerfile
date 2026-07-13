@@ -20,8 +20,12 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         bash \
         ca-certificates \
+        docker-compose-v2 \
         docker.io \
         git \
+        less \
+        make \
+        ripgrep \
         tini \
     && rm -rf /var/lib/apt/lists/*
 

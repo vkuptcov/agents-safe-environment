@@ -17,6 +17,7 @@ staged_file="${linked_worktree}/${staged_relative}"
 nested_marker="${linked_worktree}/phase8-nested-marker.txt"
 nested_daemon_id_file="${linked_worktree}/.codex-safe-nested-daemon-${run_id}"
 nested_name="codex-safe-nested-${run_id}"
+compose_name="codex-safe-compose-${run_id}"
 nested_image="alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
 binary="${temp_root}/codex-safe"
 outer_log="${temp_root}/outer.log"
@@ -144,6 +145,14 @@ nested_marker=${10}
 nested_daemon_id_file=${11}
 phase8_marker=${12}
 
+for expected_command in less make rg; do
+    if ! command -v "${expected_command}" >/dev/null; then
+        echo "smoke probe: missing ${expected_command}" >&2
+        exit 1
+    fi
+done
+docker compose version >/dev/null
+
 git -c safe.directory="${linked_worktree}" -C "${linked_worktree}" status --short >/dev/null
 printf 'staged by Sysbox probe\n' >"${linked_worktree}/phase7-staged.txt"
 git -c safe.directory="${linked_worktree}" -C "${linked_worktree}" add phase7-staged.txt
@@ -205,12 +214,42 @@ if [[ ! -e "${nested_marker}" ]]; then
     exit 1
 fi
 
+compose_file="${linked_worktree}/.codex-safe-compose-${run_id}.yaml"
+compose_project="codex-safe-${run_id}"
+compose_name="codex-safe-compose-${run_id}"
+cat >"${compose_file}" <<'COMPOSE'
+services:
+  smoke:
+    image: ${CODEX_SAFE_COMPOSE_IMAGE}
+    container_name: ${CODEX_SAFE_COMPOSE_NAME}
+    command: ["/bin/sleep", "300"]
+COMPOSE
+CODEX_SAFE_COMPOSE_IMAGE="${nested_image}" \
+CODEX_SAFE_COMPOSE_NAME="${compose_name}" \
+docker compose \
+    --project-name "${compose_project}" \
+    --file "${compose_file}" \
+    up --detach \
+    >/dev/null
+if [[ "$(docker inspect --format '{{.State.Running}}' "${compose_name}")" != true ]]; then
+    echo "smoke probe: Compose service is not running" >&2
+    exit 1
+fi
+
 printf 'phase8 complete\n' >"${phase8_marker}"
 
 printf 'ready\n' >"${ready_marker}"
 for (( attempt = 1; attempt <= 120; attempt++ )); do
     if [[ -e "${continue_marker}" ]]; then
+        CODEX_SAFE_COMPOSE_IMAGE="${nested_image}" \
+        CODEX_SAFE_COMPOSE_NAME="${compose_name}" \
+        docker compose \
+            --project-name "${compose_project}" \
+            --file "${compose_file}" \
+            down --remove-orphans \
+            >/dev/null
         docker rm --force "${nested_name}" >/dev/null
+        rm -f "${compose_file}"
         exit 0
     fi
     sleep 1
@@ -327,6 +366,12 @@ host_nested_match="$(
         --format '{{.Names}}'
 )"
 assert_equal "${host_nested_match}" "" "nested container visibility in host Docker"
+host_compose_match="$(
+    docker ps -a \
+        --filter "name=^${compose_name}$" \
+        --format '{{.Names}}'
+)"
+assert_equal "${host_compose_match}" "" "Compose container visibility in host Docker"
 assert_equal \
     "$(docker inspect --format '{{.State.Running}}' "${sentinel_name}")" \
     "true" \
@@ -369,6 +414,12 @@ host_nested_match="$(
         --format '{{.Names}}'
 )"
 assert_equal "${host_nested_match}" "" "nested object after outer shutdown"
+host_compose_match="$(
+    docker ps -a \
+        --filter "name=^${compose_name}$" \
+        --format '{{.Names}}'
+)"
+assert_equal "${host_compose_match}" "" "Compose object after outer shutdown"
 bad_owner="$(
     find "${linked_worktree}" "${primary_repo}/.git" \
         ! -uid "$(id -u)" \
