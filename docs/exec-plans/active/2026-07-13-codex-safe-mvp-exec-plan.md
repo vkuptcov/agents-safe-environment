@@ -111,7 +111,7 @@ Done when: tests prove the invocation uses Sysbox, omits unsafe access, and pres
 ### Phase 4: Go CLI
 
 Purpose: Expose the MVP discovery and launch flow through one small Go command.
-Status: to be done
+Status: done
 Done when: the built binary validates its flags, invokes the launcher, and returns actionable errors and exit codes.
 
 1. Add `cmd/codex-safe/main.go` as a thin layer over discovery, planning, preflight, and execution.
