@@ -170,7 +170,7 @@ Done when: runtime inspection and in-container assertions prove Sysbox isolation
 ### Phase 8: Nested Docker Proof
 
 Purpose: Prove the inner daemon is independent and can pass the mounted worktree to a nested container.
-Status: to be done
+Status: done
 Done when: nested state is absent from the host daemon and its worktree marker persists with usable ownership.
 
 1. Compare host and nested daemon IDs and require them to differ.

@@ -11,8 +11,13 @@ probe_script="${linked_worktree}/smoke-probe.sh"
 ready_marker="${linked_worktree}/.codex-safe-ready-${run_id}"
 continue_marker="${linked_worktree}/.codex-safe-continue-${run_id}"
 phase7_marker="${linked_worktree}/.codex-safe-phase7-${run_id}"
+phase8_marker="${linked_worktree}/.codex-safe-phase8-${run_id}"
 staged_relative="phase7-staged.txt"
 staged_file="${linked_worktree}/${staged_relative}"
+nested_marker="${linked_worktree}/phase8-nested-marker.txt"
+nested_daemon_id_file="${linked_worktree}/.codex-safe-nested-daemon-${run_id}"
+nested_name="codex-safe-nested-${run_id}"
+nested_image="alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
 binary="${temp_root}/codex-safe"
 outer_log="${temp_root}/outer.log"
 sentinel_name="codex-safe-host-sentinel-${run_id}"
@@ -132,6 +137,12 @@ linked_worktree=$3
 primary_repo=$4
 phase7_marker=$5
 run_id=$6
+sentinel_name=$7
+nested_image=$8
+nested_name=$9
+nested_marker=${10}
+nested_daemon_id_file=${11}
+phase8_marker=${12}
 
 git -c safe.directory="${linked_worktree}" -C "${linked_worktree}" status --short >/dev/null
 printf 'staged by Sysbox probe\n' >"${linked_worktree}/phase7-staged.txt"
@@ -153,9 +164,53 @@ fi
 
 printf 'phase7 complete\n' >"${phase7_marker}"
 
+nested_daemon_id="$(docker info --format '{{.ID}}')"
+if [[ -z "${nested_daemon_id}" ]]; then
+    echo "smoke probe: nested Docker daemon ID is empty" >&2
+    exit 1
+fi
+if [[ "$(docker info --format '{{.DefaultRuntime}}')" != crun ]]; then
+    echo "smoke probe: nested Docker does not use crun by default" >&2
+    exit 1
+fi
+printf '%s\n' "${nested_daemon_id}" >"${nested_daemon_id_file}"
+
+if docker ps -a --format '{{.Names}}' | grep --fixed-strings --line-regexp --quiet "${sentinel_name}"; then
+    echo "smoke probe: nested Docker can see the host sentinel" >&2
+    exit 1
+fi
+
+docker run \
+    --detach \
+    --name "${nested_name}" \
+    --user "${CODEX_SAFE_HOST_UID}:${CODEX_SAFE_HOST_GID}" \
+    --mount "type=bind,source=${linked_worktree},target=${linked_worktree}" \
+    "${nested_image}" \
+    /bin/sh -c 'printf "nested marker\n" >"$1"; while [ ! -e "$2" ]; do sleep 1; done' \
+    sh "${nested_marker}" "${continue_marker}" \
+    >/dev/null
+
+for (( attempt = 1; attempt <= 60; attempt++ )); do
+    if [[ -e "${nested_marker}" ]]; then
+        break
+    fi
+    if ! docker inspect "${nested_name}" >/dev/null 2>&1; then
+        echo "smoke probe: nested container exited before creating its marker" >&2
+        exit 1
+    fi
+    sleep 1
+done
+if [[ ! -e "${nested_marker}" ]]; then
+    echo "smoke probe: timed out waiting for nested marker" >&2
+    exit 1
+fi
+
+printf 'phase8 complete\n' >"${phase8_marker}"
+
 printf 'ready\n' >"${ready_marker}"
 for (( attempt = 1; attempt <= 120; attempt++ )); do
     if [[ -e "${continue_marker}" ]]; then
+        docker rm --force "${nested_name}" >/dev/null
         exit 0
     fi
     sleep 1
@@ -182,6 +237,7 @@ docker run \
     codex-safe-mvp:local \
     300 \
     >/dev/null
+host_daemon_id="$(docker info --format '{{.ID}}')"
 
 "${binary}" \
     --project "${nested_directory}" \
@@ -194,6 +250,12 @@ docker run \
     "${primary_repo}" \
     "${phase7_marker}" \
     "${run_id}" \
+    "${sentinel_name}" \
+    "${nested_image}" \
+    "${nested_name}" \
+    "${nested_marker}" \
+    "${nested_daemon_id_file}" \
+    "${phase8_marker}" \
     >"${outer_log}" 2>&1 &
 launcher_pid=$!
 
@@ -244,6 +306,41 @@ if [[ ! -f "${phase7_marker}" ]]; then
     echo "smoke: probe did not complete Phase 7 assertions" >&2
     exit 1
 fi
+if [[ ! -f "${phase8_marker}" ]]; then
+    echo "smoke: probe did not complete Phase 8 assertions" >&2
+    exit 1
+fi
+
+nested_daemon_id="$(cat "${nested_daemon_id_file}")"
+if [[ "${nested_daemon_id}" == "${host_daemon_id}" ]]; then
+    echo "smoke: nested and host Docker daemon IDs are identical" >&2
+    exit 1
+fi
+if [[ -z "${nested_daemon_id}" ]]; then
+    echo "smoke: nested Docker daemon ID is empty" >&2
+    exit 1
+fi
+
+host_nested_match="$(
+    docker ps -a \
+        --filter "name=^${nested_name}$" \
+        --format '{{.Names}}'
+)"
+assert_equal "${host_nested_match}" "" "nested container visibility in host Docker"
+assert_equal \
+    "$(docker inspect --format '{{.State.Running}}' "${sentinel_name}")" \
+    "true" \
+    "host sentinel state"
+assert_equal "$(cat "${nested_marker}")" "nested marker" "nested marker contents"
+assert_equal \
+    "$(stat -c '%u:%g' "${nested_marker}")" \
+    "$(id -u):$(id -g)" \
+    "nested marker ownership"
+printf 'host edit\n' >>"${nested_marker}"
+assert_equal \
+    "$(tail -n 1 "${nested_marker}")" \
+    "host edit" \
+    "host edit of nested marker"
 
 touch "${continue_marker}"
 
@@ -262,6 +359,16 @@ staged_paths="$(git -C "${linked_worktree}" diff --cached --name-only)"
 assert_report_line "${staged_relative}" "${staged_paths}" "staged linked-worktree file"
 assert_equal "$(cat "${staged_file}")" "staged by Sysbox probe" "staged file contents"
 assert_equal "$(cat "${primary_repo}/baseline.txt")" "primary baseline" "primary checkout baseline"
+assert_equal \
+    "$(docker inspect --format '{{.State.Running}}' "${sentinel_name}")" \
+    "true" \
+    "host sentinel state after nested cleanup"
+host_nested_match="$(
+    docker ps -a \
+        --filter "name=^${nested_name}$" \
+        --format '{{.Names}}'
+)"
+assert_equal "${host_nested_match}" "" "nested object after outer shutdown"
 bad_owner="$(
     find "${linked_worktree}" "${primary_repo}/.git" \
         ! -uid "$(id -u)" \

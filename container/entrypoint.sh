@@ -41,8 +41,12 @@ trap 'forward_signal INT 130' INT
 trap 'forward_signal TERM 143' TERM
 
 mkdir -p /run/docker /var/lib/docker
+# The nested runtime must preserve Sysbox bind mounts at their exact paths,
+# including targets with spaces. The image pins crun for that compatibility.
 dockerd \
+    --add-runtime=crun=/usr/local/bin/crun \
     --data-root=/var/lib/docker \
+    --default-runtime=crun \
     --host=unix:///var/run/docker.sock \
     >"${dockerd_log}" 2>&1 &
 dockerd_pid=$!
@@ -80,11 +84,18 @@ if [[ ! "${host_uid}" =~ ^[0-9]+$ ]] || [[ ! "${host_gid}" =~ ^[0-9]+$ ]]; then
     exit 2
 fi
 
+readonly probe_home=/tmp/codex-safe-home
+mkdir -p "${probe_home}"
+chown "${host_uid}:${host_gid}" "${probe_home}" /var/run/docker.sock
+chmod 0700 "${probe_home}"
+chmod 0600 /var/run/docker.sock
+
 setpriv \
     --reuid="${host_uid}" \
     --regid="${host_gid}" \
     --clear-groups \
     -- \
+    env HOME="${probe_home}" \
     "$@" &
 probe_pid=$!
 
