@@ -4,3 +4,6 @@
 
 # Visual Studio Code
 .vscode/
+
+# Local launcher build
+/codex-safe

@@ -15,7 +15,8 @@ Build the smallest Go-based vertical slice that proves a linked Git worktree can
 inside a Sysbox container and use an isolated nested Docker daemon without exposing the host Docker socket.
 
 This plan validates the two highest-risk infrastructure assumptions before adding Codex installation, credentials,
-interactive terminal behavior, and production hardening.
+and production hardening. Minimal interactive terminal attachment was added after review feedback exposed that a bare
+`bash` probe received no stdin and exited immediately.
 
 ## Done Criteria
 
@@ -26,6 +27,7 @@ interactive terminal behavior, and production hardening.
 - Git works in the mounted linked worktree while the primary checkout remains read-only.
 - Nested Docker state is distinct from host Docker state.
 - Focused Go tests and the real-host Sysbox smoke test pass.
+- An interactive `bash` probe receives terminal input and exits cleanly.
 - The README documents prerequisites, build steps, probe usage, evidence, and intentional omissions.
 
 ## Starting Baseline
@@ -191,6 +193,18 @@ Done when: a maintainer can build, run, verify, and correctly interpret the MVP 
 2. Document image build, binary build, probe invocation, and smoke-test execution.
 3. Document observed proof, security caveats, environment limitations, and deferred Codex integration.
 
+### Phase 10: Interactive Terminal Attachment
+
+Purpose: Make the explicit probe interface usable for an interactive shell without breaking automation.
+Status: done
+Done when: a `bash` probe stays open in a terminal, accepts commands, and exits without leaving an outer container.
+
+1. Always attach host stdin to `docker run` so redirected input reaches the probe.
+2. Add `--tty` only when both host stdin and stdout are terminal devices.
+3. Replace the entrypoint with the probe after daemon readiness so the probe owns the foreground terminal.
+4. Add unit coverage for TTY and non-TTY Docker arguments.
+5. Verify a real PTY session and piped stdin against the target linked-worktree project.
+
 ## Validation Gates
 
 - `gofmt -w cmd internal` completes, and a subsequent diff contains no Go formatting changes.
@@ -200,6 +214,7 @@ Done when: a maintainer can build, run, verify, and correctly interpret the MVP 
 - `bash -n container/entrypoint.sh tests/smoke/sysbox-linked-worktree.sh` succeeds.
 - `docker build -t codex-safe-mvp:local -f container/Dockerfile .` succeeds.
 - `tests/smoke/sysbox-linked-worktree.sh` passes on Linux with `sysbox-runc` registered.
+- A real PTY probe accepts `pwd`, `docker info`, and `exit`; a non-TTY pipe reaches `bash` stdin.
 - `git diff --check` reports no whitespace errors.
 - `awk 'length($0) > 120 { print FILENAME ":" FNR ":" $0 }' README.md docs/*/*.md docs/*/*/*.md` prints nothing.
 - `grep -RIn '[[:blank:]]$' README.md docs` prints nothing.
@@ -223,7 +238,7 @@ Done when: a maintainer can build, run, verify, and correctly interpret the MVP 
 - The final no-argument `codex-safe` user experience.
 - CPU, memory, PID, disk, and nested-Docker cache policies.
 - Persistent nested images, volumes, or build cache.
-- Interactive TTY resize and complete signal and lifecycle coverage.
+- Signal and lifecycle coverage beyond normal terminal exit and Docker's attached-session behavior.
 - Parallel sessions, stale-session cleanup commands, and host port publishing.
 - macOS, Windows, Docker Desktop, rootless Docker, remote daemons, bare repositories, and external common Git dirs.
 - Production image publication, signing, digest policy, installers, and release packaging.
@@ -244,4 +259,8 @@ Done when: a maintainer can build, run, verify, and correctly interpret the MVP 
   The final smoke test proved the Sysbox runtime, mount modes, read-only primary checkout, writable linked-worktree
   Git metadata, distinct daemon IDs, host-sentinel isolation, nested bind access, host UID/GID ownership, and cleanup.
 - 2026-07-13: Added the MVP README and moved this plan to review. Codex installation, `~/.codex`, resource limits,
-  terminal integration, and production image policy remain intentionally deferred to later plans.
+  and production image policy remain intentionally deferred to later plans.
+- 2026-07-13: Review feedback showed that `codex-safe -- bash` exited immediately because `docker run` did not attach
+  stdin and the entrypoint started the probe as a background child. Phase 10 added automatic PTY detection,
+  unconditional stdin attachment, and a foreground `exec` after daemon readiness. The exact reported project path
+  passed interactive input, nested `docker info`, Ctrl-C, clean `exit`, piped input, and the full smoke harness.

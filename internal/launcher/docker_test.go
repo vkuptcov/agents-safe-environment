@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -22,7 +23,7 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 	}
 	probe := []string{"printf", "%s\\n", "value with spaces; $(not-a-shell)"}
 
-	args, err := BuildDockerArgs(plan, "codex-safe-mvp:local", probe, "codex-safe-test", 1000, 1000)
+	args, err := BuildDockerArgs(plan, "codex-safe-mvp:local", probe, "codex-safe-test", 1000, 1000, true)
 	if err != nil {
 		t.Fatalf("BuildDockerArgs() error = %v", err)
 	}
@@ -30,6 +31,8 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 	wantPrefix := []string{
 		"run",
 		"--rm",
+		"--interactive",
+		"--tty",
 		"--runtime=sysbox-runc",
 		"--name",
 		"codex-safe-test",
@@ -75,7 +78,7 @@ func TestBuildDockerArgsIncludesMountModesInOrder(t *testing.T) {
 			{Source: "/primary/.git", Target: "/primary/.git"},
 			{Source: "/worktree", Target: "/worktree"},
 		},
-	}, "image", []string{"true"}, "session", 1000, 1000)
+	}, "image", []string{"true"}, "session", 1000, 1000, false)
 	if err != nil {
 		t.Fatalf("BuildDockerArgs() error = %v", err)
 	}
@@ -93,6 +96,45 @@ func TestBuildDockerArgsIncludesMountModesInOrder(t *testing.T) {
 	}
 	if !reflect.DeepEqual(specifications, want) {
 		t.Errorf("mount specifications = %#v, want %#v", specifications, want)
+	}
+}
+
+func TestBuildDockerArgsAttachesStdinWithoutForcingTTY(t *testing.T) {
+	t.Parallel()
+
+	args, err := BuildDockerArgs(
+		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		"image",
+		[]string{"bash"},
+		"session",
+		1000,
+		1000,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("BuildDockerArgs() error = %v", err)
+	}
+
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--interactive") {
+		t.Fatalf("docker args do not attach stdin: %s", joined)
+	}
+	if strings.Contains(joined, "--tty") {
+		t.Fatalf("docker args force a TTY for a non-terminal caller: %s", joined)
+	}
+}
+
+func TestIsTerminalRejectsDevNull(t *testing.T) {
+	t.Parallel()
+
+	file, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+
+	if isTerminal(file) {
+		t.Fatalf("isTerminal(%s) = true, want false", os.DevNull)
 	}
 }
 

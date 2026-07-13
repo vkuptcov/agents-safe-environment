@@ -45,7 +45,7 @@ filesystem, and Sysbox installation support this workload; run the smoke test be
 From the repository root:
 
 ```bash
-go build -o /tmp/codex-safe ./cmd/codex-safe
+go build -o ./codex-safe ./cmd/codex-safe
 docker build -t codex-safe-mvp:local -f container/Dockerfile .
 ```
 
@@ -60,10 +60,23 @@ The MVP interface is:
 codex-safe [--project PATH] [--image REF] -- COMMAND [ARG...]
 ```
 
+Start an interactive shell in the current project:
+
+```bash
+./codex-safe -- bash
+```
+
+When stdin and stdout are attached to a terminal, the launcher allocates a Docker TTY and forwards terminal input.
+For pipelines and redirected output it keeps stdin attached without forcing a TTY:
+
+```bash
+printf 'git status --short\n' | ./codex-safe -- bash
+```
+
 For example, run Git and inspect the private Docker daemon from the current project:
 
 ```bash
-/tmp/codex-safe --project . --image codex-safe-mvp:local -- \
+./codex-safe --project . --image codex-safe-mvp:local -- \
     bash -lc 'git status --short && docker info --format "{{.ID}} {{.DefaultRuntime}}"'
 ```
 
@@ -99,7 +112,7 @@ an infrastructure isolation check, not protection against kernel, Docker, Sysbox
 
 This MVP intentionally omits:
 
-- Codex installation, authentication, and interactive terminal integration;
+- Codex installation and authentication;
 - the `~/.codex` mount described by the product design;
 - CPU, memory, PID, and nested-storage limits;
 - persistent nested Docker cache and port publication;

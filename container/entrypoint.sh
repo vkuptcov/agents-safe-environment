@@ -8,16 +8,11 @@ fi
 
 readonly dockerd_log=/tmp/codex-safe-dockerd.log
 dockerd_pid=""
-probe_pid=""
 
 cleanup() {
     local status=$?
     trap - EXIT INT TERM
 
-    if [[ -n "${probe_pid}" ]] && kill -0 "${probe_pid}" 2>/dev/null; then
-        kill -TERM "${probe_pid}" 2>/dev/null || true
-        wait "${probe_pid}" 2>/dev/null || true
-    fi
     if [[ -n "${dockerd_pid}" ]] && kill -0 "${dockerd_pid}" 2>/dev/null; then
         kill -TERM "${dockerd_pid}" 2>/dev/null || true
         wait "${dockerd_pid}" 2>/dev/null || true
@@ -26,19 +21,13 @@ cleanup() {
     exit "${status}"
 }
 
-forward_signal() {
-    local signal=$1
-    local status=$2
-
-    if [[ -n "${probe_pid}" ]] && kill -0 "${probe_pid}" 2>/dev/null; then
-        kill -"${signal}" "${probe_pid}" 2>/dev/null || true
-    fi
-    exit "${status}"
+exit_on_signal() {
+    exit "$1"
 }
 
 trap cleanup EXIT
-trap 'forward_signal INT 130' INT
-trap 'forward_signal TERM 143' TERM
+trap 'exit_on_signal 130' INT
+trap 'exit_on_signal 143' TERM
 
 mkdir -p /run/docker /var/lib/docker
 # The nested runtime must preserve Sysbox bind mounts at their exact paths,
@@ -90,18 +79,10 @@ chown "${host_uid}:${host_gid}" "${probe_home}" /var/run/docker.sock
 chmod 0700 "${probe_home}"
 chmod 0600 /var/run/docker.sock
 
-setpriv \
+exec setpriv \
     --reuid="${host_uid}" \
     --regid="${host_gid}" \
     --clear-groups \
     -- \
     env HOME="${probe_home}" \
-    "$@" &
-probe_pid=$!
-
-set +e
-wait "${probe_pid}"
-probe_status=$?
-set -e
-probe_pid=""
-exit "${probe_status}"
+    "$@"

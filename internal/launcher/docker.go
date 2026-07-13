@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
+	"unsafe"
 )
 
 const (
@@ -36,6 +38,7 @@ type Docker struct {
 	Stderr        io.Writer
 	HostUID       int
 	HostGID       int
+	TTY           bool
 	NameGenerator func() (string, error)
 }
 
@@ -50,6 +53,7 @@ func NewDocker() *Docker {
 		Stderr:        os.Stderr,
 		HostUID:       os.Getuid(),
 		HostGID:       os.Getgid(),
+		TTY:           isTerminal(os.Stdin) && isTerminal(os.Stdout),
 		NameGenerator: randomSessionName,
 	}
 }
@@ -74,7 +78,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, probe
 		return err
 	}
 
-	args, err := BuildDockerArgs(plan, image, probe, sessionName, docker.HostUID, docker.HostGID)
+	args, err := BuildDockerArgs(plan, image, probe, sessionName, docker.HostUID, docker.HostGID, docker.TTY)
 	if err != nil {
 		return err
 	}
@@ -152,6 +156,7 @@ func BuildDockerArgs(
 	sessionName string,
 	hostUID int,
 	hostGID int,
+	tty bool,
 ) ([]string, error) {
 	if strings.TrimSpace(image) == "" {
 		return nil, errors.New("container image is required")
@@ -177,18 +182,24 @@ func BuildDockerArgs(
 	args := []string{
 		"run",
 		"--rm",
-		"--runtime=" + sysboxRuntime,
+		"--interactive",
+	}
+	if tty {
+		args = append(args, "--tty")
+	}
+	args = append(args,
+		"--runtime="+sysboxRuntime,
 		"--name",
 		sessionName,
 		"--label",
-		sessionLabel + "=" + sessionName,
+		sessionLabel+"="+sessionName,
 		"--env",
-		"CODEX_SAFE_HOST_UID=" + strconv.Itoa(hostUID),
+		"CODEX_SAFE_HOST_UID="+strconv.Itoa(hostUID),
 		"--env",
-		"CODEX_SAFE_HOST_GID=" + strconv.Itoa(hostGID),
+		"CODEX_SAFE_HOST_GID="+strconv.Itoa(hostGID),
 		"--workdir",
 		plan.WorkingDir,
-	}
+	)
 	for _, mount := range mounts {
 		specification := "type=bind,source=" + mount.Source + ",target=" + mount.Target
 		specification += ",bind-propagation=rprivate"
@@ -201,6 +212,21 @@ func BuildDockerArgs(
 	args = append(args, probe...)
 
 	return args, nil
+}
+
+// isTerminal uses the Linux terminal ioctl so other character devices, such as /dev/null, are not treated as TTYs.
+func isTerminal(file *os.File) bool {
+	var termios syscall.Termios
+	_, _, errno := syscall.Syscall6(
+		syscall.SYS_IOCTL,
+		file.Fd(),
+		syscall.TCGETS,
+		uintptr(unsafe.Pointer(&termios)),
+		0,
+		0,
+		0,
+	)
+	return errno == 0
 }
 
 func validateSessionName(name string) error {
