@@ -138,7 +138,7 @@ Done when: the image starts its nested daemon with bounded readiness and execute
 ### Phase 6: Smoke Harness
 
 Purpose: Create a deterministic real-host fixture and coordinate inspection of a live outer container.
-Status: to be done
+Status: done
 Done when: the harness starts a linked-worktree probe, pauses it for inspection, and cleans all labeled resources.
 
 1. Add `tests/smoke/sysbox-linked-worktree.sh` with strict error handling and cleanup traps.
