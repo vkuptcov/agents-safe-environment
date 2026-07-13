@@ -58,7 +58,7 @@ unverified until the real-host smoke gates in Phases 7 and 8 run.
 ### Phase 1: Git Project Discovery
 
 Purpose: Derive canonical paths for regular checkouts and linked worktrees.
-Status: to be done
+Status: done
 Done when: the Go launcher describes both supported repository layouts without starting Docker.
 
 1. Create `go.mod` for module `github.com/vkuptcov/agents-safe-environment` using Go 1.26.
