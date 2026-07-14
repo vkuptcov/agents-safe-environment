@@ -20,4 +20,8 @@ const (
 	// DefaultIdleTimeout is used both at manager startup and after the final
 	// registered command disconnects.
 	DefaultIdleTimeout = 5 * time.Second
+
+	// DefaultStartupTimeout bounds how long a wrapper waits for privileged
+	// container bootstrap and the manager socket to become ready.
+	DefaultStartupTimeout = 60 * time.Second
 )

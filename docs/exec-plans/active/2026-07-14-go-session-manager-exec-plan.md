@@ -90,7 +90,7 @@ Commit: `feat: add session manager core`
 ### Phase 2: Command Wrapper and Session CLI
 
 Purpose: Register arbitrary foreground commands without changing their terminal or process result contract.
-Status: to be done
+Status: done
 Done when: `codex-safe-session run -- COMMAND` holds registration for the direct child's lifetime and returns its
 status, while `serve` exposes the manager.
 
@@ -223,6 +223,8 @@ Commit: `docs: document managed project sessions`
 
 ## Progress Notes
 
+- 2026-07-14: Phase 2 added the command wrapper and strict session CLI. Both binaries build under `bin/`; focused race
+  tests and `make test` cover argv, streams, environment, working directory, registration lifetime, signals, and exits.
 - 2026-07-14: Phase 1 added the manager protocol and Unix-socket state machine. `make test`, focused vet, and
   `go test -race ./internal/session` pass with an external `GOROOT` unset and a writable Go build cache.
 - 2026-07-14: revised before implementation so the Go manager is the image entrypoint and owns privileged bootstrap
