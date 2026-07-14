@@ -66,7 +66,7 @@ construct the production `docker run` command.
 - `docker build`, `docker run`, and Docker Compose use a separate nested daemon.
 - The agent cannot see the host daemon's socket, containers, images, or volumes.
 - The agent receives no host paths beyond the explicit mount set.
-- A concurrent invocation for the same worktree reuses its running outer container and private Docker daemon.
+- Concurrent invocations for the same worktree reuse one outer container until the last managed command finishes.
 - A preflight or nested-daemon failure stops the launch without an unsafe fallback.
 
 ### Tradeoff
@@ -76,8 +76,8 @@ Docker socket mount. It is not a secrecy boundary for allowed mounts. The agent 
 project files and `~/.codex` contents.
 
 Each outer-container session starts with clean nested Docker storage. Commands routed into that live session reuse its
-images, containers, volumes, and build cache. A new session after the main command exits starts clean again; persistent
-cross-session caching can be designed separately after measurement shows that it is needed.
+images, containers, volumes, and build cache. A new session after the last managed command finishes starts clean again;
+persistent cross-session caching can be designed separately after measurement shows that it is needed.
 
 ## Contract
 
@@ -218,7 +218,7 @@ The container image includes:
 - Docker CLI, Docker daemon, and the Compose plugin;
 - `sudo` with a validated passwordless policy for the recreated host account;
 - an init process that reaps child processes and handles signals correctly;
-- an entrypoint that starts the daemon, waits for readiness, and then starts Codex.
+- a Go session-manager entrypoint that performs account bootstrap and supervises the nested daemon.
 
 The image defaults to the `C.UTF-8` locale so interactive shells and text tools correctly classify UTF-8 input and
 output, including Cyrillic, without requiring a language-specific locale.
@@ -251,11 +251,12 @@ A file created by Codex or a nested container in a read-write project mount must
 host user who invoked `codex-safe`. The launcher must not leave project files owned by an identity the host user cannot
 modify.
 
-The probe process has the invoking host user's numeric UID and primary GID. Its login name and primary group name also
-match the host account, so tools that display or resolve account names behave consistently on both sides. The launcher
-resolves those names through the host account database and the entrypoint creates or renames the corresponding local
-container entries before dropping privileges. A conflicting or unsupported account mapping fails the launch; it never
-falls back to an image-defined identity such as `ubuntu`.
+Each managed command has the invoking host user's numeric UID and primary GID. Its login name and primary group name
+also match the host account, so tools that display or resolve account names behave consistently on both sides. The
+launcher resolves those names through the host account database and the Go entrypoint creates or renames the
+corresponding local container entries. Each command runs through `docker exec` with that numeric identity. A
+conflicting or unsupported account mapping fails the launch; it never falls back to an image-defined identity such as
+`ubuntu`.
 
 Exact UID/GID translation through Sysbox user namespaces, ID-mapped mounts, or shiftfs is an implementation detail.
 A smoke test or preflight detects an incompatible filesystem. The launcher never repairs ownership by recursively
@@ -293,10 +294,17 @@ and Docker registries require network access. Nested Docker networks remain insi
 
 ### 10. Lifecycle and Concurrency
 
-A new outer container has a unique session name plus labels containing the canonical worktree root and invoking host
-UID. Before creation, the launcher searches running containers by those labels. Exactly one match receives the new
-command through `docker exec`; no match creates a new `docker run --rm` session, and multiple matches fail as ambiguous.
-Different worktrees continue to use distinct Docker daemons and writable layers.
+A new outer container has a deterministic name derived from the canonical worktree root and invoking host UID. The
+launcher inspects that exact name, then validates labels containing the full project path, host UID, ownership marker,
+and manager protocol version. A compatible running container receives the new command through `docker exec`; an absent
+name is created with detached `docker run --rm`; a mismatched name fails. Different worktrees continue to use distinct
+Docker daemons and writable layers.
+
+The container's foreground workload is a Go session manager. Every `docker exec`, including the first, invokes
+`codex-safe-session run -- COMMAND`. That wrapper connects to a container-local Unix socket, runs the requested command,
+and holds the connection until its direct child exits. The manager exits after the last registered command finishes
+and the single idle timeout expires. The detailed protocol, race handling, and shutdown contract are defined in
+[`go-session-manager.md`](go-session-manager.md).
 
 ```mermaid
 sequenceDiagram
@@ -305,38 +313,54 @@ sequenceDiagram
     participant HostDocker as Host Docker Engine
     participant Outer as Sysbox system container
     participant InnerDocker as Inner Docker daemon
-    participant Codex
+    participant Manager as Go session manager
+    participant Wrapper as Command wrapper
+    participant Command
 
     User->>Launcher: Run a command in a Git working tree
     Launcher->>Launcher: Discover canonical worktree root
-    Launcher->>HostDocker: Find running container by project path and host UID
-    alt Matching container is running
+    Launcher->>Launcher: Derive deterministic container name
+    Launcher->>HostDocker: Inspect exact container name
+    alt Compatible container is running
         HostDocker-->>Launcher: Existing container ID
-        Launcher->>Outer: Wait for bootstrap readiness marker
-        Launcher->>Outer: docker exec as host UID/GID in requested directory
-    else No matching container
+    else Container name is absent
         Launcher->>Launcher: Preflight and build mount plan
-        Launcher->>HostDocker: Run --rm with Sysbox, labels, and explicit mounts
-        HostDocker->>Outer: Start isolated init process
+        Launcher->>HostDocker: Run detached --rm with Sysbox, labels, and explicit mounts
+        HostDocker->>Outer: Start Tini and Go session-manager entrypoint
+        Outer->>Outer: Reconcile host account, home, and sudo policy
         Outer->>InnerDocker: Start daemon
         Outer->>InnerDocker: Wait for readiness
-        Outer->>Codex: Start in original working directory
+        Outer->>Manager: Open local command registry
     end
-    Codex->>InnerDocker: Build and run nested containers
-    User->>Codex: Exit or interrupt
-    Codex-->>Outer: Return exit code
-    Outer-->>HostDocker: Stop
-    HostDocker-->>Launcher: Remove ephemeral container
-    Launcher-->>User: Return Codex exit code
+    Launcher->>Outer: docker exec codex-safe-session run -- command
+    Outer->>Wrapper: Start wrapper
+    Wrapper->>Manager: Register active command
+    Wrapper->>Command: Start command
+    Command->>InnerDocker: Build and run nested containers
+    User->>Command: Exit or interrupt
+    Command-->>Wrapper: Return exit code
+    Wrapper->>Manager: Unregister active command
+    Wrapper-->>Launcher: Return exit code
+    Launcher-->>User: Return command exit code
+    opt Final active command finished
+        Manager-->>Outer: Exit after idle timeout
+        Outer->>InnerDocker: Graceful daemon shutdown
+        Outer-->>HostDocker: Stop
+        HostDocker->>HostDocker: Remove stopped outer container
+    end
 ```
 
-The launcher forwards terminal resize events and signals to the interactive process. Normal exit, Ctrl-C, and
-termination stop the outer container, nested daemon, and nested containers. The outer container is automatically
-removed after it stops.
+The wrapper passes Docker exec streams to its child, forwards termination signals, and returns the child's exit status.
+Normal exit or Ctrl-C finishes only that managed command. The outer container, nested daemon, and nested containers
+stop after the final registered command finishes and the manager's idle timeout expires. The outer container is
+automatically removed after it stops.
 
-If the launcher receives SIGKILL or the Docker daemon fails, a stopped or running outer container may remain. Only a
-running container is eligible for command reuse; stopped containers are not restarted. A separate diagnostic command
-or documented procedure finds resources through the `codex-safe` labels and removes only confirmed stale sessions.
+If a launcher or terminal disappears while its command continues inside the container, the wrapper keeps that real
+command registered until it exits. If the wrapper or command dies, the local connection closes and the manager releases
+it. A host Docker daemon or machine failure can still leave a stopped or running outer-container record. Only a
+running, protocol-compatible container is eligible for reuse; stopped containers are not restarted. A separate
+diagnostic command or documented procedure finds resources through the `codex-safe` labels and removes only confirmed
+stale sessions.
 
 ### 11. Preflight and Failure Behavior
 
@@ -360,7 +384,9 @@ mode.
 ## Invariants
 
 - The host Docker socket is never visible inside the outer container.
-- Each worktree session receives a separate nested Docker daemon; concurrent commands in that session share it.
+- Each worktree session receives a separate nested Docker daemon; registered concurrent commands in that session share
+  it.
+- No user command is the outer container's lifecycle-owning main process.
 - Read-write host access is limited to the active working tree, linked-worktree common Git directory, and `~/.codex`.
 - The linked worktree's primary checkout is read-only except for the nested common Git directory.
 - Git working-tree and common-directory absolute paths match their host paths.
@@ -368,7 +394,8 @@ mode.
 - Unsafe fallback behavior is forbidden.
 - Host-side orchestration and Docker argument construction are implemented in Go.
 - Arguments and paths are separate argv elements and are never passed through `eval` or shell reinterpretation.
-- A normal `codex-safe` exit does not intentionally leave nested containers running.
+- After the final managed command finishes normally, the session does not intentionally leave nested containers
+  running.
 
 ## Boundaries and Non-Goals
 
@@ -378,9 +405,10 @@ It also reduces the impact of root access inside the agent environment through t
 The trusted computing base includes:
 
 - the host-side Go `codex-safe` program;
+- the container-side Go session manager and its registration protocol;
 - the local Docker Engine and its configuration;
 - Sysbox and the Linux kernel;
-- the pinned outer image and its entrypoint;
+- the pinned outer image and its Go entrypoint;
 - the user who selects the project and any image override.
 
 The design intentionally does not promise:
@@ -433,13 +461,17 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Prove that the primary checkout's read-only mount cannot be remounted read-write from either container layer.
 - Exercise CPU, memory, and PID limits with load from multiple nested containers.
 - Run a second command for one live worktree and prove it shares the outer container and nested Docker daemon.
+- Exit the first of two overlapping commands and prove the second command and outer container remain alive.
 - Run sessions for two worktrees concurrently and prove they do not share nested Docker state.
 
 ### Lifecycle tests
 
 - Cover normal exit, Ctrl-C, SIGTERM, Codex failure, and nested-daemon failure.
 - Verify terminal resize and interactive input.
-- Verify an active container is found by canonical worktree path and host UID and reused through `docker exec`.
+- Verify the deterministic name is derived from canonical worktree path and host UID, inspected directly, and reused
+  through a wrapped `docker exec`.
+- Verify simultaneous first callers create one outer container and both commands register with its manager.
+- Verify the final managed command removes the outer container only after the idle timeout.
 - After each normal scenario, prove outer and nested containers stopped and were removed.
 - Simulate launcher failure and prove stale resources carry the expected labels and can be diagnosed safely.
 
@@ -458,6 +490,9 @@ Before the first release, inspect the actual outer-container configuration throu
 
 The minimal infrastructure proof is tracked in
 [`2026-07-13-codex-safe-mvp-exec-plan.md`](../exec-plans/review/2026-07-13-codex-safe-mvp-exec-plan.md).
+
+The shared project-container lifecycle is tracked in
+[`2026-07-14-go-session-manager-exec-plan.md`](../exec-plans/active/2026-07-14-go-session-manager-exec-plan.md).
 
 ## References
 
