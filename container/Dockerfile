@@ -44,8 +44,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # The entrypoint reconciles the host account identity, starts the private daemon, then drops
-# privileges and execs the requested probe. It installs this bashrc into the ephemeral home so
-# interactive shells load bash-completion without mounting the host home directory.
+# privileges and execs the requested probe. It creates a container-local home at the host home's
+# absolute path and installs this bashrc there, enabling completion without mounting the host home.
 COPY container/entrypoint.sh /usr/local/bin/codex-safe-entrypoint
 COPY container/bashrc /etc/codex-safe/bashrc
 COPY --from=crun --chmod=0755 /crun /usr/local/bin/crun

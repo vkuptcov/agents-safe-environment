@@ -251,12 +251,26 @@ Status: done
 Done when: Git reads the host global config through a read-only mount and the probe uses a UTF-8 locale.
 
 1. Resolve an existing `$HOME/.gitconfig` to a canonical regular file without requiring it to exist.
-2. Mount that file read-only at `.gitconfig` inside the ephemeral container home.
+2. Mount that file read-only at `.gitconfig` inside the container-local home.
 3. Do not implicitly mount files referenced by Git includes, credential helpers, or the rest of the host home.
 4. Set the image's default locale to `C.UTF-8` without installing a language-specific locale.
 5. Add unit coverage for optional config discovery, path validation, and Docker mount arguments.
 6. Extend the real-host smoke probe to read a deterministic global setting and reject writes to the config.
 7. Require `locale charmap` to report UTF-8 and round-trip Cyrillic text through the project mount.
+
+### Phase 15: Host Home Path Parity
+
+Purpose: Preserve absolute paths embedded in shell, Git, and tool configuration without exposing the host home.
+Status: done
+Done when: the probe's `$HOME` and passwd home equal host `$HOME`, while the directory remains container-local.
+
+1. Resolve and validate host `$HOME` as a canonical absolute path distinct from `/`.
+2. Pass that path to the entrypoint and create it inside the outer container's writable layer.
+3. Set the recreated account's passwd home and the probe's `HOME` environment variable to the host path.
+4. Target the read-only `.gitconfig` mount at the same absolute host path.
+5. Keep the full host home directory unmounted.
+6. Extend unit tests for the home environment and config mount target.
+7. Require the real-host smoke probe to verify `HOME`, the passwd entry, and the exact config mount path.
 
 ## Validation Gates
 
@@ -271,6 +285,7 @@ Done when: Git reads the host global config through a read-only mount and the pr
 - The smoke probe executes Compose V2, `make`, `less`, and `rg`, and manages a nested Compose service.
 - The smoke probe reports the same login and primary group names as the invoking host account.
 - The smoke probe reads the mounted host Git config, cannot modify it, and round-trips Cyrillic under UTF-8.
+- The smoke probe's `HOME` and passwd home equal host `$HOME` without a broad host-home mount.
 - `make build` writes `bin/codex-safe`; `make test` and `make docker-build` pass; the smoke probe registers Make target
   completion.
 - `git diff --check` reports no whitespace errors.
@@ -334,3 +349,5 @@ Done when: Git reads the host global config through a read-only mount and the pr
   requires `whoami` and `id -gn` to match the host.
 - 2026-07-14: Added an optional read-only mount for host `$HOME/.gitconfig` and enabled `C.UTF-8` in the image. The
   smoke fixture now proves global Git config visibility, write protection, UTF-8 locale selection, and Cyrillic text.
+- 2026-07-14: Recreated host `$HOME` at the same absolute path in the outer container's writable layer. The account,
+  process environment, and `.gitconfig` target now share that path without mounting the complete host home directory.

@@ -15,6 +15,7 @@ The current command is a probe runner, not the finished Codex launcher. It does 
 - The outer container can use `sysbox-runc` without `--privileged` or the host Docker socket.
 - A private nested Docker daemon can run containers and pass the project through at the same absolute path.
 - The probe uses the invoking host user's login name, primary group name, UID, and GID.
+- The probe's container-local home directory uses the same absolute path as host `$HOME`.
 - An existing host `$HOME/.gitconfig` is available as the probe's read-only global Git config.
 - Interactive tools use a UTF-8 locale and handle Cyrillic input and output.
 - Files created by the probe and nested containers retain ownership that remains usable from the host.
@@ -65,9 +66,10 @@ The environment includes Git, Docker Engine and CLI, Docker Compose V2, `make`, 
 Interactive Bash sessions also load the system completion framework, including Make target completion.
 The image defaults to the `C.UTF-8` locale, so Bash and text tools handle Cyrillic and other UTF-8 text.
 
-If host `$HOME/.gitconfig` exists, the launcher mounts it read-only at the global Git config path in the ephemeral
-container home. Files referenced by `include.path` are available only when they are independently present in an
-allowed mount; this does not expose the rest of the host home directory.
+The launcher creates an otherwise empty container-local home at the same absolute path as host `$HOME`; it does not
+mount the host home directory. If host `$HOME/.gitconfig` exists, the launcher mounts that file read-only at the same
+path inside the container. Files referenced by `include.path` are available only when independently present in an
+allowed mount.
 
 ## Run a probe
 

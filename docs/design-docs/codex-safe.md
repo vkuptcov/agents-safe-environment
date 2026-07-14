@@ -161,10 +161,14 @@ the broadest read-only directory first and then applies narrower read-write moun
 If a target requires incompatible sources or modes that this rule cannot resolve, preflight fails. The launcher never
 silently broadens read-write access.
 
-#### Host Git configuration
+#### Host home path and Git configuration
 
+- The launcher creates a container-local home directory at the same absolute path as host `$HOME` and sets both the
+  process environment and container passwd entry to that path.
+- The host home directory itself is not mounted. Apart from explicitly allowed file mounts, its contents exist only
+  in the ephemeral outer-container filesystem.
 - When host `$HOME/.gitconfig` exists as a regular file, it is canonicalized and mounted read-only as
-  `$HOME/.gitconfig` in the container's ephemeral home.
+  `$HOME/.gitconfig` at that same absolute path inside the container.
 - A missing host `.gitconfig` is allowed and produces no mount.
 - Files referenced through `include.path`, credential helpers, and other configuration are not mounted implicitly.
   They work only when already available in the image or through another allowed mount.

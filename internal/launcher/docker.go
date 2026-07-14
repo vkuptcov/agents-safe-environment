@@ -20,10 +20,8 @@ import (
 )
 
 const (
-	sysboxRuntime      = "sysbox-runc"
-	sessionLabel       = "codex-safe.session"
-	containerHome      = "/tmp/codex-safe-home"
-	containerGitConfig = containerHome + "/.gitconfig"
+	sysboxRuntime = "sysbox-runc"
+	sessionLabel  = "codex-safe.session"
 )
 
 // CommandRunner makes Docker process execution replaceable in focused tests.
@@ -54,6 +52,9 @@ type Docker struct {
 	HostUser string
 	// HostGroup is the invoking user's primary group name recreated inside the container.
 	HostGroup string
+	// HostHome is the absolute host home path recreated as a container-local directory.
+	// The directory itself is not mounted from the host.
+	HostHome string
 	// HostGitConfig is the canonical host path mounted read-only as the container's global Git config.
 	// It is empty when the invoking environment has no $HOME/.gitconfig file.
 	HostGitConfig string
@@ -79,6 +80,13 @@ func NewDocker() (*Docker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve host home directory: %w", err)
 	}
+	hostHome = filepath.Clean(hostHome)
+	if hostHome == "/" {
+		return nil, errors.New("host home directory cannot be the filesystem root")
+	}
+	if err := validateMountPath("host home directory", hostHome); err != nil {
+		return nil, err
+	}
 	hostGitConfig, err := discoverHostGitConfig(hostHome)
 	if err != nil {
 		return nil, err
@@ -95,6 +103,7 @@ func NewDocker() (*Docker, error) {
 		HostGID:       hostGID,
 		HostUser:      hostUser.Username,
 		HostGroup:     hostGroup.Name,
+		HostHome:      hostHome,
 		HostGitConfig: hostGitConfig,
 		TTY:           isTerminal(os.Stdin) && isTerminal(os.Stdout),
 		NameGenerator: randomSessionName,
@@ -130,6 +139,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, probe
 		docker.HostGID,
 		docker.HostUser,
 		docker.HostGroup,
+		docker.HostHome,
 		docker.HostGitConfig,
 		docker.TTY,
 	)
@@ -172,6 +182,12 @@ func (docker *Docker) validateConfiguration() error {
 		return err
 	}
 	if err := validateAccountName("host group", docker.HostGroup); err != nil {
+		return err
+	}
+	if docker.HostHome == "/" {
+		return errors.New("host home directory cannot be the filesystem root")
+	}
+	if err := validateMountPath("host home directory", docker.HostHome); err != nil {
 		return err
 	}
 	if docker.HostGitConfig != "" {
@@ -223,6 +239,7 @@ func BuildDockerArgs(
 	hostGID int,
 	hostUser string,
 	hostGroup string,
+	hostHome string,
 	hostGitConfig string,
 	tty bool,
 ) ([]string, error) {
@@ -242,6 +259,12 @@ func BuildDockerArgs(
 		return nil, err
 	}
 	if err := validateAccountName("host group", hostGroup); err != nil {
+		return nil, err
+	}
+	if hostHome == "/" {
+		return nil, errors.New("host home directory cannot be the filesystem root")
+	}
+	if err := validateMountPath("host home directory", hostHome); err != nil {
 		return nil, err
 	}
 	if hostGitConfig != "" {
@@ -280,10 +303,13 @@ func BuildDockerArgs(
 		"CODEX_SAFE_HOST_USER="+hostUser,
 		"--env",
 		"CODEX_SAFE_HOST_GROUP="+hostGroup,
+		"--env",
+		"CODEX_SAFE_HOST_HOME="+hostHome,
 		"--workdir",
 		plan.WorkingDir,
 	)
 	if hostGitConfig != "" {
+		containerGitConfig := filepath.Join(hostHome, ".gitconfig")
 		specification := "type=bind,source=" + hostGitConfig + ",target=" + containerGitConfig
 		specification += ",bind-propagation=rprivate,readonly"
 		args = append(args, "--mount", specification)

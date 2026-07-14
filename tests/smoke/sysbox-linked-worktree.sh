@@ -158,6 +158,7 @@ expected_host_user=${13}
 expected_host_group=${14}
 expected_git_config_marker=${15}
 expected_cyrillic_text=${16}
+expected_host_home=${17}
 
 if [[ "$(whoami)" != "${expected_host_user}" ]]; then
     echo "smoke probe: container user name does not match the host" >&2
@@ -165,6 +166,16 @@ if [[ "$(whoami)" != "${expected_host_user}" ]]; then
 fi
 if [[ "$(id -gn)" != "${expected_host_group}" ]]; then
     echo "smoke probe: container primary group name does not match the host" >&2
+    exit 1
+fi
+if [[ "${HOME}" != "${expected_host_home}" ]]; then
+    echo "smoke probe: container home path does not match the host" >&2
+    exit 1
+fi
+passwd_entry="$(getent passwd "${expected_host_user}")"
+IFS=: read -r _ _ _ _ _ passwd_home _ <<<"${passwd_entry}"
+if [[ "${passwd_home}" != "${expected_host_home}" ]]; then
+    echo "smoke probe: passwd home path does not match the host" >&2
     exit 1
 fi
 if [[ "$(git config --global --get codex-safe-smoke.marker)" != "${expected_git_config_marker}" ]]; then
@@ -345,6 +356,7 @@ HOME="${host_home}" \
     "${host_group}" \
     "${run_id}" \
     "${cyrillic_text}" \
+    "${host_home}" \
     >"${outer_log}" 2>&1 &
 launcher_pid=$!
 
@@ -388,7 +400,7 @@ assert_report_line \
     "${mount_report}" \
     "read-write linked worktree mount"
 assert_report_line \
-    "${host_git_config}|/tmp/codex-safe-home/.gitconfig|false|rprivate" \
+    "${host_git_config}|${host_git_config}|false|rprivate" \
     "${mount_report}" \
     "read-only host Git config mount"
 if grep --fixed-strings --quiet '/var/run/docker.sock' <<<"${mount_report}"; then

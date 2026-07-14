@@ -10,7 +10,7 @@ readonly host_uid="${CODEX_SAFE_HOST_UID:-}"
 readonly host_gid="${CODEX_SAFE_HOST_GID:-}"
 readonly host_user="${CODEX_SAFE_HOST_USER:-}"
 readonly host_group="${CODEX_SAFE_HOST_GROUP:-}"
-readonly probe_home=/tmp/codex-safe-home
+readonly host_home="${CODEX_SAFE_HOST_HOME:-}"
 readonly account_name_pattern='^[a-z_][a-z0-9_-]*[$]?$'
 
 if [[ ! "${host_uid}" =~ ^[0-9]+$ ]] || [[ ! "${host_gid}" =~ ^[0-9]+$ ]]; then
@@ -23,6 +23,20 @@ if [[ ! "${host_user}" =~ ${account_name_pattern} ]]; then
 fi
 if [[ ! "${host_group}" =~ ${account_name_pattern} ]]; then
     echo "codex-safe-entrypoint: CODEX_SAFE_HOST_GROUP is not a supported group name" >&2
+    exit 2
+fi
+if [[ "${host_home}" != /* ]] ||
+    [[ "${host_home}" == "/" ]] ||
+    [[ "${host_home}" == *,* ]] ||
+    [[ "${host_home}" == *$'\n'* ]] ||
+    [[ "${host_home}" == *$'\r'* ]] ||
+    [[ "${host_home}" == */ ]] ||
+    [[ "${host_home}" == *//* ]] ||
+    [[ "${host_home}" == */./* ]] ||
+    [[ "${host_home}" == */../* ]] ||
+    [[ "${host_home}" == */. ]] ||
+    [[ "${host_home}" == */.. ]]; then
+    echo "codex-safe-entrypoint: CODEX_SAFE_HOST_HOME must be a canonical absolute directory" >&2
     exit 2
 fi
 
@@ -78,7 +92,7 @@ configure_host_user() {
         useradd \
             --uid "${host_uid}" \
             --gid "${host_gid}" \
-            --home-dir "${probe_home}" \
+            --home-dir "${host_home}" \
             --no-create-home \
             --shell /bin/bash \
             "${host_user}"
@@ -93,7 +107,7 @@ configure_host_user() {
         fi
         usermod --login "${host_user}" "${id_name}"
     fi
-    usermod --gid "${host_gid}" --home "${probe_home}" "${host_user}"
+    usermod --gid "${host_gid}" --home "${host_home}" "${host_user}"
 }
 
 configure_host_group
@@ -159,21 +173,21 @@ if [[ "${ready}" != true ]]; then
     exit 1
 fi
 
-mkdir -p "${probe_home}"
-chown "${host_uid}:${host_gid}" "${probe_home}" /var/run/docker.sock
-chmod 0700 "${probe_home}"
+mkdir -p "${host_home}"
+chown "${host_uid}:${host_gid}" "${host_home}" /var/run/docker.sock
+chmod 0700 "${host_home}"
 chmod 0600 /var/run/docker.sock
 install \
     --owner="${host_uid}" \
     --group="${host_gid}" \
     --mode=0644 \
     /etc/codex-safe/bashrc \
-    "${probe_home}/.bashrc"
+    "${host_home}/.bashrc"
 
 exec setpriv \
     --reuid="${host_uid}" \
     --regid="${host_gid}" \
     --clear-groups \
     -- \
-    env HOME="${probe_home}" \
+    env HOME="${host_home}" \
     "$@"

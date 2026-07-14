@@ -33,6 +33,7 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 		1000,
 		"developer",
 		"developers",
+		"/home/developer",
 		"",
 		true,
 	)
@@ -58,6 +59,8 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 		"CODEX_SAFE_HOST_USER=developer",
 		"--env",
 		"CODEX_SAFE_HOST_GROUP=developers",
+		"--env",
+		"CODEX_SAFE_HOST_HOME=/home/developer",
 		"--workdir",
 		plan.WorkingDir,
 	}
@@ -94,7 +97,7 @@ func TestBuildDockerArgsIncludesMountModesInOrder(t *testing.T) {
 			{Source: "/primary/.git", Target: "/primary/.git"},
 			{Source: "/worktree", Target: "/worktree"},
 		},
-	}, "image", []string{"true"}, "session", 1000, 1000, "developer", "developers", "", false)
+	}, "image", []string{"true"}, "session", 1000, 1000, "developer", "developers", "/home/developer", "", false)
 	if err != nil {
 		t.Fatalf("BuildDockerArgs() error = %v", err)
 	}
@@ -127,6 +130,7 @@ func TestBuildDockerArgsAttachesStdinWithoutForcingTTY(t *testing.T) {
 		1000,
 		"developer",
 		"developers",
+		"/home/developer",
 		"",
 		false,
 	)
@@ -155,6 +159,7 @@ func TestBuildDockerArgsMountsHostGitConfigReadOnly(t *testing.T) {
 		1000,
 		"developer",
 		"developers",
+		"/home/developer profile",
 		"/home/developer profile/.gitconfig",
 		false,
 	)
@@ -170,7 +175,7 @@ func TestBuildDockerArgsMountsHostGitConfigReadOnly(t *testing.T) {
 	}
 	want := []string{
 		"type=bind,source=/home/developer profile/.gitconfig," +
-			"target=/tmp/codex-safe-home/.gitconfig,bind-propagation=rprivate,readonly",
+			"target=/home/developer profile/.gitconfig,bind-propagation=rprivate,readonly",
 		"type=bind,source=/project,target=/project,bind-propagation=rprivate",
 	}
 	if !reflect.DeepEqual(specifications, want) {
@@ -205,6 +210,7 @@ func TestBuildDockerArgsRejectsUnsupportedAccountNames(t *testing.T) {
 				1000,
 				test.hostUser,
 				test.hostGroup,
+				"/home/developer",
 				"",
 				false,
 			)
@@ -215,6 +221,30 @@ func TestBuildDockerArgsRejectsUnsupportedAccountNames(t *testing.T) {
 				t.Fatalf("BuildDockerArgs() error = %q, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestBuildDockerArgsRejectsNonCanonicalHostHome(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildDockerArgs(
+		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		"image",
+		[]string{"true"},
+		"session",
+		1000,
+		1000,
+		"developer",
+		"developers",
+		"relative/home",
+		"",
+		false,
+	)
+	if err == nil {
+		t.Fatal("BuildDockerArgs() error = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "host home directory") || !strings.Contains(err.Error(), "not absolute") {
+		t.Fatalf("BuildDockerArgs() error = %q, want non-absolute home error", err)
 	}
 }
 
@@ -230,6 +260,7 @@ func TestBuildDockerArgsRejectsNonCanonicalHostGitConfig(t *testing.T) {
 		1000,
 		"developer",
 		"developers",
+		"/home/developer",
 		"relative/.gitconfig",
 		false,
 	)
@@ -426,6 +457,7 @@ func testDocker(runner CommandRunner) *Docker {
 		HostGID:   1000,
 		HostUser:  "developer",
 		HostGroup: "developers",
+		HostHome:  "/home/developer",
 		NameGenerator: func() (string, error) {
 			return "codex-safe-test", nil
 		},
