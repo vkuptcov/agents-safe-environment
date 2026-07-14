@@ -55,7 +55,8 @@ does not prove deterministic creation, wrapper registration, last-command lifeti
 - Entrypoint: invoke `tini -- codex-safe-session serve` directly; remove `container/entrypoint.sh` after cutover.
 - Privileges: keep `serve` as root for account setup and dockerd supervision; run every user command as host UID/GID.
 - Init: retain Tini only as PID 1, signal forwarder, and orphan reaper.
-- Dependencies: use the Go standard library only; do not add a Docker SDK or RPC framework.
+- Runtime dependencies: use the Go standard library only; test-only dependencies such as testify are allowed. Do not
+  add a Docker SDK or RPC framework.
 - Socket: use `/run/codex-safe/session.sock` inside the outer container only.
 - Registration: a manager acknowledgement byte registers one wrapper connection; connection close unregisters it.
 - Commands: keep argv out of the manager protocol and execute it only as the wrapper's direct child.
@@ -128,7 +129,7 @@ Commit: `feat: add Go container supervisor`
 ### Phase 4: Atomic Runtime Cutover
 
 Purpose: Make the detached manager container and wrapped Docker exec path the only launcher lifecycle.
-Status: to be done
+Status: done
 Done when: both a newly created session and a reused session execute the requested command through the same wrapper,
 and no user command owns the outer container lifecycle.
 
@@ -223,6 +224,8 @@ Commit: `docs: document managed project sessions`
 
 ## Progress Notes
 
+- 2026-07-14: Phase 4 completed in `50ff335`; deterministic naming, exact-name inspection, detached lifecycle,
+  wrapper-prefixed exec, Go entrypoint cutover, and shell entrypoint removal are implemented and tested.
 - 2026-07-14: Phase 3 moved identity, home, sudoers, dockerd readiness, diagnostics, and shutdown behavior into tested
   Go components. Full race tests, `make test`, image build, and the image-installed binary help check pass.
 - 2026-07-14: Phase 2 added the command wrapper and strict session CLI. Both binaries build under `bin/`; focused race

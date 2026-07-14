@@ -226,6 +226,12 @@ and GID.
 The manager listens on `/run/codex-safe/session.sock`. The directory has mode `0700` and the socket has mode `0600`.
 Both are part of the ephemeral outer filesystem and are not bind-mounted from the host.
 
+When shutdown commits, the manager creates `/run/codex-safe/stopping` with mode `0600` and the recreated host user's
+UID/GID. The marker remains alongside the socket until the next manager startup removes stale runtime state. A wrapper
+checks it before and after connecting so a committed shutdown is reported immediately instead of being mistaken for
+bootstrap that is still in progress. The marker is container-local and is not a host lease, lock, heartbeat, or
+additional discovery mechanism.
+
 The first wrapper may start before bootstrap finishes. It waits for the socket for a bounded startup interval, then
 connects and waits for the manager's acknowledgement. That acknowledgement is the readiness signal that account setup,
 the nested daemon, and the manager are ready.
@@ -241,7 +247,8 @@ active command.
 
 The manager registers a connection under its state lock and writes one acknowledgement byte. The wrapper does not
 start the command until it receives that byte. If shutdown has already committed, the manager closes the connection
-without acknowledging it and the command does not start.
+without acknowledging it and the command does not start. The wrapper also checks the container-local `stopping`
+marker to distinguish this state from incomplete bootstrap.
 
 After acknowledgement, the wrapper holds the connection without sending requests, heartbeats, or command data.
 Closing the connection unregisters the command. There is no general RPC format or separate protocol negotiation;

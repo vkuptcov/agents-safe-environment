@@ -115,16 +115,20 @@ func (supervisor *Supervisor) Serve(ctx context.Context) error {
 	case <-daemon.done:
 		daemonErr := daemon.Err()
 		cancelManager()
-		managerErr := <-managerDone
-		return errors.Join(
-			fmt.Errorf("dockerd exited while the session manager was active: %v", daemonErr),
-			managerErr,
-		)
+		<-managerDone
+		return fmt.Errorf("dockerd exited while the session manager was active: %v%s",
+			daemonErr, daemonDiagnosticSuffix(supervisor.paths.dockerdLog))
 	case <-ctx.Done():
 		cancelManager()
 		managerErr := <-managerDone
 		stopErr := daemon.Stop(supervisor.config.DockerShutdownTimeout)
-		return errors.Join(ctx.Err(), managerErr, stopErr)
+		if stopErr != nil {
+			return errors.Join(fmt.Errorf("stop dockerd after context cancellation: %w", stopErr), managerErr)
+		}
+		if managerErr != nil && !errors.Is(managerErr, context.Canceled) {
+			return managerErr
+		}
+		return nil
 	}
 }
 

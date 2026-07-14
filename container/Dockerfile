@@ -12,6 +12,7 @@ ARG TARGETARCH
 ARG TARGETOS
 WORKDIR /src
 COPY go.mod ./
+COPY go.sum ./
 COPY cmd/codex-safe-session/ cmd/codex-safe-session/
 COPY internal/container/ internal/container/
 COPY internal/session/ internal/session/

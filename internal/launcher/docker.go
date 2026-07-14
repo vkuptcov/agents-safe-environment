@@ -721,15 +721,7 @@ func commandExitCode(err error) int {
 }
 
 func isRetryableExecError(err error) bool {
-	var commandError interface{ CommandStderr() string }
-	if !errors.As(err, &commandError) {
-		return false
-	}
-	message := strings.ToLower(commandError.CommandStderr())
-	return strings.Contains(message, "codex-safe-session: register session command") ||
-		strings.Contains(message, "no such container") ||
-		strings.Contains(message, "container is not running") ||
-		strings.Contains(message, "container is restarting")
+	return commandExitCode(err) == 125
 }
 
 func commandFailure(action string, output []byte, err error) error {

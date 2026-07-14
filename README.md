@@ -171,7 +171,7 @@ command still removes the outer container through Docker `--rm`; stopped contain
 or host daemon is killed abruptly, inspect project-owned sessions with:
 
 ```bash
-docker ps -a --filter label=codex-safe.session
+docker ps -a --filter label=codex-safe.managed=true
 ```
 
 Review a candidate carefully before removing it; the MVP does not yet provide a stale-session cleanup command.

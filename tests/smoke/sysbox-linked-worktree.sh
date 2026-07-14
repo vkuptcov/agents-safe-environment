@@ -30,6 +30,7 @@ host_group="$(id -gn)"
 cyrillic_text="Привет из codex-safe"
 cyrillic_file="${linked_worktree}/phase14-cyrillic.txt"
 launcher_pid=""
+project_key=""
 outer_container=""
 
 cleanup() {
@@ -85,24 +86,6 @@ wait_for_file() {
     return 1
 }
 
-find_outer_container() {
-    local candidate
-
-    while IFS= read -r candidate; do
-        [[ -n "${candidate}" ]] || continue
-        printf '%s\n' "${candidate}"
-        return 0
-    done < <(
-        docker ps \
-            --filter 'label=codex-safe.session' \
-            --filter "label=codex-safe.project-path=${linked_worktree}" \
-            --filter "label=codex-safe.host-uid=$(id -u)" \
-            --format '{{.ID}}'
-    )
-
-    return 1
-}
-
 assert_equal() {
     local actual=$1
     local expected=$2
@@ -140,6 +123,8 @@ git -C "${primary_repo}" add baseline.txt
 git -C "${primary_repo}" commit -m baseline >/dev/null
 git -C "${primary_repo}" worktree add -b smoke/feature "${linked_worktree}" >/dev/null
 mkdir -p "${nested_directory}"
+project_key="$(printf '%s\0%s' "$(id -u)" "${linked_worktree}" | sha256sum | cut -c1-24)"
+outer_container="codex-safe-${project_key}"
 
 cat >"${probe_script}" <<'PROBE'
 #!/usr/bin/env bash
@@ -391,13 +376,13 @@ launcher_pid=$!
 wait_for_file "${ready_marker}" 120
 
 for (( attempt = 1; attempt <= 30; attempt++ )); do
-    if outer_container="$(find_outer_container)"; then
+    if docker inspect "${outer_container}" >/dev/null 2>&1; then
         break
     fi
     sleep 1
 done
-if [[ -z "${outer_container}" ]]; then
-    echo "smoke: could not identify the live outer container" >&2
+if ! docker inspect "${outer_container}" >/dev/null 2>&1; then
+    echo "smoke: deterministic outer container ${outer_container} was not created" >&2
     exit 1
 fi
 
@@ -477,7 +462,7 @@ assert_report_line "${linked_worktree}" "${reuse_output}" "reused invocation wor
 assert_report_line "${nested_daemon_id}" "${reuse_output}" "reused nested Docker daemon"
 active_project_count="$(
     docker ps \
-        --filter 'label=codex-safe.session' \
+        --filter 'label=codex-safe.managed=true' \
         --filter "label=codex-safe.project-path=${linked_worktree}" \
         --filter "label=codex-safe.host-uid=$(id -u)" \
         --format '{{.ID}}' | wc -l

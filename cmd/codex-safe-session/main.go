@@ -60,9 +60,6 @@ func runCLI(
 		serveContext, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 		if err := app.serve(serveContext, log.New(stderr, "codex-safe-session: ", 0)); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return 0
-			}
 			fmt.Fprintf(stderr, "codex-safe-session: %v\n", err)
 			return 1
 		}

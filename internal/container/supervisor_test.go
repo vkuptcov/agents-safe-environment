@@ -75,8 +75,8 @@ func TestSupervisorStopsBothComponentsOnContextCancellation(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Serve() error = %v, want context.Canceled", err)
+		if err != nil {
+			t.Fatalf("Serve() error = %v, want clean cancellation", err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Serve() did not stop after context cancellation")

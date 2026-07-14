@@ -82,7 +82,11 @@ func RunCommand(ctx context.Context, config RunnerConfig) error {
 
 	registration, err := connectRegistered(ctx, config.SocketPath, config.StartupTimeout)
 	if err != nil {
-		return err
+		return &CommandExitError{
+			err:               err,
+			exitCode:          125,
+			wrapperDiagnostic: true,
+		}
 	}
 	defer registration.Close()
 
@@ -97,18 +101,19 @@ func RunCommand(ctx context.Context, config RunnerConfig) error {
 		return signalProcess(command.Process, syscall.SIGTERM)
 	}
 
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
 	if err := command.Start(); err != nil {
 		return commandStartError(err)
 	}
 
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	childDone := make(chan struct{})
-	go forwardSignals(command.Process, signals, childDone)
+	go forwardSignals(command.Process, signals, childDone, !isTerminalReader(config.Stdin))
 
 	waitErr := command.Wait()
 	close(childDone)
-	signal.Stop(signals)
 	if waitErr == nil {
 		return nil
 	}
@@ -173,15 +178,28 @@ func rejectCommittedShutdown(socketPath string) error {
 	return nil
 }
 
-func forwardSignals(process *os.Process, signals <-chan os.Signal, childDone <-chan struct{}) {
+func forwardSignals(process *os.Process, signals <-chan os.Signal, childDone <-chan struct{}, forwardTerminalSignals bool) {
 	for {
 		select {
 		case processSignal := <-signals:
+			if !forwardTerminalSignals && (processSignal == syscall.SIGHUP ||
+				processSignal == syscall.SIGINT || processSignal == syscall.SIGQUIT) {
+				continue
+			}
 			_ = signalProcess(process, processSignal)
 		case <-childDone:
 			return
 		}
 	}
+}
+
+func isTerminalReader(reader io.Reader) bool {
+	file, ok := reader.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func signalProcess(process *os.Process, processSignal os.Signal) error {

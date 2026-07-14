@@ -323,7 +323,7 @@ func TestDockerLaunchRetriesOnceAfterCommittedShutdown(t *testing.T) {
 		},
 		runErrors: []error{
 			&dockerCommandError{
-				err:    fakeExitError{1},
+				err:    fakeExitError{125},
 				stderr: "codex-safe-session: register session command at socket: unavailable",
 			},
 			nil,

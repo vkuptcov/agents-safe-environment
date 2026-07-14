@@ -130,7 +130,7 @@ func TestRunCLIReportsCommandStartFailure(t *testing.T) {
 func TestRunCLIServeTreatsSignalCancellationAsCleanExit(t *testing.T) {
 	app := unusedApplication()
 	app.serve = func(context.Context, *log.Logger) error {
-		return context.Canceled
+		return nil
 	}
 	if got := runCLI(context.Background(), []string{"serve"}, nil, io.Discard, io.Discard, app); got != 0 {
 		t.Fatalf("exit code = %d, want 0", got)
