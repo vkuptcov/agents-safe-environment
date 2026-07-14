@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -19,8 +20,10 @@ import (
 )
 
 const (
-	sysboxRuntime = "sysbox-runc"
-	sessionLabel  = "codex-safe.session"
+	sysboxRuntime      = "sysbox-runc"
+	sessionLabel       = "codex-safe.session"
+	containerHome      = "/tmp/codex-safe-home"
+	containerGitConfig = containerHome + "/.gitconfig"
 )
 
 // CommandRunner makes Docker process execution replaceable in focused tests.
@@ -51,6 +54,9 @@ type Docker struct {
 	HostUser string
 	// HostGroup is the invoking user's primary group name recreated inside the container.
 	HostGroup string
+	// HostGitConfig is the canonical host path mounted read-only as the container's global Git config.
+	// It is empty when the invoking environment has no $HOME/.gitconfig file.
+	HostGitConfig string
 	// TTY controls whether Docker allocates a terminal for the outer container.
 	TTY bool
 	// NameGenerator creates a unique Docker container name for each session.
@@ -69,6 +75,14 @@ func NewDocker() (*Docker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("look up host group %d: %w", hostGID, err)
 	}
+	hostHome, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve host home directory: %w", err)
+	}
+	hostGitConfig, err := discoverHostGitConfig(hostHome)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Docker{
 		Binary:        "docker",
@@ -81,6 +95,7 @@ func NewDocker() (*Docker, error) {
 		HostGID:       hostGID,
 		HostUser:      hostUser.Username,
 		HostGroup:     hostGroup.Name,
+		HostGitConfig: hostGitConfig,
 		TTY:           isTerminal(os.Stdin) && isTerminal(os.Stdout),
 		NameGenerator: randomSessionName,
 	}, nil
@@ -115,6 +130,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, probe
 		docker.HostGID,
 		docker.HostUser,
 		docker.HostGroup,
+		docker.HostGitConfig,
 		docker.TTY,
 	)
 	if err != nil {
@@ -157,6 +173,11 @@ func (docker *Docker) validateConfiguration() error {
 	}
 	if err := validateAccountName("host group", docker.HostGroup); err != nil {
 		return err
+	}
+	if docker.HostGitConfig != "" {
+		if err := validateMountPath("host Git config", docker.HostGitConfig); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -202,6 +223,7 @@ func BuildDockerArgs(
 	hostGID int,
 	hostUser string,
 	hostGroup string,
+	hostGitConfig string,
 	tty bool,
 ) ([]string, error) {
 	if strings.TrimSpace(image) == "" {
@@ -221,6 +243,11 @@ func BuildDockerArgs(
 	}
 	if err := validateAccountName("host group", hostGroup); err != nil {
 		return nil, err
+	}
+	if hostGitConfig != "" {
+		if err := validateMountPath("host Git config", hostGitConfig); err != nil {
+			return nil, err
+		}
 	}
 	if err := validateMountPath("working directory", plan.WorkingDir); err != nil {
 		return nil, err
@@ -256,6 +283,11 @@ func BuildDockerArgs(
 		"--workdir",
 		plan.WorkingDir,
 	)
+	if hostGitConfig != "" {
+		specification := "type=bind,source=" + hostGitConfig + ",target=" + containerGitConfig
+		specification += ",bind-propagation=rprivate,readonly"
+		args = append(args, "--mount", specification)
+	}
 	for _, mount := range mounts {
 		specification := "type=bind,source=" + mount.Source + ",target=" + mount.Target
 		specification += ",bind-propagation=rprivate"
@@ -268,6 +300,29 @@ func BuildDockerArgs(
 	args = append(args, probe...)
 
 	return args, nil
+}
+
+func discoverHostGitConfig(hostHome string) (string, error) {
+	path, err := filepath.Abs(filepath.Join(hostHome, ".gitconfig"))
+	if err != nil {
+		return "", fmt.Errorf("resolve host Git config path: %w", err)
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("inspect host Git config %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("host Git config %q is not a regular file", path)
+	}
+
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize host Git config %q: %w", path, err)
+	}
+	return filepath.Clean(canonical), nil
 }
 
 func validateAccountName(label string, name string) error {

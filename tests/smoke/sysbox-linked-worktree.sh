@@ -7,6 +7,8 @@ temp_root="$(mktemp -d "${TMPDIR:-/tmp}/codex-safe-smoke.XXXXXX")"
 primary_repo="${temp_root}/primary repo"
 linked_worktree="${temp_root}/feature worktree"
 nested_directory="${linked_worktree}/nested directory"
+host_home="${temp_root}/host home"
+host_git_config="${host_home}/.gitconfig"
 probe_script="${linked_worktree}/smoke-probe.sh"
 ready_marker="${linked_worktree}/.codex-safe-ready-${run_id}"
 continue_marker="${linked_worktree}/.codex-safe-continue-${run_id}"
@@ -24,6 +26,8 @@ outer_log="${temp_root}/outer.log"
 sentinel_name="codex-safe-host-sentinel-${run_id}"
 host_user="$(id -un)"
 host_group="$(id -gn)"
+cyrillic_text="Привет из codex-safe"
+cyrillic_file="${linked_worktree}/phase14-cyrillic.txt"
 launcher_pid=""
 outer_container=""
 
@@ -120,7 +124,11 @@ assert_report_line() {
     fi
 }
 
-mkdir -p "${primary_repo}"
+mkdir -p "${primary_repo}" "${host_home}"
+cat >"${host_git_config}" <<CONFIG
+[codex-safe-smoke]
+    marker = ${run_id}
+CONFIG
 git init -b main "${primary_repo}" >/dev/null
 git -C "${primary_repo}" config user.name "Codex Safe Smoke"
 git -C "${primary_repo}" config user.email "codex-safe@example.invalid"
@@ -148,6 +156,8 @@ nested_daemon_id_file=${11}
 phase8_marker=${12}
 expected_host_user=${13}
 expected_host_group=${14}
+expected_git_config_marker=${15}
+expected_cyrillic_text=${16}
 
 if [[ "$(whoami)" != "${expected_host_user}" ]]; then
     echo "smoke probe: container user name does not match the host" >&2
@@ -155,6 +165,24 @@ if [[ "$(whoami)" != "${expected_host_user}" ]]; then
 fi
 if [[ "$(id -gn)" != "${expected_host_group}" ]]; then
     echo "smoke probe: container primary group name does not match the host" >&2
+    exit 1
+fi
+if [[ "$(git config --global --get codex-safe-smoke.marker)" != "${expected_git_config_marker}" ]]; then
+    echo "smoke probe: host global Git config is not visible" >&2
+    exit 1
+fi
+if printf '\n[codex-safe-smoke-write]\n' >>"${HOME}/.gitconfig" 2>/tmp/git-config-write-error; then
+    echo "smoke probe: host global Git config unexpectedly accepted a write" >&2
+    exit 1
+fi
+if [[ "$(locale charmap)" != "UTF-8" ]]; then
+    echo "smoke probe: container locale is not UTF-8" >&2
+    exit 1
+fi
+cyrillic_file="${linked_worktree}/phase14-cyrillic.txt"
+printf '%s\n' "${expected_cyrillic_text}" >"${cyrillic_file}"
+if [[ "$(cat "${cyrillic_file}")" != "${expected_cyrillic_text}" ]]; then
+    echo "smoke probe: Cyrillic text did not round-trip through the project mount" >&2
     exit 1
 fi
 
@@ -295,6 +323,7 @@ docker run \
     >/dev/null
 host_daemon_id="$(docker info --format '{{.ID}}')"
 
+HOME="${host_home}" \
 "${binary}" \
     --project "${nested_directory}" \
     --image codex-safe-mvp:local \
@@ -314,6 +343,8 @@ host_daemon_id="$(docker info --format '{{.ID}}')"
     "${phase8_marker}" \
     "${host_user}" \
     "${host_group}" \
+    "${run_id}" \
+    "${cyrillic_text}" \
     >"${outer_log}" 2>&1 &
 launcher_pid=$!
 
@@ -356,6 +387,10 @@ assert_report_line \
     "${linked_worktree}|${linked_worktree}|true|rprivate" \
     "${mount_report}" \
     "read-write linked worktree mount"
+assert_report_line \
+    "${host_git_config}|/tmp/codex-safe-home/.gitconfig|false|rprivate" \
+    "${mount_report}" \
+    "read-only host Git config mount"
 if grep --fixed-strings --quiet '/var/run/docker.sock' <<<"${mount_report}"; then
     echo "smoke: outer container unexpectedly mounts the host Docker socket" >&2
     exit 1
@@ -396,6 +431,11 @@ assert_equal \
     "true" \
     "host sentinel state"
 assert_equal "$(cat "${nested_marker}")" "nested marker" "nested marker contents"
+assert_equal "$(cat "${cyrillic_file}")" "${cyrillic_text}" "Cyrillic marker contents"
+assert_equal \
+    "$(git config --file "${host_git_config}" --get codex-safe-smoke.marker)" \
+    "${run_id}" \
+    "host Git config contents"
 assert_equal \
     "$(stat -c '%u:%g' "${nested_marker}")" \
     "$(id -u):$(id -g)" \

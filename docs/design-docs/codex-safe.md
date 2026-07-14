@@ -5,7 +5,7 @@ Status: Proposed
 Scope:
 
 - the `codex-safe` command contract on a Linux host;
-- discovery and mounting of the active Git project, linked worktrees, and `~/.codex`;
+- discovery and mounting of the active Git project, linked worktrees, host `.gitconfig`, and `~/.codex`;
 - an independent Docker daemon running inside a Sysbox container;
 - security boundaries, lifecycle, launch failures, and isolation verification.
 
@@ -161,6 +161,14 @@ the broadest read-only directory first and then applies narrower read-write moun
 If a target requires incompatible sources or modes that this rule cannot resolve, preflight fails. The launcher never
 silently broadens read-write access.
 
+#### Host Git configuration
+
+- When host `$HOME/.gitconfig` exists as a regular file, it is canonicalized and mounted read-only as
+  `$HOME/.gitconfig` in the container's ephemeral home.
+- A missing host `.gitconfig` is allowed and produces no mount.
+- Files referenced through `include.path`, credential helpers, and other configuration are not mounted implicitly.
+  They work only when already available in the image or through another allowed mount.
+
 ### 4. Codex State and Credentials
 
 The entire host `~/.codex` directory is available to Codex read-write. This persists authentication, configuration,
@@ -196,6 +204,9 @@ The container image includes:
 - Docker CLI, Docker daemon, and the Compose plugin;
 - an init process that reaps child processes and handles signals correctly;
 - an entrypoint that starts the daemon, waits for readiness, and then starts Codex.
+
+The image defaults to the `C.UTF-8` locale so interactive shells and text tools correctly classify UTF-8 input and
+output, including Cyrillic, without requiring a language-specific locale.
 
 Codex does not start until the nested daemon passes its readiness check. A timeout or daemon failure prints outer-
 container diagnostics and exits nonzero.

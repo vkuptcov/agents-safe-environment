@@ -244,6 +244,20 @@ Done when: the probe has the host login name, primary group name, UID, and GID.
 5. Extend unit tests for Docker arguments and invalid names.
 6. Require the real-host smoke probe's `whoami` and `id -gn` output to equal the host values.
 
+### Phase 14: Global Git Config and UTF-8 Shell
+
+Purpose: Preserve normal host Git identity settings and support Cyrillic text in the interactive environment.
+Status: done
+Done when: Git reads the host global config through a read-only mount and the probe uses a UTF-8 locale.
+
+1. Resolve an existing `$HOME/.gitconfig` to a canonical regular file without requiring it to exist.
+2. Mount that file read-only at `.gitconfig` inside the ephemeral container home.
+3. Do not implicitly mount files referenced by Git includes, credential helpers, or the rest of the host home.
+4. Set the image's default locale to `C.UTF-8` without installing a language-specific locale.
+5. Add unit coverage for optional config discovery, path validation, and Docker mount arguments.
+6. Extend the real-host smoke probe to read a deterministic global setting and reject writes to the config.
+7. Require `locale charmap` to report UTF-8 and round-trip Cyrillic text through the project mount.
+
 ## Validation Gates
 
 - `gofmt -w cmd internal` completes, and a subsequent diff contains no Go formatting changes.
@@ -256,6 +270,7 @@ Done when: the probe has the host login name, primary group name, UID, and GID.
 - A real PTY probe accepts `pwd`, `docker info`, and `exit`; a non-TTY pipe reaches `bash` stdin.
 - The smoke probe executes Compose V2, `make`, `less`, and `rg`, and manages a nested Compose service.
 - The smoke probe reports the same login and primary group names as the invoking host account.
+- The smoke probe reads the mounted host Git config, cannot modify it, and round-trips Cyrillic under UTF-8.
 - `make build` writes `bin/codex-safe`; `make test` and `make docker-build` pass; the smoke probe registers Make target
   completion.
 - `git diff --check` reports no whitespace errors.
@@ -317,3 +332,5 @@ Done when: the probe has the host login name, primary group name, UID, and GID.
 - 2026-07-14: Replaced image-defined account names with the invoking host login and primary group names. Docker
   arguments now carry names and numeric IDs, the entrypoint reconciles passwd and group entries, and the smoke test
   requires `whoami` and `id -gn` to match the host.
+- 2026-07-14: Added an optional read-only mount for host `$HOME/.gitconfig` and enabled `C.UTF-8` in the image. The
+  smoke fixture now proves global Git config visibility, write protection, UTF-8 locale selection, and Cyrillic text.

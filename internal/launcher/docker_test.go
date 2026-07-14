@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,6 +33,7 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 		1000,
 		"developer",
 		"developers",
+		"",
 		true,
 	)
 	if err != nil {
@@ -92,7 +94,7 @@ func TestBuildDockerArgsIncludesMountModesInOrder(t *testing.T) {
 			{Source: "/primary/.git", Target: "/primary/.git"},
 			{Source: "/worktree", Target: "/worktree"},
 		},
-	}, "image", []string{"true"}, "session", 1000, 1000, "developer", "developers", false)
+	}, "image", []string{"true"}, "session", 1000, 1000, "developer", "developers", "", false)
 	if err != nil {
 		t.Fatalf("BuildDockerArgs() error = %v", err)
 	}
@@ -125,6 +127,7 @@ func TestBuildDockerArgsAttachesStdinWithoutForcingTTY(t *testing.T) {
 		1000,
 		"developer",
 		"developers",
+		"",
 		false,
 	)
 	if err != nil {
@@ -137,6 +140,41 @@ func TestBuildDockerArgsAttachesStdinWithoutForcingTTY(t *testing.T) {
 	}
 	if strings.Contains(joined, "--tty") {
 		t.Fatalf("docker args force a TTY for a non-terminal caller: %s", joined)
+	}
+}
+
+func TestBuildDockerArgsMountsHostGitConfigReadOnly(t *testing.T) {
+	t.Parallel()
+
+	args, err := BuildDockerArgs(
+		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		"image",
+		[]string{"true"},
+		"session",
+		1000,
+		1000,
+		"developer",
+		"developers",
+		"/home/developer profile/.gitconfig",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("BuildDockerArgs() error = %v", err)
+	}
+
+	var specifications []string
+	for index, arg := range args {
+		if arg == "--mount" {
+			specifications = append(specifications, args[index+1])
+		}
+	}
+	want := []string{
+		"type=bind,source=/home/developer profile/.gitconfig," +
+			"target=/tmp/codex-safe-home/.gitconfig,bind-propagation=rprivate,readonly",
+		"type=bind,source=/project,target=/project,bind-propagation=rprivate",
+	}
+	if !reflect.DeepEqual(specifications, want) {
+		t.Errorf("mount specifications = %#v, want %#v", specifications, want)
 	}
 }
 
@@ -167,6 +205,7 @@ func TestBuildDockerArgsRejectsUnsupportedAccountNames(t *testing.T) {
 				1000,
 				test.hostUser,
 				test.hostGroup,
+				"",
 				false,
 			)
 			if err == nil {
@@ -176,6 +215,74 @@ func TestBuildDockerArgsRejectsUnsupportedAccountNames(t *testing.T) {
 				t.Fatalf("BuildDockerArgs() error = %q, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestBuildDockerArgsRejectsNonCanonicalHostGitConfig(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildDockerArgs(
+		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		"image",
+		[]string{"true"},
+		"session",
+		1000,
+		1000,
+		"developer",
+		"developers",
+		"relative/.gitconfig",
+		false,
+	)
+	if err == nil {
+		t.Fatal("BuildDockerArgs() error = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "host Git config") || !strings.Contains(err.Error(), "not absolute") {
+		t.Fatalf("BuildDockerArgs() error = %q, want non-absolute Git config error", err)
+	}
+}
+
+func TestDiscoverHostGitConfig(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	got, err := discoverHostGitConfig(home)
+	if err != nil {
+		t.Fatalf("discoverHostGitConfig() missing file error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("discoverHostGitConfig() missing file = %q, want empty", got)
+	}
+
+	path := filepath.Join(home, ".gitconfig")
+	if err := os.WriteFile(path, []byte("[user]\n\tname = Developer\n"), 0o600); err != nil {
+		t.Fatalf("write Git config: %v", err)
+	}
+	got, err = discoverHostGitConfig(home)
+	if err != nil {
+		t.Fatalf("discoverHostGitConfig() error = %v", err)
+	}
+	want, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolve Git config fixture: %v", err)
+	}
+	if got != want {
+		t.Errorf("discoverHostGitConfig() = %q, want %q", got, want)
+	}
+}
+
+func TestDiscoverHostGitConfigRejectsDirectory(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".gitconfig"), 0o700); err != nil {
+		t.Fatalf("create Git config directory: %v", err)
+	}
+	_, err := discoverHostGitConfig(home)
+	if err == nil {
+		t.Fatal("discoverHostGitConfig() error = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "is not a regular file") {
+		t.Fatalf("discoverHostGitConfig() error = %q, want regular-file error", err)
 	}
 }
 

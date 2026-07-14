@@ -58,5 +58,9 @@ RUN chmod 0755 /usr/local/bin/codex-safe-entrypoint \
 # container. This path is not a bind mount of /var/run/docker.sock from the host.
 ENV DOCKER_HOST=unix:///var/run/docker.sock
 
+# Ubuntu's built-in C.UTF-8 locale lets Bash, readline, Git, and text tools treat Cyrillic input
+# and output as UTF-8 without generating or installing a language-specific locale.
+ENV LANG=C.UTF-8
+
 # Tini is PID 1 so orphaned nested-daemon children are reaped and signals reach the entrypoint.
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/codex-safe-entrypoint"]

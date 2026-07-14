@@ -15,6 +15,8 @@ The current command is a probe runner, not the finished Codex launcher. It does 
 - The outer container can use `sysbox-runc` without `--privileged` or the host Docker socket.
 - A private nested Docker daemon can run containers and pass the project through at the same absolute path.
 - The probe uses the invoking host user's login name, primary group name, UID, and GID.
+- An existing host `$HOME/.gitconfig` is available as the probe's read-only global Git config.
+- Interactive tools use a UTF-8 locale and handle Cyrillic input and output.
 - Files created by the probe and nested containers retain ownership that remains usable from the host.
 
 See the [design document](docs/design-docs/codex-safe.md) for the intended product and security model. The
@@ -61,6 +63,11 @@ The nested runtime preserves the absolute bind-mount contract, including project
 
 The environment includes Git, Docker Engine and CLI, Docker Compose V2, `make`, `less`, and `rg`.
 Interactive Bash sessions also load the system completion framework, including Make target completion.
+The image defaults to the `C.UTF-8` locale, so Bash and text tools handle Cyrillic and other UTF-8 text.
+
+If host `$HOME/.gitconfig` exists, the launcher mounts it read-only at the global Git config path in the ephemeral
+container home. Files referenced by `include.path` are available only when they are independently present in an
+allowed mount; this does not expose the rest of the host home directory.
 
 ## Run a probe
 
@@ -113,7 +120,8 @@ bash tests/smoke/sysbox-linked-worktree.sh
 
 The harness builds the Go binary and image, creates a temporary primary repository and linked worktree, starts a host
 sentinel container, and performs live assertions against the outer and nested containers. It verifies account names,
-mount modes, Git writes, daemon separation, nested project access, file ownership, and cleanup.
+global Git config, UTF-8 text, mount modes, Git writes, daemon separation, nested project access, file ownership, and
+cleanup.
 
 The smoke test was run successfully on 2026-07-13 with Docker Engine 28.3.3, Sysbox CE 0.7.0, cgroup v2, and the
 `overlay2` storage driver. Other kernel, filesystem, and Sysbox combinations must pass the same test before use.
