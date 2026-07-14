@@ -4,3 +4,6 @@
 
 # Visual Studio Code
 .vscode/
+
+# Local build artifacts
+/bin/

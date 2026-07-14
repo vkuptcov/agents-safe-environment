@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+if [[ -f /usr/share/bash-completion/bash_completion ]]; then
+    source /usr/share/bash-completion/bash_completion
+fi
+
+if [[ $- == *i* ]]; then
+    case "${TERM:-}" in
+        xterm-color | *-256color)
+            PS1='\[\e[01;32m\]\u@\h\[\e[00m\]:\[\e[01;34m\]\w\[\e[00m\]\$ '
+            ;;
+    esac
+
+    alias ls='ls --color=auto'
+    alias grep='grep --color=auto'
+fi
