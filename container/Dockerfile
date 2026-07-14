@@ -2,10 +2,13 @@
 # stage copy one verified upstream binary without keeping download tools in the image.
 ARG TARGETARCH
 
-# crun is a low-level OCI container runtime: the nested Docker daemon invokes it to create and
-# start nested containers. It replaces Docker's usual runc here because the Ubuntu runc build
-# failed the MVP's Sysbox bind probe when an absolute target path contained spaces. Checksums make
-# the remote ADD reproducible and fail the build if the pinned release asset changes.
+# crun is the low-level OCI runtime used by the Docker daemon inside the Sysbox container. A
+# project directory reaches a nested container through two bind mounts: host Docker first mounts
+# it into the outer Sysbox container, then inner Docker mounts that already-mounted path again.
+# With a target path containing spaces, Ubuntu's runc 1.3.4 completed the initial bind but failed
+# its follow-up remount while reapplying the inherited MS_NOATIME flag; the kernel returned EINVAL.
+# crun 1.28 handles the same nested bind successfully. Checksums make the remote ADD reproducible
+# and fail the build if the pinned release asset changes.
 FROM scratch AS crun-amd64
 ADD --checksum=sha256:2aa6b7024a9c9f153895c0d11ae233d3758f54844011c3a039e3e89048d01d42 \
     https://github.com/containers/crun/releases/download/1.28/crun-1.28-linux-amd64 \
