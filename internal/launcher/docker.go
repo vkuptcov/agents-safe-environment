@@ -14,11 +14,10 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
+	"github.com/vkuptcov/agents-safe-environment/internal/terminal"
 )
 
 const (
@@ -112,7 +111,7 @@ func NewDocker() (*Docker, error) {
 		HostGroup:     hostGroup.Name,
 		HostHome:      hostHome,
 		HostGitConfig: hostGitConfig,
-		TTY:           isTerminal(os.Stdin) && isTerminal(os.Stdout),
+		TTY:           terminal.IsReader(os.Stdin) && terminal.IsReader(os.Stdout),
 	}, nil
 }
 
@@ -665,21 +664,6 @@ func validateAccountName(label string, name string) error {
 	return nil
 }
 
-// isTerminal uses the Linux terminal ioctl so other character devices, such as /dev/null, are not treated as TTYs.
-func isTerminal(file *os.File) bool {
-	var termios syscall.Termios
-	_, _, errno := syscall.Syscall6(
-		syscall.SYS_IOCTL,
-		file.Fd(),
-		syscall.TCGETS,
-		uintptr(unsafe.Pointer(&termios)),
-		0,
-		0,
-		0,
-	)
-	return errno == 0
-}
-
 func validateSessionName(name string) error {
 	if name == "" {
 		return errors.New("session name is empty")
@@ -721,7 +705,20 @@ func commandExitCode(err error) int {
 }
 
 func isRetryableExecError(err error) bool {
-	return commandExitCode(err) == 125
+	var commandError interface{ CommandStderr() string }
+	if !errors.As(err, &commandError) {
+		return false
+	}
+	message := strings.ToLower(commandError.CommandStderr())
+	if commandExitCode(err) == 125 {
+		return strings.Contains(message, "codex-safe-session: register session command")
+	}
+	if commandExitCode(err) != 1 || !strings.Contains(message, "error response from daemon:") {
+		return false
+	}
+	return strings.Contains(message, "is not running") ||
+		strings.Contains(message, "no such container") ||
+		strings.Contains(message, "container is restarting")
 }
 
 func commandFailure(action string, output []byte, err error) error {

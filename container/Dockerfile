@@ -16,6 +16,7 @@ COPY go.sum ./
 COPY cmd/codex-safe-session/ cmd/codex-safe-session/
 COPY internal/container/ internal/container/
 COPY internal/session/ internal/session/
+COPY internal/terminal/ internal/terminal/
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
     go build -trimpath -ldflags='-s -w' -o /out/codex-safe-session ./cmd/codex-safe-session
 

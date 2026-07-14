@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/vkuptcov/agents-safe-environment/internal/terminal"
 )
 
 func TestBuildDockerRunArgsUsesDetachedSysboxAndIdentityLabels(t *testing.T) {
@@ -323,8 +325,8 @@ func TestDockerLaunchRetriesOnceAfterCommittedShutdown(t *testing.T) {
 		},
 		runErrors: []error{
 			&dockerCommandError{
-				err:    fakeExitError{125},
-				stderr: "codex-safe-session: register session command at socket: unavailable",
+				err:    fakeExitError{1},
+				stderr: "Error response from daemon: container is not running",
 			},
 			nil,
 		},
@@ -336,6 +338,27 @@ func TestDockerLaunchRetriesOnceAfterCommittedShutdown(t *testing.T) {
 		t.Fatalf("Run calls = %d, want one retry", len(runner.runCalls))
 	}
 	assertWrappedRun(t, runner.runCalls[1:], newID, []string{"true"})
+}
+
+func TestDockerLaunchDoesNotRetryUserCommandExit125(t *testing.T) {
+	t.Parallel()
+	containerID := strings.Repeat("4", 64)
+	runner := &fakeCommandRunner{
+		outputs: []commandResult{
+			{output: inspectionJSON(t, containerID, true, "running", matchingLabels("/project", 1000))},
+		},
+		runErrors: []error{&dockerCommandError{
+			err:    fakeExitError{125},
+			stderr: "user command completed with status 125",
+		}},
+	}
+	err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"})
+	if err == nil {
+		t.Fatal("Launch() succeeded after user command exit 125")
+	}
+	if len(runner.runCalls) != 1 {
+		t.Fatalf("Run calls = %d, want no retry for user status 125", len(runner.runCalls))
+	}
 }
 
 func TestDockerLaunchRejectsMissingSysbox(t *testing.T) {
@@ -410,8 +433,8 @@ func TestIsTerminalRejectsDevNull(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = file.Close() })
-	if isTerminal(file) {
-		t.Fatalf("isTerminal(%s) = true", os.DevNull)
+	if terminal.IsReader(file) {
+		t.Fatalf("terminal.IsReader(%s) = true", os.DevNull)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/vkuptcov/agents-safe-environment/internal/terminal"
 )
 
 const (
@@ -110,7 +112,7 @@ func RunCommand(ctx context.Context, config RunnerConfig) error {
 	}
 
 	childDone := make(chan struct{})
-	go forwardSignals(command.Process, signals, childDone, !isTerminalReader(config.Stdin))
+	go forwardSignals(command.Process, signals, childDone, !terminal.IsReader(config.Stdin))
 
 	waitErr := command.Wait()
 	close(childDone)
@@ -191,15 +193,6 @@ func forwardSignals(process *os.Process, signals <-chan os.Signal, childDone <-c
 			return
 		}
 	}
-}
-
-func isTerminalReader(reader io.Reader) bool {
-	file, ok := reader.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func signalProcess(process *os.Process, processSignal os.Signal) error {
