@@ -30,15 +30,25 @@ type CommandRunner interface {
 
 // Docker launches an outer container through the host Docker CLI.
 type Docker struct {
-	Binary        string
-	GOOS          string
-	Runner        CommandRunner
-	Stdin         io.Reader
-	Stdout        io.Writer
-	Stderr        io.Writer
-	HostUID       int
-	HostGID       int
-	TTY           bool
+	// Binary is the host Docker CLI executable.
+	Binary string
+	// GOOS is the host operating system checked by the launcher preflight.
+	GOOS string
+	// Runner executes host Docker CLI commands.
+	Runner CommandRunner
+	// Stdin is forwarded to the outer container.
+	Stdin io.Reader
+	// Stdout receives output from the outer container.
+	Stdout io.Writer
+	// Stderr receives launcher and outer-container diagnostics.
+	Stderr io.Writer
+	// HostUID is the invoking user's numeric UID forwarded to the container entrypoint.
+	HostUID int
+	// HostGID is the invoking user's numeric GID forwarded to the container entrypoint.
+	HostGID int
+	// TTY controls whether Docker allocates a terminal for the outer container.
+	TTY bool
+	// NameGenerator creates a unique Docker container name for each session.
 	NameGenerator func() (string, error)
 }
 

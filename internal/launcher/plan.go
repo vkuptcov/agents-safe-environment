@@ -10,15 +10,21 @@ import (
 
 // Mount describes one host bind mount in the outer container.
 type Mount struct {
-	Source   string
-	Target   string
+	// Source is the canonical absolute path on the host.
+	Source string
+	// Target is the absolute path inside the container. It normally equals Source so Git and
+	// nested Docker continue to see the same project paths as the host.
+	Target string
+	// ReadOnly prevents writes through this mount when true.
 	ReadOnly bool
 }
 
 // Plan contains the filesystem portion of an outer-container launch.
 type Plan struct {
+	// WorkingDir is the selected project directory used as the container working directory.
 	WorkingDir string
-	Mounts     []Mount
+	// Mounts is the ordered, normalized set of bind mounts required by the selected checkout.
+	Mounts []Mount
 }
 
 // BuildPlan converts a discovered Git project into a validated mount plan.

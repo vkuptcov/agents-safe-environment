@@ -11,12 +11,21 @@ import (
 
 // Project contains the canonical host paths needed to mount a Git working tree.
 type Project struct {
+	// RequestedDir is the user-selected directory and becomes the container working directory.
+	// It may be any directory inside WorktreeRoot.
 	RequestedDir string
+	// WorktreeRoot is the top-level directory of the selected checkout or linked worktree.
 	WorktreeRoot string
-	GitDir       string
+	// GitDir is the metadata directory for this specific worktree. In a regular checkout it
+	// equals CommonGitDir; in a linked worktree it is normally below CommonGitDir/worktrees.
+	GitDir string
+	// CommonGitDir is the metadata directory shared by every worktree of the repository.
 	CommonGitDir string
-	PrimaryRoot  string
-	Linked       bool
+	// PrimaryRoot is the checkout whose .git directory is CommonGitDir. It equals
+	// WorktreeRoot for a regular checkout and points to the primary checkout for a linked one.
+	PrimaryRoot string
+	// Linked reports whether the selected checkout is a linked Git worktree.
+	Linked bool
 }
 
 // Discover resolves a regular checkout or linked worktree rooted around requestedPath.
