@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	containerRuntime "github.com/vkuptcov/agents-safe-environment/internal/container"
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
@@ -100,17 +101,11 @@ func runCLI(
 }
 
 func serveManager(ctx context.Context, logger *log.Logger) error {
-	manager, err := session.NewManager(session.ManagerConfig{
-		SocketPath:  session.DefaultSocketPath,
-		SocketUID:   os.Getuid(),
-		SocketGID:   os.Getgid(),
-		IdleTimeout: session.DefaultIdleTimeout,
-		Log:         logger,
-	})
+	supervisor, err := containerRuntime.NewSupervisorFromEnvironment(logger)
 	if err != nil {
 		return err
 	}
-	return manager.Serve(ctx)
+	return supervisor.Serve(ctx)
 }
 
 func printUsage(output io.Writer) {

@@ -1,6 +1,22 @@
 # BuildKit supplies TARGETARCH. The architecture-specific scratch stages below let the final
 # stage copy one verified upstream binary without keeping download tools in the image.
 ARG TARGETARCH
+ARG TARGETOS=linux
+
+# Build the container-side manager in a stage pinned to the Go version declared by go.mod. The
+# static binary contains both the privileged `serve` entrypoint and unprivileged `run` wrapper;
+# the final interactive image does not retain the compiler, source tree, or module cache.
+FROM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c \
+    AS session-builder
+ARG TARGETARCH
+ARG TARGETOS
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/codex-safe-session/ cmd/codex-safe-session/
+COPY internal/container/ internal/container/
+COPY internal/session/ internal/session/
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+    go build -trimpath -ldflags='-s -w' -o /out/codex-safe-session ./cmd/codex-safe-session
 
 # crun is the low-level OCI runtime used by the Docker daemon inside the Sysbox container. A
 # project directory reaches a nested container through two bind mounts: host Docker first mounts
@@ -50,10 +66,12 @@ RUN apt-get update \
 COPY container/entrypoint.sh /usr/local/bin/codex-safe-entrypoint
 COPY container/bashrc /etc/codex-safe/bashrc
 COPY --from=crun --chmod=0755 /crun /usr/local/bin/crun
+COPY --from=session-builder --chmod=0755 /out/codex-safe-session /usr/local/bin/codex-safe-session
 
-# Fail the image build immediately if the downloaded binary is unusable on the target platform.
+# Fail the image build immediately if either copied binary is unusable on the target platform.
 RUN chmod 0755 /usr/local/bin/codex-safe-entrypoint \
-    && /usr/local/bin/crun --version
+    && /usr/local/bin/crun --version \
+    && /usr/local/bin/codex-safe-session --help
 
 # Both the probe and nested containers use only the daemon socket created inside the outer
 # container. This path is not a bind mount of /var/run/docker.sock from the host.

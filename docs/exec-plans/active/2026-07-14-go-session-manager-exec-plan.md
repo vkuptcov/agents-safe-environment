@@ -108,7 +108,7 @@ Commit: `feat: add session command wrapper`
 ### Phase 3: Go Container Entrypoint
 
 Purpose: Replace shell bootstrap and supervision behavior with tested Go components before the atomic image cutover.
-Status: to be done
+Status: done
 Done when: `codex-safe-session serve` can reconcile identity, prepare the home, start a ready dockerd, run the manager,
 and stop dockerd without shell orchestration.
 
@@ -223,6 +223,8 @@ Commit: `docs: document managed project sessions`
 
 ## Progress Notes
 
+- 2026-07-14: Phase 3 moved identity, home, sudoers, dockerd readiness, diagnostics, and shutdown behavior into tested
+  Go components. Full race tests, `make test`, image build, and the image-installed binary help check pass.
 - 2026-07-14: Phase 2 added the command wrapper and strict session CLI. Both binaries build under `bin/`; focused race
   tests and `make test` cover argv, streams, environment, working directory, registration lifetime, signals, and exits.
 - 2026-07-14: Phase 1 added the manager protocol and Unix-socket state machine. `make test`, focused vet, and
