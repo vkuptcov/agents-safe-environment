@@ -53,8 +53,9 @@ func TestRunParsesFlagsAndForwardsProbe(t *testing.T) {
 		WorktreeRoot: "/project",
 	}
 	wantPlan := launcher.Plan{
-		WorkingDir: "/project/nested",
-		Mounts:     []launcher.Mount{{Source: "/project", Target: "/project"}},
+		ProjectRoot: "/project",
+		WorkingDir:  "/project/nested",
+		Mounts:      []launcher.Mount{{Source: "/project", Target: "/project"}},
 	}
 	fakeDocker := &recordingDocker{}
 	app := application{

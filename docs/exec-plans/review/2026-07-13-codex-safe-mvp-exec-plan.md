@@ -298,6 +298,21 @@ Done when: the recreated host user can run `sudo --non-interactive` as container
 6. Verify `sudo apt-get update` in a real codex-safe session.
 7. Document that sudo reaches Sysbox-container root, not host root.
 
+### Phase 18: Active Project Container Reuse
+
+Purpose: Route later commands for a worktree into its already-running outer container without changing `--rm` cleanup.
+Status: done
+Done when: a second invocation for one live worktree uses the same outer container and nested Docker daemon.
+
+1. Add the canonical worktree root to the launch plan as the stable managed-project identity.
+2. Label new containers with `codex-safe.project-path` and `codex-safe.host-uid` in addition to the session label.
+3. Search only running containers by all three labels before creating a new session.
+4. If exactly one container matches, wait for its bootstrap readiness marker and run the command through `docker exec`.
+5. Preserve stdin, optional TTY, host UID/GID, host `HOME`, and the newly requested working directory during exec.
+6. Keep `docker run --rm` when no container matches, and reject multiple matches instead of choosing arbitrarily.
+7. Unit-test label construction, lookup, exec argv, readiness waiting, and ambiguous matches.
+8. Extend the Sysbox smoke test to prove the second invocation sees the same hostname and nested daemon ID.
+
 ## Validation Gates
 
 - `gofmt -w cmd internal` completes, and a subsequent diff contains no Go formatting changes.
@@ -314,6 +329,7 @@ Done when: the recreated host user can run `sudo --non-interactive` as container
 - The smoke probe's `HOME` and passwd home equal host `$HOME` without a broad host-home mount.
 - The smoke probe sees 256 terminal colors and loads the interactive colored prompt and command aliases.
 - The smoke probe obtains container UID `0` through passwordless sudo without gaining host-root access.
+- A second invocation for the live smoke worktree reuses its hostname, host identity, and nested Docker daemon.
 - `make build` writes `bin/codex-safe`; `make test` and `make docker-build` pass; the smoke probe registers Make target
   completion.
 - `git diff --check` reports no whitespace errors.
@@ -340,7 +356,8 @@ Done when: the recreated host user can run `sudo --non-interactive` as container
 - CPU, memory, PID, disk, and nested-Docker cache policies.
 - Persistent nested images, volumes, or build cache.
 - Signal and lifecycle coverage beyond normal terminal exit and Docker's attached-session behavior.
-- Parallel sessions, stale-session cleanup commands, and host port publishing.
+- Independent parallel outer sessions for one worktree, stopped-session resume, stale-session cleanup commands, and
+  host port publishing.
 - macOS, Windows, Docker Desktop, rootless Docker, remote daemons, bare repositories, and external common Git dirs.
 - Production image publication, signing, digest policy, installers, and release packaging.
 
@@ -383,3 +400,5 @@ Done when: the recreated host user can run `sudo --non-interactive` as container
   directory, while `ls` and `grep` use automatic color modes that remain disabled for redirected output.
 - 2026-07-14: Installed `sudo` and generated a validated `NOPASSWD` policy for the recreated host account. The smoke
   probe now proves non-interactive escalation to Sysbox-container root and rejects user writes to the policy file.
+- 2026-07-14: Added canonical project-path and host-UID labels. Later invocations for the same live worktree now wait
+  for bootstrap readiness and execute through `docker exec`, while the main session retains automatic `--rm` cleanup.

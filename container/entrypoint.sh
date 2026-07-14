@@ -192,6 +192,10 @@ install \
     --mode=0644 \
     /etc/codex-safe/bashrc \
     "${host_home}/.bashrc"
+# Concurrent codex-safe invocations wait for this marker before docker exec, so they cannot
+# enter while the host account, home directory, or nested daemon is only partially configured.
+mkdir -p /run/codex-safe
+touch /run/codex-safe/ready
 
 exec setpriv \
     --reuid="${host_uid}" \

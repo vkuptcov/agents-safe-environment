@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	sysboxRuntime = "sysbox-runc"
-	sessionLabel  = "codex-safe.session"
+	sysboxRuntime    = "sysbox-runc"
+	sessionLabel     = "codex-safe.session"
+	projectPathLabel = "codex-safe.project-path"
+	hostUIDLabel     = "codex-safe.host-uid"
 )
 
 // CommandRunner makes Docker process execution replaceable in focused tests.
@@ -110,7 +112,7 @@ func NewDocker() (*Docker, error) {
 	}, nil
 }
 
-// Launch validates the host and image, then runs the probe in an ephemeral Sysbox container.
+// Launch executes the probe in an active project container or starts a new ephemeral one.
 func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, probe []string) error {
 	if err := docker.validateConfiguration(); err != nil {
 		return err
@@ -118,6 +120,46 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, probe
 	if len(probe) == 0 {
 		return errors.New("probe command is required")
 	}
+	if strings.TrimSpace(image) == "" {
+		return errors.New("container image is required")
+	}
+	if _, err := validatePlan(plan); err != nil {
+		return err
+	}
+
+	containerID, err := docker.findRunningProjectContainer(ctx, plan.ProjectRoot)
+	if err != nil {
+		return err
+	}
+	if containerID != "" {
+		if err := docker.waitForProjectContainer(ctx, containerID); err != nil {
+			return err
+		}
+		args, err := BuildDockerExecArgs(
+			plan,
+			probe,
+			containerID,
+			docker.HostUID,
+			docker.HostGID,
+			docker.HostHome,
+			docker.TTY,
+		)
+		if err != nil {
+			return err
+		}
+		if err := docker.Runner.Run(
+			ctx,
+			docker.Binary,
+			args,
+			docker.Stdin,
+			docker.Stdout,
+			docker.Stderr,
+		); err != nil {
+			return fmt.Errorf("exec in active Sysbox container: %w", err)
+		}
+		return nil
+	}
+
 	if err := docker.preflight(ctx, image); err != nil {
 		return err
 	}
@@ -157,6 +199,66 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, probe
 		return fmt.Errorf("run Sysbox container: %w", err)
 	}
 	return nil
+}
+
+func (docker *Docker) waitForProjectContainer(ctx context.Context, containerID string) error {
+	const waitCommand = `for ((attempt = 0; attempt < 240; attempt++)); do
+	[[ -e /run/codex-safe/ready ]] && exit 0
+	sleep 0.25
+done
+exit 1`
+
+	output, err := docker.Runner.CombinedOutput(
+		ctx,
+		docker.Binary,
+		"exec",
+		containerID,
+		"bash",
+		"-c",
+		waitCommand,
+	)
+	if err != nil {
+		return commandFailure("wait for active codex-safe project container", output, err)
+	}
+	return nil
+}
+
+func (docker *Docker) findRunningProjectContainer(ctx context.Context, projectRoot string) (string, error) {
+	output, err := docker.Runner.CombinedOutput(
+		ctx,
+		docker.Binary,
+		"container",
+		"ls",
+		"--quiet",
+		"--no-trunc",
+		"--filter",
+		"label="+sessionLabel,
+		"--filter",
+		"label="+projectPathLabel+"="+projectRoot,
+		"--filter",
+		"label="+hostUIDLabel+"="+strconv.Itoa(docker.HostUID),
+	)
+	if err != nil {
+		return "", commandFailure("find active codex-safe project container", output, err)
+	}
+
+	containerIDs := strings.Fields(string(output))
+	for _, containerID := range containerIDs {
+		if err := validateContainerID(containerID); err != nil {
+			return "", fmt.Errorf("parse active codex-safe project container: %w", err)
+		}
+	}
+	if len(containerIDs) > 1 {
+		return "", fmt.Errorf(
+			"multiple active codex-safe containers manage project %q: %s",
+			projectRoot,
+			strings.Join(containerIDs, ", "),
+		)
+	}
+	if len(containerIDs) == 1 {
+		return containerIDs[0], nil
+	}
+	return "", nil
 }
 
 func (docker *Docker) validateConfiguration() error {
@@ -272,11 +374,7 @@ func BuildDockerArgs(
 			return nil, err
 		}
 	}
-	if err := validateMountPath("working directory", plan.WorkingDir); err != nil {
-		return nil, err
-	}
-
-	mounts, err := normalizeMounts(plan.Mounts)
+	mounts, err := validatePlan(plan)
 	if err != nil {
 		return nil, err
 	}
@@ -295,6 +393,10 @@ func BuildDockerArgs(
 		sessionName,
 		"--label",
 		sessionLabel+"="+sessionName,
+		"--label",
+		projectPathLabel+"="+plan.ProjectRoot,
+		"--label",
+		hostUIDLabel+"="+strconv.Itoa(hostUID),
 		"--env",
 		"CODEX_SAFE_HOST_UID="+strconv.Itoa(hostUID),
 		"--env",
@@ -326,6 +428,66 @@ func BuildDockerArgs(
 	args = append(args, probe...)
 
 	return args, nil
+}
+
+// BuildDockerExecArgs returns argv for a probe in an already-running project container.
+func BuildDockerExecArgs(
+	plan Plan,
+	probe []string,
+	containerID string,
+	hostUID int,
+	hostGID int,
+	hostHome string,
+	tty bool,
+) ([]string, error) {
+	if len(probe) == 0 {
+		return nil, errors.New("probe command is required")
+	}
+	if err := validateContainerID(containerID); err != nil {
+		return nil, err
+	}
+	if hostUID < 0 || hostGID < 0 {
+		return nil, fmt.Errorf("invalid host identity %d:%d", hostUID, hostGID)
+	}
+	if hostHome == "/" {
+		return nil, errors.New("host home directory cannot be the filesystem root")
+	}
+	if err := validateMountPath("host home directory", hostHome); err != nil {
+		return nil, err
+	}
+	if _, err := validatePlan(plan); err != nil {
+		return nil, err
+	}
+
+	args := []string{
+		"exec",
+		"--interactive",
+	}
+	if tty {
+		args = append(args, "--tty")
+	}
+	args = append(args,
+		"--user",
+		strconv.Itoa(hostUID)+":"+strconv.Itoa(hostGID),
+		"--env",
+		"HOME="+hostHome,
+		"--workdir",
+		plan.WorkingDir,
+		containerID,
+	)
+	args = append(args, probe...)
+
+	return args, nil
+}
+
+func validateContainerID(containerID string) error {
+	if len(containerID) < 12 || len(containerID) > 64 || len(containerID)%2 != 0 {
+		return fmt.Errorf("invalid Docker container ID %q", containerID)
+	}
+	if _, err := hex.DecodeString(containerID); err != nil {
+		return fmt.Errorf("invalid Docker container ID %q", containerID)
+	}
+	return nil
 }
 
 func discoverHostGitConfig(hostHome string) (string, error) {

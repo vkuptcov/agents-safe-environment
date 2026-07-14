@@ -2,7 +2,8 @@
 
 This repository contains a small Go launcher that tests the infrastructure needed for a safer local agent
 environment. It starts an ephemeral outer container through Sysbox, mounts one Git checkout at its original absolute
-path, and starts a private Docker daemon inside the container.
+path, and starts a private Docker daemon inside the container. A later invocation for the same live worktree reuses
+that container instead of creating another nested Docker environment.
 
 The current command is a probe runner, not the finished Codex launcher. It does not install Codex or mount
 `~/.codex`.
@@ -20,6 +21,7 @@ The current command is a probe runner, not the finished Codex launcher. It does 
 - Interactive tools use a UTF-8 locale and handle Cyrillic input and output.
 - Interactive Bash sessions use a colored prompt and color-aware command defaults.
 - Files created by the probe and nested containers retain ownership that remains usable from the host.
+- Concurrent commands for one worktree execute in its already-running outer container and share its nested daemon.
 
 See the [design document](docs/design-docs/codex-safe.md) for the intended product and security model. The
 [MVP execution plan](docs/exec-plans/review/2026-07-13-codex-safe-mvp-exec-plan.md) records the implementation scope
@@ -95,6 +97,17 @@ docker compose up -d
 docker compose ps
 ```
 
+While that shell remains open, another terminal can run a command in the same outer container:
+
+```bash
+./bin/codex-safe --project . -- make test
+```
+
+New outer containers carry the canonical worktree root in `codex-safe.project-path` and the invoking UID in
+`codex-safe.host-uid`. The launcher searches running containers by both labels. One match is reused with `docker exec`;
+multiple matches are rejected as ambiguous. The repeated invocation may select a different directory inside the same
+worktree, and that directory becomes the exec working directory.
+
 When stdin and stdout are attached to a terminal, the launcher allocates a Docker TTY and forwards terminal input.
 For pipelines and redirected output it keeps stdin attached without forcing a TTY:
 
@@ -125,8 +138,8 @@ bash tests/smoke/sysbox-linked-worktree.sh
 
 The harness builds the Go binary and image, creates a temporary primary repository and linked worktree, starts a host
 sentinel container, and performs live assertions against the outer and nested containers. It verifies account names,
-global Git config, UTF-8 text, mount modes, Git writes, daemon separation, nested project access, file ownership, and
-cleanup.
+global Git config, UTF-8 text, mount modes, Git writes, daemon separation, same-container command reuse, nested project
+access, file ownership, and cleanup.
 
 The smoke test was run successfully on 2026-07-13 with Docker Engine 28.3.3, Sysbox CE 0.7.0, cgroup v2, and the
 `overlay2` storage driver. Other kernel, filesystem, and Sysbox combinations must pass the same test before use.
@@ -152,8 +165,10 @@ This MVP intentionally omits:
 - rootless or remote host Docker, Docker Desktop, macOS, and Windows;
 - production image publication, signing, update policy, and packaging.
 
-Each launch uses fresh nested Docker storage. Normal exit removes the outer container through Docker `--rm`. If the
-launcher or host daemon is killed abruptly, inspect project-owned sessions with:
+Each outer-container session uses fresh nested Docker storage. While its main command is running, later invocations for
+the same canonical worktree and host UID execute in that container and reuse its storage. Normal exit of the main
+command still removes the outer container through Docker `--rm`; stopped containers are not resumed. If the launcher
+or host daemon is killed abruptly, inspect project-owned sessions with:
 
 ```bash
 docker ps -a --filter label=codex-safe.session

@@ -15,7 +15,8 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 	t.Parallel()
 
 	plan := Plan{
-		WorkingDir: "/sources/feature worktree/nested",
+		ProjectRoot: "/sources/feature worktree",
+		WorkingDir:  "/sources/feature worktree/nested",
 		Mounts: []Mount{
 			{Source: "/sources/primary", Target: "/sources/primary", ReadOnly: true},
 			{Source: "/sources/primary/.git", Target: "/sources/primary/.git"},
@@ -51,6 +52,10 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 		"codex-safe-test",
 		"--label",
 		"codex-safe.session=codex-safe-test",
+		"--label",
+		"codex-safe.project-path=/sources/feature worktree",
+		"--label",
+		"codex-safe.host-uid=1000",
 		"--env",
 		"CODEX_SAFE_HOST_UID=1000",
 		"--env",
@@ -91,7 +96,8 @@ func TestBuildDockerArgsIncludesMountModesInOrder(t *testing.T) {
 	t.Parallel()
 
 	args, err := BuildDockerArgs(Plan{
-		WorkingDir: "/worktree",
+		ProjectRoot: "/worktree",
+		WorkingDir:  "/worktree",
 		Mounts: []Mount{
 			{Source: "/primary", Target: "/primary", ReadOnly: true},
 			{Source: "/primary/.git", Target: "/primary/.git"},
@@ -122,7 +128,7 @@ func TestBuildDockerArgsAttachesStdinWithoutForcingTTY(t *testing.T) {
 	t.Parallel()
 
 	args, err := BuildDockerArgs(
-		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		Plan{ProjectRoot: "/project", WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
 		"image",
 		[]string{"bash"},
 		"session",
@@ -151,7 +157,7 @@ func TestBuildDockerArgsMountsHostGitConfigReadOnly(t *testing.T) {
 	t.Parallel()
 
 	args, err := BuildDockerArgs(
-		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		Plan{ProjectRoot: "/project", WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
 		"image",
 		[]string{"true"},
 		"session",
@@ -183,10 +189,56 @@ func TestBuildDockerArgsMountsHostGitConfigReadOnly(t *testing.T) {
 	}
 }
 
+func TestBuildDockerExecArgsPreservesIdentityAndWorkingDirectory(t *testing.T) {
+	t.Parallel()
+
+	containerID := strings.Repeat("a", 64)
+	probe := []string{"printf", "%s\\n", "value with spaces; $(not-a-shell)"}
+	args, err := BuildDockerExecArgs(
+		Plan{
+			ProjectRoot: "/project",
+			WorkingDir:  "/project/nested directory",
+			Mounts:      []Mount{{Source: "/project", Target: "/project"}},
+		},
+		probe,
+		containerID,
+		1000,
+		1001,
+		"/home/developer profile",
+		true,
+	)
+	if err != nil {
+		t.Fatalf("BuildDockerExecArgs() error = %v", err)
+	}
+
+	want := []string{
+		"exec",
+		"--interactive",
+		"--tty",
+		"--user",
+		"1000:1001",
+		"--env",
+		"HOME=/home/developer profile",
+		"--workdir",
+		"/project/nested directory",
+		containerID,
+		"printf",
+		"%s\\n",
+		"value with spaces; $(not-a-shell)",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("BuildDockerExecArgs() = %#v, want %#v", args, want)
+	}
+}
+
 func TestBuildDockerArgsRejectsUnsupportedAccountNames(t *testing.T) {
 	t.Parallel()
 
-	plan := Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}}
+	plan := Plan{
+		ProjectRoot: "/project",
+		WorkingDir:  "/project",
+		Mounts:      []Mount{{Source: "/project", Target: "/project"}},
+	}
 	tests := []struct {
 		name      string
 		hostUser  string
@@ -228,7 +280,7 @@ func TestBuildDockerArgsRejectsNonCanonicalHostHome(t *testing.T) {
 	t.Parallel()
 
 	_, err := BuildDockerArgs(
-		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		Plan{ProjectRoot: "/project", WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
 		"image",
 		[]string{"true"},
 		"session",
@@ -252,7 +304,7 @@ func TestBuildDockerArgsRejectsNonCanonicalHostGitConfig(t *testing.T) {
 	t.Parallel()
 
 	_, err := BuildDockerArgs(
-		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		Plan{ProjectRoot: "/project", WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
 		"image",
 		[]string{"true"},
 		"session",
@@ -336,6 +388,7 @@ func TestDockerLaunchRunsPreflightThenContainer(t *testing.T) {
 
 	runner := &fakeCommandRunner{
 		outputs: []commandResult{
+			{},
 			{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
 			{output: []byte(`[]`)},
 		},
@@ -343,28 +396,119 @@ func TestDockerLaunchRunsPreflightThenContainer(t *testing.T) {
 	docker := testDocker(runner)
 
 	err := docker.Launch(context.Background(), Plan{
-		WorkingDir: "/project",
-		Mounts:     []Mount{{Source: "/project", Target: "/project"}},
+		ProjectRoot: "/project",
+		WorkingDir:  "/project",
+		Mounts:      []Mount{{Source: "/project", Target: "/project"}},
 	}, "image", []string{"echo", "safe"})
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
 
-	if len(runner.combinedCalls) != 2 {
-		t.Fatalf("CombinedOutput calls = %d, want 2", len(runner.combinedCalls))
+	if len(runner.combinedCalls) != 3 {
+		t.Fatalf("CombinedOutput calls = %d, want 3", len(runner.combinedCalls))
 	}
 	if !reflect.DeepEqual(runner.combinedCalls[0], []string{
-		"docker", "info", "--format", "{{json .Runtimes}}",
+		"docker", "container", "ls", "--quiet", "--no-trunc",
+		"--filter", "label=codex-safe.session",
+		"--filter", "label=codex-safe.project-path=/project",
+		"--filter", "label=codex-safe.host-uid=1000",
 	}) {
-		t.Errorf("runtime preflight = %#v", runner.combinedCalls[0])
+		t.Errorf("active-container lookup = %#v", runner.combinedCalls[0])
 	}
 	if !reflect.DeepEqual(runner.combinedCalls[1], []string{
+		"docker", "info", "--format", "{{json .Runtimes}}",
+	}) {
+		t.Errorf("runtime preflight = %#v", runner.combinedCalls[1])
+	}
+	if !reflect.DeepEqual(runner.combinedCalls[2], []string{
 		"docker", "image", "inspect", "image",
 	}) {
-		t.Errorf("image preflight = %#v", runner.combinedCalls[1])
+		t.Errorf("image preflight = %#v", runner.combinedCalls[2])
 	}
 	if len(runner.runCalls) != 1 {
 		t.Fatalf("Run calls = %d, want 1", len(runner.runCalls))
+	}
+}
+
+func TestDockerLaunchExecutesInRunningProjectContainer(t *testing.T) {
+	t.Parallel()
+
+	containerID := strings.Repeat("b", 64)
+	runner := &fakeCommandRunner{
+		outputs: []commandResult{{output: []byte(containerID + "\n")}, {}},
+	}
+	docker := testDocker(runner)
+	docker.TTY = true
+	docker.NameGenerator = func() (string, error) {
+		return "", errors.New("name generator must not run when a project container is active")
+	}
+
+	err := docker.Launch(
+		context.Background(),
+		Plan{
+			ProjectRoot: "/project",
+			WorkingDir:  "/project/nested",
+			Mounts:      []Mount{{Source: "/project", Target: "/project"}},
+		},
+		"image",
+		[]string{"make", "test"},
+	)
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if len(runner.combinedCalls) != 2 {
+		t.Fatalf("CombinedOutput calls = %d, want lookup and readiness wait", len(runner.combinedCalls))
+	}
+	waitCall := runner.combinedCalls[1]
+	if len(waitCall) != 6 || !reflect.DeepEqual(waitCall[:5], []string{
+		"docker", "exec", containerID, "bash", "-c",
+	}) || !strings.Contains(waitCall[5], "/run/codex-safe/ready") {
+		t.Errorf("readiness wait = %#v", waitCall)
+	}
+	wantRun := []string{
+		"docker",
+		"exec",
+		"--interactive",
+		"--tty",
+		"--user",
+		"1000:1000",
+		"--env",
+		"HOME=/home/developer",
+		"--workdir",
+		"/project/nested",
+		containerID,
+		"make",
+		"test",
+	}
+	if !reflect.DeepEqual(runner.runCalls, [][]string{wantRun}) {
+		t.Errorf("Run calls = %#v, want %#v", runner.runCalls, [][]string{wantRun})
+	}
+}
+
+func TestDockerLaunchRejectsMultipleRunningProjectContainers(t *testing.T) {
+	t.Parallel()
+
+	firstID := strings.Repeat("a", 64)
+	secondID := strings.Repeat("b", 64)
+	runner := &fakeCommandRunner{
+		outputs: []commandResult{{output: []byte(firstID + "\n" + secondID + "\n")}},
+	}
+	docker := testDocker(runner)
+
+	err := docker.Launch(
+		context.Background(),
+		Plan{ProjectRoot: "/project", WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		"image",
+		[]string{"true"},
+	)
+	if err == nil {
+		t.Fatal("Launch() error = nil, want an ambiguity error")
+	}
+	if !strings.Contains(err.Error(), "multiple active codex-safe containers manage project") {
+		t.Fatalf("Launch() error = %q, want active-container ambiguity", err)
+	}
+	if len(runner.runCalls) != 0 {
+		t.Fatalf("Run calls = %d, want 0", len(runner.runCalls))
 	}
 }
 
@@ -372,13 +516,13 @@ func TestDockerLaunchRejectsMissingSysboxWithoutRunning(t *testing.T) {
 	t.Parallel()
 
 	runner := &fakeCommandRunner{
-		outputs: []commandResult{{output: []byte(`{"runc":{}}`)}},
+		outputs: []commandResult{{}, {output: []byte(`{"runc":{}}`)}},
 	}
 	docker := testDocker(runner)
 
 	err := docker.Launch(
 		context.Background(),
-		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		Plan{ProjectRoot: "/project", WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
 		"image",
 		[]string{"true"},
 	)
@@ -399,6 +543,7 @@ func TestDockerLaunchPreservesExitError(t *testing.T) {
 	exitErr := fakeExitError{code: 37}
 	runner := &fakeCommandRunner{
 		outputs: []commandResult{
+			{},
 			{output: []byte(`{"sysbox-runc":{}}`)},
 			{output: []byte(`[]`)},
 		},
@@ -408,7 +553,7 @@ func TestDockerLaunchPreservesExitError(t *testing.T) {
 
 	err := docker.Launch(
 		context.Background(),
-		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		Plan{ProjectRoot: "/project", WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
 		"image",
 		[]string{"false"},
 	)
@@ -433,7 +578,7 @@ func TestDockerLaunchRejectsUnsupportedOS(t *testing.T) {
 
 	err := docker.Launch(
 		context.Background(),
-		Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
+		Plan{ProjectRoot: "/project", WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}},
 		"image",
 		[]string{"true"},
 	)

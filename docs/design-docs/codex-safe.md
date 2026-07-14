@@ -66,6 +66,7 @@ construct the production `docker run` command.
 - `docker build`, `docker run`, and Docker Compose use a separate nested daemon.
 - The agent cannot see the host daemon's socket, containers, images, or volumes.
 - The agent receives no host paths beyond the explicit mount set.
+- A concurrent invocation for the same worktree reuses its running outer container and private Docker daemon.
 - A preflight or nested-daemon failure stops the launch without an unsafe fallback.
 
 ### Tradeoff
@@ -74,8 +75,9 @@ This container isolates the host more strongly than conventional Docker-in-Docke
 Docker socket mount. It is not a secrecy boundary for allowed mounts. The agent can read, change, delete, or transmit
 project files and `~/.codex` contents.
 
-Each launch starts with clean nested Docker storage. This improves session independence but makes repeated image pulls
-and builds slower. Persistent caching can be designed separately after measurement shows that it is needed.
+Each outer-container session starts with clean nested Docker storage. Commands routed into that live session reuse its
+images, containers, volumes, and build cache. A new session after the main command exits starts clean again; persistent
+cross-session caching can be designed separately after measurement shows that it is needed.
 
 ## Contract
 
@@ -91,6 +93,9 @@ codex-safe [launcher options] [-- codex arguments]
 - `--` separates launcher options from Codex arguments. Arguments after it are forwarded without reparsing.
 - The current subdirectory is preserved as the Codex working directory at the same absolute path.
 - With `--project`, the canonicalized project path becomes the working directory.
+- The canonical worktree root and invoking host UID identify a running outer container eligible for reuse.
+- When exactly one eligible container is running, the command executes there with the requested working directory.
+- `--image` selects an image only when creating a new outer container; it does not replace an active environment.
 - Interactive mode attaches stdin, stdout, stderr, and the terminal to the container process.
 - After successful environment setup, the Codex exit code becomes the `codex-safe` exit code.
 
@@ -288,9 +293,10 @@ and Docker registries require network access. Nested Docker networks remain insi
 
 ### 10. Lifecycle and Concurrency
 
-Each invocation creates a container with a unique name that is not derived only from the directory name. Concurrent
-invocations for the same project use distinct Docker daemons, writable layers, and container names, but share the host
-project and `~/.codex`.
+A new outer container has a unique session name plus labels containing the canonical worktree root and invoking host
+UID. Before creation, the launcher searches running containers by those labels. Exactly one match receives the new
+command through `docker exec`; no match creates a new `docker run --rm` session, and multiple matches fail as ambiguous.
+Different worktrees continue to use distinct Docker daemons and writable layers.
 
 ```mermaid
 sequenceDiagram
@@ -301,13 +307,21 @@ sequenceDiagram
     participant InnerDocker as Inner Docker daemon
     participant Codex
 
-    User->>Launcher: Start in a Git working tree
-    Launcher->>Launcher: Preflight and build mount plan
-    Launcher->>HostDocker: Run with sysbox-runc and explicit mounts
-    HostDocker->>Outer: Start isolated init process
-    Outer->>InnerDocker: Start daemon
-    Outer->>InnerDocker: Wait for readiness
-    Outer->>Codex: Start in original working directory
+    User->>Launcher: Run a command in a Git working tree
+    Launcher->>Launcher: Discover canonical worktree root
+    Launcher->>HostDocker: Find running container by project path and host UID
+    alt Matching container is running
+        HostDocker-->>Launcher: Existing container ID
+        Launcher->>Outer: Wait for bootstrap readiness marker
+        Launcher->>Outer: docker exec as host UID/GID in requested directory
+    else No matching container
+        Launcher->>Launcher: Preflight and build mount plan
+        Launcher->>HostDocker: Run --rm with Sysbox, labels, and explicit mounts
+        HostDocker->>Outer: Start isolated init process
+        Outer->>InnerDocker: Start daemon
+        Outer->>InnerDocker: Wait for readiness
+        Outer->>Codex: Start in original working directory
+    end
     Codex->>InnerDocker: Build and run nested containers
     User->>Codex: Exit or interrupt
     Codex-->>Outer: Return exit code
@@ -320,9 +334,9 @@ The launcher forwards terminal resize events and signals to the interactive proc
 termination stop the outer container, nested daemon, and nested containers. The outer container is automatically
 removed after it stops.
 
-If the launcher receives SIGKILL or the Docker daemon fails, a stopped or running outer container may remain. The next
-launch does not reuse it. A separate diagnostic command or documented procedure finds resources through the
-`codex-safe` project label and removes only confirmed stale sessions.
+If the launcher receives SIGKILL or the Docker daemon fails, a stopped or running outer container may remain. Only a
+running container is eligible for command reuse; stopped containers are not restarted. A separate diagnostic command
+or documented procedure finds resources through the `codex-safe` labels and removes only confirmed stale sessions.
 
 ### 11. Preflight and Failure Behavior
 
@@ -346,7 +360,7 @@ mode.
 ## Invariants
 
 - The host Docker socket is never visible inside the outer container.
-- Each invocation receives a separate nested Docker daemon.
+- Each worktree session receives a separate nested Docker daemon; concurrent commands in that session share it.
 - Read-write host access is limited to the active working tree, linked-worktree common Git directory, and `~/.codex`.
 - The linked worktree's primary checkout is read-only except for the nested common Git directory.
 - Git working-tree and common-directory absolute paths match their host paths.
@@ -418,12 +432,14 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Attempt to read a known host-home marker outside allowed mounts and prove the path is absent.
 - Prove that the primary checkout's read-only mount cannot be remounted read-write from either container layer.
 - Exercise CPU, memory, and PID limits with load from multiple nested containers.
-- Run two sessions concurrently and prove they do not share nested Docker state.
+- Run a second command for one live worktree and prove it shares the outer container and nested Docker daemon.
+- Run sessions for two worktrees concurrently and prove they do not share nested Docker state.
 
 ### Lifecycle tests
 
 - Cover normal exit, Ctrl-C, SIGTERM, Codex failure, and nested-daemon failure.
 - Verify terminal resize and interactive input.
+- Verify an active container is found by canonical worktree path and host UID and reused through `docker exec`.
 - After each normal scenario, prove outer and nested containers stopped and were removed.
 - Simulate launcher failure and prove stale resources carry the expected labels and can be diagnosed safely.
 

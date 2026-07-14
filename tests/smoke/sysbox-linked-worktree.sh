@@ -18,6 +18,7 @@ staged_relative="phase7-staged.txt"
 staged_file="${linked_worktree}/${staged_relative}"
 nested_marker="${linked_worktree}/phase8-nested-marker.txt"
 nested_daemon_id_file="${linked_worktree}/.codex-safe-nested-daemon-${run_id}"
+reuse_report="${linked_worktree}/.codex-safe-reuse-${run_id}"
 nested_name="codex-safe-nested-${run_id}"
 compose_name="codex-safe-compose-${run_id}"
 nested_image="alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
@@ -86,16 +87,18 @@ wait_for_file() {
 
 find_outer_container() {
     local candidate
-    local sources
 
     while IFS= read -r candidate; do
         [[ -n "${candidate}" ]] || continue
-        sources="$(docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' "${candidate}")"
-        if grep --fixed-strings --line-regexp --quiet "${linked_worktree}" <<<"${sources}"; then
-            printf '%s\n' "${candidate}"
-            return 0
-        fi
-    done < <(docker ps --filter 'label=codex-safe.session' --format '{{.ID}}')
+        printf '%s\n' "${candidate}"
+        return 0
+    done < <(
+        docker ps \
+            --filter 'label=codex-safe.session' \
+            --filter "label=codex-safe.project-path=${linked_worktree}" \
+            --filter "label=codex-safe.host-uid=$(id -u)" \
+            --format '{{.ID}}'
+    )
 
     return 1
 }
@@ -403,6 +406,8 @@ echo "smoke: outer container ${outer_container} reached the inspection barrier"
 runtime="$(docker inspect --format '{{.HostConfig.Runtime}}' "${outer_container}")"
 privileged="$(docker inspect --format '{{.HostConfig.Privileged}}' "${outer_container}")"
 working_dir="$(docker inspect --format '{{.Config.WorkingDir}}' "${outer_container}")"
+project_path_label="$(docker inspect --format '{{index .Config.Labels "codex-safe.project-path"}}' "${outer_container}")"
+host_uid_label="$(docker inspect --format '{{index .Config.Labels "codex-safe.host-uid"}}' "${outer_container}")"
 mount_report="$(
     docker inspect \
         --format '{{range .Mounts}}{{printf "%s|%s|%t|%s\n" .Source .Destination .RW .Propagation}}{{end}}' \
@@ -412,6 +417,8 @@ mount_report="$(
 assert_equal "${runtime}" "sysbox-runc" "outer runtime"
 assert_equal "${privileged}" "false" "outer privileged mode"
 assert_equal "${working_dir}" "${nested_directory}" "outer working directory"
+assert_equal "${project_path_label}" "${linked_worktree}" "managed project path label"
+assert_equal "${host_uid_label}" "$(id -u)" "host UID label"
 assert_report_line \
     "${primary_repo}|${primary_repo}|false|rprivate" \
     "${mount_report}" \
@@ -450,6 +457,32 @@ if [[ -z "${nested_daemon_id}" ]]; then
     echo "smoke: nested Docker daemon ID is empty" >&2
     exit 1
 fi
+
+# Expansion is intentionally deferred to the Bash process started by docker exec.
+# shellcheck disable=SC2016
+HOME="${host_home}" \
+"${binary}" \
+    --project "${linked_worktree}" \
+    --image codex-safe-mvp:local \
+    -- \
+    bash -c 'printf "%s\n%s\n%s\n%s\n" "$(hostname)" "$(id -u):$(id -g)" "$PWD" "$(docker info --format "{{.ID}}")" >"$1"' \
+    bash "${reuse_report}"
+reuse_output="$(cat "${reuse_report}")"
+assert_report_line \
+    "$(docker inspect --format '{{.Config.Hostname}}' "${outer_container}")" \
+    "${reuse_output}" \
+    "reused outer-container hostname"
+assert_report_line "$(id -u):$(id -g)" "${reuse_output}" "reused host identity"
+assert_report_line "${linked_worktree}" "${reuse_output}" "reused invocation working directory"
+assert_report_line "${nested_daemon_id}" "${reuse_output}" "reused nested Docker daemon"
+active_project_count="$(
+    docker ps \
+        --filter 'label=codex-safe.session' \
+        --filter "label=codex-safe.project-path=${linked_worktree}" \
+        --filter "label=codex-safe.host-uid=$(id -u)" \
+        --format '{{.ID}}' | wc -l
+)"
+assert_equal "${active_project_count}" "1" "active outer container count after reuse"
 
 host_nested_match="$(
     docker ps -a \

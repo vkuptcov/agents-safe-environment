@@ -27,6 +27,9 @@ func TestBuildPlanRegularCheckout(t *testing.T) {
 	if plan.WorkingDir != project.RequestedDir {
 		t.Errorf("WorkingDir = %q, want %q", plan.WorkingDir, project.RequestedDir)
 	}
+	if plan.ProjectRoot != project.WorktreeRoot {
+		t.Errorf("ProjectRoot = %q, want %q", plan.ProjectRoot, project.WorktreeRoot)
+	}
 	wantMounts := []Mount{{Source: "/sources/project", Target: "/sources/project"}}
 	if !reflect.DeepEqual(plan.Mounts, wantMounts) {
 		t.Errorf("Mounts = %#v, want %#v", plan.Mounts, wantMounts)
@@ -48,6 +51,9 @@ func TestBuildPlanLinkedWorktree(t *testing.T) {
 	plan, err := BuildPlan(project)
 	if err != nil {
 		t.Fatalf("BuildPlan() error = %v", err)
+	}
+	if plan.ProjectRoot != project.WorktreeRoot {
+		t.Errorf("ProjectRoot = %q, want %q", plan.ProjectRoot, project.WorktreeRoot)
 	}
 
 	wantMounts := []Mount{

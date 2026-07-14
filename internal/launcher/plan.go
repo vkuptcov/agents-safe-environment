@@ -21,6 +21,9 @@ type Mount struct {
 
 // Plan contains the filesystem portion of an outer-container launch.
 type Plan struct {
+	// ProjectRoot is the canonical host path of the selected checkout or linked worktree.
+	// It is the stable project identity used to find an already-running outer container.
+	ProjectRoot string
 	// WorkingDir is the selected project directory used as the container working directory.
 	WorkingDir string
 	// Mounts is the ordered, normalized set of bind mounts required by the selected checkout.
@@ -50,9 +53,18 @@ func BuildPlan(project gitproject.Project) (Plan, error) {
 	}
 
 	return Plan{
-		WorkingDir: project.RequestedDir,
-		Mounts:     normalized,
+		ProjectRoot: project.WorktreeRoot,
+		WorkingDir:  project.RequestedDir,
+		Mounts:      normalized,
 	}, nil
+}
+
+func validatePlan(plan Plan) ([]Mount, error) {
+	if err := validateWorkingDirectory(plan.WorkingDir, plan.ProjectRoot); err != nil {
+		return nil, err
+	}
+
+	return normalizeMounts(plan.Mounts)
 }
 
 func validateWorkingDirectory(workingDir string, worktreeRoot string) error {
