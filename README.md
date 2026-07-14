@@ -103,10 +103,12 @@ While that shell remains open, another terminal can run a command in the same ou
 ./bin/codex-safe --project . -- make test
 ```
 
-New outer containers carry the canonical worktree root in `codex-safe.project-path` and the invoking UID in
-`codex-safe.host-uid`. The launcher searches running containers by both labels. One match is reused with `docker exec`;
-multiple matches are rejected as ambiguous. The repeated invocation may select a different directory inside the same
-worktree, and that directory becomes the exec working directory.
+Each project/UID pair maps to one deterministic `codex-safe-<24-hex-key>` container name. The launcher inspects that
+exact name and validates `codex-safe.managed=true`, `codex-safe.project-path`, `codex-safe.host-uid`, and
+`codex-safe.manager-protocol` before reuse. Every invocation, including the first, uses
+`docker exec codex-safe-session run -- COMMAND [ARG...]`; no user command owns the outer container lifecycle. The
+repeated invocation may select a different directory inside the same worktree, and that directory becomes the exec
+working directory.
 
 When stdin and stdout are attached to a terminal, the launcher allocates a Docker TTY and forwards terminal input.
 For pipelines and redirected output it keeps stdin attached without forcing a TTY:
@@ -138,8 +140,8 @@ bash tests/smoke/sysbox-linked-worktree.sh
 
 The harness builds the Go binary and image, creates a temporary primary repository and linked worktree, starts a host
 sentinel container, and performs live assertions against the outer and nested containers. It verifies account names,
-global Git config, UTF-8 text, mount modes, Git writes, daemon separation, same-container command reuse, nested project
-access, file ownership, and cleanup.
+global Git config, UTF-8 text, mount modes, Git writes, daemon separation, overlapping command lifetime, deterministic
+container reuse, idle removal, concurrent first callers, nested project access, file ownership, and cleanup.
 
 The smoke test was run successfully on 2026-07-13 with Docker Engine 28.3.3, Sysbox CE 0.7.0, cgroup v2, and the
 `overlay2` storage driver. Other kernel, filesystem, and Sysbox combinations must pass the same test before use.
@@ -165,10 +167,11 @@ This MVP intentionally omits:
 - rootless or remote host Docker, Docker Desktop, macOS, and Windows;
 - production image publication, signing, update policy, and packaging.
 
-Each outer-container session uses fresh nested Docker storage. While its main command is running, later invocations for
-the same canonical worktree and host UID execute in that container and reuse its storage. Normal exit of the main
-command still removes the outer container through Docker `--rm`; stopped containers are not resumed. If the launcher
-or host daemon is killed abruptly, inspect project-owned sessions with:
+Each outer-container session uses fresh nested Docker storage. While any wrapped foreground command is running, later
+invocations for the same canonical worktree and host UID execute in that container and reuse its storage. After the
+last command exits, the manager waits five seconds, stops the nested daemon, and Docker removes the outer container
+through `--rm`; stopped containers are not resumed. If the launcher or host daemon is killed abruptly, inspect
+project-owned sessions with:
 
 ```bash
 docker ps -a --filter label=codex-safe.managed=true

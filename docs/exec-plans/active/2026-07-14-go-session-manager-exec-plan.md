@@ -148,7 +148,7 @@ Commit: `feat: manage project container sessions`
 ### Phase 5: Concurrency and Sysbox Proof
 
 Purpose: Prove the new lifetime semantics against a real nested Docker daemon and overlapping commands.
-Status: to be done
+Status: done
 Done when: the smoke harness proves one project container survives either command exit, shares nested state, and is
 removed only after the final command and idle timeout.
 
@@ -224,6 +224,8 @@ Commit: `docs: document managed project sessions`
 
 ## Progress Notes
 
+- 2026-07-14: Phase 5 completed; the Sysbox smoke proves overlapping command survival, final-command idle removal,
+  deterministic labels, and concurrent first callers. `bash tests/smoke/sysbox-linked-worktree.sh` passes.
 - 2026-07-14: Phase 4 completed in `50ff335`; deterministic naming, exact-name inspection, detached lifecycle,
   wrapper-prefixed exec, Go entrypoint cutover, and shell entrypoint removal are implemented and tested.
 - 2026-07-14: Phase 3 moved identity, home, sudoers, dockerd readiness, diagnostics, and shutdown behavior into tested

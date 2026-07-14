@@ -19,6 +19,8 @@ staged_file="${linked_worktree}/${staged_relative}"
 nested_marker="${linked_worktree}/phase8-nested-marker.txt"
 nested_daemon_id_file="${linked_worktree}/.codex-safe-nested-daemon-${run_id}"
 reuse_report="${linked_worktree}/.codex-safe-reuse-${run_id}"
+second_continue_marker="${linked_worktree}/.codex-safe-second-continue-${run_id}"
+concurrent_marker="${linked_worktree}/.codex-safe-concurrent-${run_id}"
 nested_name="codex-safe-nested-${run_id}"
 compose_name="codex-safe-compose-${run_id}"
 nested_image="alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
@@ -30,6 +32,7 @@ host_group="$(id -gn)"
 cyrillic_text="Привет из codex-safe"
 cyrillic_file="${linked_worktree}/phase14-cyrillic.txt"
 launcher_pid=""
+second_launcher_pid=""
 project_key=""
 outer_container=""
 
@@ -43,6 +46,11 @@ cleanup() {
     if [[ -n "${launcher_pid}" ]] && kill -0 "${launcher_pid}" 2>/dev/null; then
         kill -TERM "${launcher_pid}" 2>/dev/null || true
         wait "${launcher_pid}" 2>/dev/null || true
+    fi
+    touch "${second_continue_marker}" 2>/dev/null || true
+    if [[ -n "${second_launcher_pid}" ]] && kill -0 "${second_launcher_pid}" 2>/dev/null; then
+        kill -TERM "${second_launcher_pid}" 2>/dev/null || true
+        wait "${second_launcher_pid}" 2>/dev/null || true
     fi
     if [[ -n "${outer_container}" ]]; then
         docker rm --force "${outer_container}" >/dev/null 2>&1 || true
@@ -450,8 +458,19 @@ HOME="${host_home}" \
     --project "${linked_worktree}" \
     --image codex-safe-mvp:local \
     -- \
-    bash -c 'printf "%s\n%s\n%s\n%s\n" "$(hostname)" "$(id -u):$(id -g)" "$PWD" "$(docker info --format "{{.ID}}")" >"$1"' \
-    bash "${reuse_report}"
+    bash -c 'printf "%s\n%s\n%s\n%s\n" "$(hostname)" "$(id -u):$(id -g)" "$PWD" "$(docker info --format "{{.ID}}")" >"$1"; while [[ ! -e "$2" ]]; do sleep 1; done' \
+    bash "${reuse_report}" "${second_continue_marker}" \
+    >"${outer_log}.second" 2>&1 &
+second_launcher_pid=$!
+for (( attempt = 1; attempt <= 30; attempt++ )); do
+    [[ -f "${reuse_report}" ]] && break
+    sleep 1
+done
+if [[ ! -f "${reuse_report}" ]]; then
+    echo "smoke: second wrapped command did not register" >&2
+    cat "${outer_log}.second" >&2
+    exit 1
+fi
 reuse_output="$(cat "${reuse_report}")"
 assert_report_line \
     "$(docker inspect --format '{{.Config.Hostname}}' "${outer_container}")" \
@@ -468,6 +487,69 @@ active_project_count="$(
         --format '{{.ID}}' | wc -l
 )"
 assert_equal "${active_project_count}" "1" "active outer container count after reuse"
+
+touch "${continue_marker}"
+set +e
+wait "${launcher_pid}"
+launcher_status=$?
+set -e
+launcher_pid=""
+if (( launcher_status != 0 )); then
+    echo "smoke: first concurrent command exited with status ${launcher_status}" >&2
+    cat "${outer_log}" >&2
+    exit "${launcher_status}"
+fi
+if ! kill -0 "${second_launcher_pid}" 2>/dev/null; then
+    echo "smoke: second command did not survive first command exit" >&2
+    cat "${outer_log}.second" >&2
+    exit 1
+fi
+assert_equal "$(docker inspect --format '{{.State.Running}}' "${outer_container}")" "true" \
+    "outer container remains after first command exit"
+
+touch "${second_continue_marker}"
+set +e
+wait "${second_launcher_pid}"
+second_launcher_status=$?
+set -e
+second_launcher_pid=""
+if (( second_launcher_status != 0 )); then
+    echo "smoke: second concurrent command exited with status ${second_launcher_status}" >&2
+    cat "${outer_log}.second" >&2
+    exit "${second_launcher_status}"
+fi
+assert_equal "$(docker inspect --format '{{.State.Running}}' "${outer_container}")" "true" \
+    "outer container remains during idle grace period"
+for (( attempt = 1; attempt <= 20; attempt++ )); do
+    if ! docker inspect "${outer_container}" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+if docker inspect "${outer_container}" >/dev/null 2>&1; then
+    echo "smoke: outer container was not removed after final command idle timeout" >&2
+    exit 1
+fi
+
+first_caller_log="${temp_root}/first-caller.log"
+second_caller_log="${temp_root}/second-caller.log"
+HOME="${host_home}" "${binary}" --project "${linked_worktree}" --image codex-safe-mvp:local -- \
+    bash -c 'while [[ ! -e "$1" ]]; do sleep 1; done' bash "${concurrent_marker}" >"${first_caller_log}" 2>&1 &
+first_caller_pid=$!
+HOME="${host_home}" "${binary}" --project "${linked_worktree}" --image codex-safe-mvp:local -- \
+    bash -c 'while [[ ! -e "$1" ]]; do sleep 1; done' bash "${concurrent_marker}" >"${second_caller_log}" 2>&1 &
+second_caller_pid=$!
+for (( attempt = 1; attempt <= 30; attempt++ )); do
+    if docker inspect "${outer_container}" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+assert_equal "$(docker ps --filter label=codex-safe.managed=true --filter "name=^${outer_container}$" --format '{{.ID}}' | wc -l)" \
+    "1" "one outer container after concurrent first callers"
+touch "${concurrent_marker}"
+wait "${first_caller_pid}"
+wait "${second_caller_pid}"
 
 host_nested_match="$(
     docker ps -a \
@@ -501,18 +583,6 @@ assert_equal \
     "host edit" \
     "host edit of nested marker"
 
-touch "${continue_marker}"
-
-set +e
-wait "${launcher_pid}"
-launcher_status=$?
-set -e
-launcher_pid=""
-if (( launcher_status != 0 )); then
-    echo "smoke: launcher exited with status ${launcher_status}" >&2
-    cat "${outer_log}" >&2
-    exit "${launcher_status}"
-fi
 
 staged_paths="$(git -C "${linked_worktree}" diff --cached --name-only)"
 assert_report_line "${staged_relative}" "${staged_paths}" "staged linked-worktree file"
