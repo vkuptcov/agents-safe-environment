@@ -190,6 +190,19 @@ if [[ "$(locale charmap)" != "UTF-8" ]]; then
     echo "smoke probe: container locale is not UTF-8" >&2
     exit 1
 fi
+terminal_colors="$(tput colors)"
+if [[ ! "${terminal_colors}" =~ ^[0-9]+$ ]] || (( terminal_colors < 256 )); then
+    echo "smoke probe: terminal does not advertise 256-color support" >&2
+    exit 1
+fi
+if ! bash -ic '[[ ${PS1} == *"01;32m"* && ${PS1} == *"01;34m"* ]]' >/dev/null 2>&1; then
+    echo "smoke probe: interactive Bash prompt is not configured with colors" >&2
+    exit 1
+fi
+if ! bash -ic 'alias ls' 2>/dev/null | grep --fixed-strings --quiet "ls --color=auto"; then
+    echo "smoke probe: color-aware ls alias is not configured" >&2
+    exit 1
+fi
 cyrillic_file="${linked_worktree}/phase14-cyrillic.txt"
 printf '%s\n' "${expected_cyrillic_text}" >"${cyrillic_file}"
 if [[ "$(cat "${cyrillic_file}")" != "${expected_cyrillic_text}" ]]; then

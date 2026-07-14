@@ -18,6 +18,7 @@ The current command is a probe runner, not the finished Codex launcher. It does 
 - The probe's container-local home directory uses the same absolute path as host `$HOME`.
 - An existing host `$HOME/.gitconfig` is available as the probe's read-only global Git config.
 - Interactive tools use a UTF-8 locale and handle Cyrillic input and output.
+- Interactive Bash sessions use a colored prompt and color-aware command defaults.
 - Files created by the probe and nested containers retain ownership that remains usable from the host.
 
 See the [design document](docs/design-docs/codex-safe.md) for the intended product and security model. The
@@ -64,7 +65,8 @@ The nested runtime preserves the absolute bind-mount contract, including project
 
 The environment includes Git, Docker Engine and CLI, Docker Compose V2, `make`, `less`, and `rg`.
 Interactive Bash sessions also load the system completion framework, including Make target completion.
-The image defaults to the `C.UTF-8` locale, so Bash and text tools handle Cyrillic and other UTF-8 text.
+The image defaults to `C.UTF-8` and `TERM=xterm-256color`, so Bash and text tools handle Cyrillic and terminal colors.
+The project Bash startup file enables a colored prompt plus automatic colors for `ls` and `grep`.
 
 The launcher creates an otherwise empty container-local home at the same absolute path as host `$HOME`; it does not
 mount the host home directory. If host `$HOME/.gitconfig` exists, the launcher mounts that file read-only at the same

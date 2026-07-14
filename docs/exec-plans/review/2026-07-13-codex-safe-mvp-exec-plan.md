@@ -272,6 +272,18 @@ Done when: the probe's `$HOME` and passwd home equal host `$HOME`, while the dir
 6. Extend unit tests for the home environment and config mount target.
 7. Require the real-host smoke probe to verify `HOME`, the passwd entry, and the exact config mount path.
 
+### Phase 16: Interactive Terminal Colors
+
+Purpose: Make the interactive probe visually usable while keeping redirected output free of forced ANSI escapes.
+Status: done
+Done when: terminal-aware tools see 256-color capability and interactive Bash uses color-aware defaults.
+
+1. Set the image's default `TERM` to `xterm-256color`, whose terminfo entry is available in the image.
+2. Configure a colored user, host, and working-directory prompt only for interactive Bash sessions.
+3. Add `--color=auto` aliases for `ls` and `grep` so redirected output remains plain.
+4. Extend the smoke probe to require 256-color capability, prompt colors, and the color-aware `ls` alias.
+5. Verify a real PTY displays ANSI-colored prompt output.
+
 ## Validation Gates
 
 - `gofmt -w cmd internal` completes, and a subsequent diff contains no Go formatting changes.
@@ -286,6 +298,7 @@ Done when: the probe's `$HOME` and passwd home equal host `$HOME`, while the dir
 - The smoke probe reports the same login and primary group names as the invoking host account.
 - The smoke probe reads the mounted host Git config, cannot modify it, and round-trips Cyrillic under UTF-8.
 - The smoke probe's `HOME` and passwd home equal host `$HOME` without a broad host-home mount.
+- The smoke probe sees 256 terminal colors and loads the interactive colored prompt and command aliases.
 - `make build` writes `bin/codex-safe`; `make test` and `make docker-build` pass; the smoke probe registers Make target
   completion.
 - `git diff --check` reports no whitespace errors.
@@ -351,3 +364,5 @@ Done when: the probe's `$HOME` and passwd home equal host `$HOME`, while the dir
   smoke fixture now proves global Git config visibility, write protection, UTF-8 locale selection, and Cyrillic text.
 - 2026-07-14: Recreated host `$HOME` at the same absolute path in the outer container's writable layer. The account,
   process environment, and `.gitconfig` target now share that path without mounting the complete host home directory.
+- 2026-07-14: Enabled `xterm-256color` and interactive Bash colors. The prompt distinguishes identity and working
+  directory, while `ls` and `grep` use automatic color modes that remain disabled for redirected output.

@@ -62,5 +62,9 @@ ENV DOCKER_HOST=unix:///var/run/docker.sock
 # and output as UTF-8 without generating or installing a language-specific locale.
 ENV LANG=C.UTF-8
 
+# xterm-256color has terminfo support in the image and tells interactive tools that the attached
+# host terminal accepts ANSI colors. Tools using automatic color still disable it for non-TTY output.
+ENV TERM=xterm-256color
+
 # Tini is PID 1 so orphaned nested-daemon children are reaped and signals reach the entrypoint.
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/codex-safe-entrypoint"]

@@ -212,6 +212,9 @@ The container image includes:
 The image defaults to the `C.UTF-8` locale so interactive shells and text tools correctly classify UTF-8 input and
 output, including Cyrillic, without requiring a language-specific locale.
 
+The image advertises `xterm-256color`, whose terminfo entry is present in the image. Interactive Bash uses a colored
+prompt and automatic color modes for common tools; tools still suppress automatic colors when output is not a TTY.
+
 Codex does not start until the nested daemon passes its readiness check. A timeout or daemon failure prints outer-
 container diagnostics and exits nonzero.
 
