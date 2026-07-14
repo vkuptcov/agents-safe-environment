@@ -23,7 +23,17 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 	}
 	probe := []string{"printf", "%s\\n", "value with spaces; $(not-a-shell)"}
 
-	args, err := BuildDockerArgs(plan, "codex-safe-mvp:local", probe, "codex-safe-test", 1000, 1000, true)
+	args, err := BuildDockerArgs(
+		plan,
+		"codex-safe-mvp:local",
+		probe,
+		"codex-safe-test",
+		1000,
+		1000,
+		"developer",
+		"developers",
+		true,
+	)
 	if err != nil {
 		t.Fatalf("BuildDockerArgs() error = %v", err)
 	}
@@ -42,6 +52,10 @@ func TestBuildDockerArgsUsesSysboxAndPreservesProbe(t *testing.T) {
 		"CODEX_SAFE_HOST_UID=1000",
 		"--env",
 		"CODEX_SAFE_HOST_GID=1000",
+		"--env",
+		"CODEX_SAFE_HOST_USER=developer",
+		"--env",
+		"CODEX_SAFE_HOST_GROUP=developers",
 		"--workdir",
 		plan.WorkingDir,
 	}
@@ -78,7 +92,7 @@ func TestBuildDockerArgsIncludesMountModesInOrder(t *testing.T) {
 			{Source: "/primary/.git", Target: "/primary/.git"},
 			{Source: "/worktree", Target: "/worktree"},
 		},
-	}, "image", []string{"true"}, "session", 1000, 1000, false)
+	}, "image", []string{"true"}, "session", 1000, 1000, "developer", "developers", false)
 	if err != nil {
 		t.Fatalf("BuildDockerArgs() error = %v", err)
 	}
@@ -109,6 +123,8 @@ func TestBuildDockerArgsAttachesStdinWithoutForcingTTY(t *testing.T) {
 		"session",
 		1000,
 		1000,
+		"developer",
+		"developers",
 		false,
 	)
 	if err != nil {
@@ -121,6 +137,45 @@ func TestBuildDockerArgsAttachesStdinWithoutForcingTTY(t *testing.T) {
 	}
 	if strings.Contains(joined, "--tty") {
 		t.Fatalf("docker args force a TTY for a non-terminal caller: %s", joined)
+	}
+}
+
+func TestBuildDockerArgsRejectsUnsupportedAccountNames(t *testing.T) {
+	t.Parallel()
+
+	plan := Plan{WorkingDir: "/project", Mounts: []Mount{{Source: "/project", Target: "/project"}}}
+	tests := []struct {
+		name      string
+		hostUser  string
+		hostGroup string
+		want      string
+	}{
+		{name: "empty user", hostGroup: "developers", want: "host user name is empty"},
+		{name: "unsafe user", hostUser: "bad:user", hostGroup: "developers", want: "host user name"},
+		{name: "unsafe group", hostUser: "developer", hostGroup: "bad group", want: "host group name"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := BuildDockerArgs(
+				plan,
+				"image",
+				[]string{"true"},
+				"session",
+				1000,
+				1000,
+				test.hostUser,
+				test.hostGroup,
+				false,
+			)
+			if err == nil {
+				t.Fatal("BuildDockerArgs() error = nil, want an error")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("BuildDockerArgs() error = %q, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -257,11 +312,13 @@ func TestDockerLaunchRejectsUnsupportedOS(t *testing.T) {
 
 func testDocker(runner CommandRunner) *Docker {
 	return &Docker{
-		Binary:  "docker",
-		GOOS:    "linux",
-		Runner:  runner,
-		HostUID: 1000,
-		HostGID: 1000,
+		Binary:    "docker",
+		GOOS:      "linux",
+		Runner:    runner,
+		HostUID:   1000,
+		HostGID:   1000,
+		HostUser:  "developer",
+		HostGroup: "developers",
 		NameGenerator: func() (string, error) {
 			return "codex-safe-test", nil
 		},

@@ -222,6 +222,12 @@ A file created by Codex or a nested container in a read-write project mount must
 host user who invoked `codex-safe`. The launcher must not leave project files owned by an identity the host user cannot
 modify.
 
+The probe process has the invoking host user's numeric UID and primary GID. Its login name and primary group name also
+match the host account, so tools that display or resolve account names behave consistently on both sides. The launcher
+resolves those names through the host account database and the entrypoint creates or renames the corresponding local
+container entries before dropping privileges. A conflicting or unsupported account mapping fails the launch; it never
+falls back to an image-defined identity such as `ubuntu`.
+
 Exact UID/GID translation through Sysbox user namespaces, ID-mapped mounts, or shiftfs is an implementation detail.
 A smoke test or preflight detects an incompatible filesystem. The launcher never repairs ownership by recursively
 running `chown` over the host project.

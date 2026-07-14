@@ -14,7 +14,8 @@ The current command is a probe runner, not the finished Codex launcher. It does 
 - The primary checkout of a linked worktree can be read-only while the common `.git` directory stays writable.
 - The outer container can use `sysbox-runc` without `--privileged` or the host Docker socket.
 - A private nested Docker daemon can run containers and pass the project through at the same absolute path.
-- Files created by the probe and nested containers can retain the invoking host user's UID and GID.
+- The probe uses the invoking host user's login name, primary group name, UID, and GID.
+- Files created by the probe and nested containers retain ownership that remains usable from the host.
 
 See the [design document](docs/design-docs/codex-safe.md) for the intended product and security model. The
 [MVP execution plan](docs/exec-plans/review/2026-07-13-codex-safe-mvp-exec-plan.md) records the implementation scope
@@ -111,8 +112,8 @@ bash tests/smoke/sysbox-linked-worktree.sh
 ```
 
 The harness builds the Go binary and image, creates a temporary primary repository and linked worktree, starts a host
-sentinel container, and performs live assertions against the outer and nested containers. It verifies mount modes,
-Git writes, daemon separation, nested project access, file ownership, and cleanup.
+sentinel container, and performs live assertions against the outer and nested containers. It verifies account names,
+mount modes, Git writes, daemon separation, nested project access, file ownership, and cleanup.
 
 The smoke test was run successfully on 2026-07-13 with Docker Engine 28.3.3, Sysbox CE 0.7.0, cgroup v2, and the
 `overlay2` storage driver. Other kernel, filesystem, and Sysbox combinations must pass the same test before use.

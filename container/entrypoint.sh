@@ -6,6 +6,99 @@ if (( $# == 0 )); then
     exit 2
 fi
 
+readonly host_uid="${CODEX_SAFE_HOST_UID:-}"
+readonly host_gid="${CODEX_SAFE_HOST_GID:-}"
+readonly host_user="${CODEX_SAFE_HOST_USER:-}"
+readonly host_group="${CODEX_SAFE_HOST_GROUP:-}"
+readonly probe_home=/tmp/codex-safe-home
+readonly account_name_pattern='^[a-z_][a-z0-9_-]*[$]?$'
+
+if [[ ! "${host_uid}" =~ ^[0-9]+$ ]] || [[ ! "${host_gid}" =~ ^[0-9]+$ ]]; then
+    echo "codex-safe-entrypoint: CODEX_SAFE_HOST_UID and CODEX_SAFE_HOST_GID must be numeric" >&2
+    exit 2
+fi
+if [[ ! "${host_user}" =~ ${account_name_pattern} ]]; then
+    echo "codex-safe-entrypoint: CODEX_SAFE_HOST_USER is not a supported account name" >&2
+    exit 2
+fi
+if [[ ! "${host_group}" =~ ${account_name_pattern} ]]; then
+    echo "codex-safe-entrypoint: CODEX_SAFE_HOST_GROUP is not a supported group name" >&2
+    exit 2
+fi
+
+configure_host_group() {
+    local id_entry
+    local id_name
+    local name_entry
+    local name_gid
+
+    id_entry="$(getent group "${host_gid}" || true)"
+    name_entry="$(getent group "${host_group}" || true)"
+    if [[ -n "${name_entry}" ]]; then
+        IFS=: read -r _ _ name_gid _ <<<"${name_entry}"
+        if [[ "${name_gid}" != "${host_gid}" ]]; then
+            echo "codex-safe-entrypoint: group ${host_group@Q} already uses GID ${name_gid}" >&2
+            return 1
+        fi
+    fi
+
+    if [[ -z "${id_entry}" ]]; then
+        groupadd --gid "${host_gid}" "${host_group}"
+        return
+    fi
+
+    id_name="${id_entry%%:*}"
+    if [[ "${id_name}" == "${host_group}" ]]; then
+        return
+    fi
+    if [[ -n "${name_entry}" ]]; then
+        echo "codex-safe-entrypoint: GID ${host_gid} has conflicting group names" >&2
+        return 1
+    fi
+    groupmod --new-name "${host_group}" "${id_name}"
+}
+
+configure_host_user() {
+    local id_entry
+    local id_name
+    local name_entry
+    local name_uid
+
+    id_entry="$(getent passwd "${host_uid}" || true)"
+    name_entry="$(getent passwd "${host_user}" || true)"
+    if [[ -n "${name_entry}" ]]; then
+        IFS=: read -r _ _ name_uid _ <<<"${name_entry}"
+        if [[ "${name_uid}" != "${host_uid}" ]]; then
+            echo "codex-safe-entrypoint: user ${host_user@Q} already uses UID ${name_uid}" >&2
+            return 1
+        fi
+    fi
+
+    if [[ -z "${id_entry}" ]]; then
+        useradd \
+            --uid "${host_uid}" \
+            --gid "${host_gid}" \
+            --home-dir "${probe_home}" \
+            --no-create-home \
+            --shell /bin/bash \
+            "${host_user}"
+        return
+    fi
+
+    id_name="${id_entry%%:*}"
+    if [[ "${id_name}" != "${host_user}" ]]; then
+        if [[ -n "${name_entry}" ]]; then
+            echo "codex-safe-entrypoint: UID ${host_uid} has conflicting user names" >&2
+            return 1
+        fi
+        usermod --login "${host_user}" "${id_name}"
+    fi
+    usermod --gid "${host_gid}" --home "${probe_home}" "${host_user}"
+}
+
+configure_host_group
+configure_host_user
+
 readonly dockerd_log=/tmp/codex-safe-dockerd.log
 dockerd_pid=""
 
@@ -66,14 +159,6 @@ if [[ "${ready}" != true ]]; then
     exit 1
 fi
 
-readonly host_uid="${CODEX_SAFE_HOST_UID:-}"
-readonly host_gid="${CODEX_SAFE_HOST_GID:-}"
-if [[ ! "${host_uid}" =~ ^[0-9]+$ ]] || [[ ! "${host_gid}" =~ ^[0-9]+$ ]]; then
-    echo "codex-safe-entrypoint: CODEX_SAFE_HOST_UID and CODEX_SAFE_HOST_GID must be numeric" >&2
-    exit 2
-fi
-
-readonly probe_home=/tmp/codex-safe-home
 mkdir -p "${probe_home}"
 chown "${host_uid}:${host_gid}" "${probe_home}" /var/run/docker.sock
 chmod 0700 "${probe_home}"

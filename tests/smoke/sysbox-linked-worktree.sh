@@ -22,6 +22,8 @@ nested_image="alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be1
 binary="${temp_root}/codex-safe"
 outer_log="${temp_root}/outer.log"
 sentinel_name="codex-safe-host-sentinel-${run_id}"
+host_user="$(id -un)"
+host_group="$(id -gn)"
 launcher_pid=""
 outer_container=""
 
@@ -144,6 +146,17 @@ nested_name=$9
 nested_marker=${10}
 nested_daemon_id_file=${11}
 phase8_marker=${12}
+expected_host_user=${13}
+expected_host_group=${14}
+
+if [[ "$(whoami)" != "${expected_host_user}" ]]; then
+    echo "smoke probe: container user name does not match the host" >&2
+    exit 1
+fi
+if [[ "$(id -gn)" != "${expected_host_group}" ]]; then
+    echo "smoke probe: container primary group name does not match the host" >&2
+    exit 1
+fi
 
 for expected_command in less make rg; do
     if ! command -v "${expected_command}" >/dev/null; then
@@ -299,6 +312,8 @@ host_daemon_id="$(docker info --format '{{.ID}}')"
     "${nested_marker}" \
     "${nested_daemon_id_file}" \
     "${phase8_marker}" \
+    "${host_user}" \
+    "${host_group}" \
     >"${outer_log}" 2>&1 &
 launcher_pid=$!
 
