@@ -73,7 +73,7 @@ does not prove deterministic creation, wrapper registration, last-command lifeti
 ### Phase 1: Manager Core
 
 Purpose: Implement the container-local active-command registry independently of Docker orchestration.
-Status: to be done
+Status: done
 Done when: a Unix-socket manager acknowledges commands, counts connections exactly once, and exits after one idle
 timeout with zero active commands.
 
@@ -223,6 +223,8 @@ Commit: `docs: document managed project sessions`
 
 ## Progress Notes
 
+- 2026-07-14: Phase 1 added the manager protocol and Unix-socket state machine. `make test`, focused vet, and
+  `go test -race ./internal/session` pass with an external `GOROOT` unset and a writable Go build cache.
 - 2026-07-14: revised before implementation so the Go manager is the image entrypoint and owns privileged bootstrap
   and dockerd supervision; the obsolete shell entrypoint will be deleted during the atomic cutover.
 - Add dated notes before moving the plan to `completed/`, including validation results, phase commits, deviations,
