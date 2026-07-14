@@ -198,6 +198,11 @@ The outer container runs through the local Docker Engine with `--runtime=sysbox-
 The outer container gets its own PID, mount, network, IPC, UTS, cgroup, and user namespaces. Root inside the container
 is constrained by the Sysbox user namespace and is not host root.
 
+The recreated host account has passwordless `sudo` to root inside the outer container. This is required for installing
+diagnostic packages and other container-local administration. It does not grant host root, add bind mounts, or expose
+the host Docker socket, but it does allow changes to the ephemeral container filesystem and every already-allowed
+read-write host mount.
+
 The security contract does not depend on an AppArmor profile. Isolation comes from namespaces, restricted mounts,
 cgroups, and Sysbox behavior. With the shared UID/GID mapping in Sysbox CE, all sessions are treated as belonging to
 one trusted local user rather than mutually untrusted tenants.
@@ -206,6 +211,7 @@ The container image includes:
 
 - Codex and its runtime dependencies;
 - Docker CLI, Docker daemon, and the Compose plugin;
+- `sudo` with a validated passwordless policy for the recreated host account;
 - an init process that reaps child processes and handles signals correctly;
 - an entrypoint that starts the daemon, waits for readiness, and then starts Codex.
 

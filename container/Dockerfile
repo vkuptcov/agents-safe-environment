@@ -40,6 +40,7 @@ RUN apt-get update \
         less \
         make \
         ripgrep \
+        sudo \
         tini \
     && rm -rf /var/lib/apt/lists/*
 

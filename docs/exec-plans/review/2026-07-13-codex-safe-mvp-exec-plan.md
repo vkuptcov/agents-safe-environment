@@ -284,6 +284,20 @@ Done when: terminal-aware tools see 256-color capability and interactive Bash us
 4. Extend the smoke probe to require 256-color capability, prompt colors, and the color-aware `ls` alias.
 5. Verify a real PTY displays ANSI-colored prompt output.
 
+### Phase 17: Container-Local Sudo
+
+Purpose: Allow the interactive user to administer the ephemeral outer container without a configured password.
+Status: done
+Done when: the recreated host user can run `sudo --non-interactive` as container root.
+
+1. Install Ubuntu's `sudo` package in the outer image.
+2. Generate a dedicated sudoers fragment for the validated host account during entrypoint bootstrap.
+3. Grant `NOPASSWD: ALL`, set the fragment mode to `0440`, and validate it with `visudo` before launching the probe.
+4. Keep the policy file owned and writable only by container root.
+5. Require the smoke probe to obtain UID `0` through non-interactive sudo.
+6. Verify `sudo apt-get update` in a real codex-safe session.
+7. Document that sudo reaches Sysbox-container root, not host root.
+
 ## Validation Gates
 
 - `gofmt -w cmd internal` completes, and a subsequent diff contains no Go formatting changes.
@@ -299,6 +313,7 @@ Done when: terminal-aware tools see 256-color capability and interactive Bash us
 - The smoke probe reads the mounted host Git config, cannot modify it, and round-trips Cyrillic under UTF-8.
 - The smoke probe's `HOME` and passwd home equal host `$HOME` without a broad host-home mount.
 - The smoke probe sees 256 terminal colors and loads the interactive colored prompt and command aliases.
+- The smoke probe obtains container UID `0` through passwordless sudo without gaining host-root access.
 - `make build` writes `bin/codex-safe`; `make test` and `make docker-build` pass; the smoke probe registers Make target
   completion.
 - `git diff --check` reports no whitespace errors.
@@ -366,3 +381,5 @@ Done when: terminal-aware tools see 256-color capability and interactive Bash us
   process environment, and `.gitconfig` target now share that path without mounting the complete host home directory.
 - 2026-07-14: Enabled `xterm-256color` and interactive Bash colors. The prompt distinguishes identity and working
   directory, while `ls` and `grep` use automatic color modes that remain disabled for redirected output.
+- 2026-07-14: Installed `sudo` and generated a validated `NOPASSWD` policy for the recreated host account. The smoke
+  probe now proves non-interactive escalation to Sysbox-container root and rejects user writes to the policy file.

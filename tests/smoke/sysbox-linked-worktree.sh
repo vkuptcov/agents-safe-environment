@@ -178,6 +178,18 @@ if [[ "${passwd_home}" != "${expected_host_home}" ]]; then
     echo "smoke probe: passwd home path does not match the host" >&2
     exit 1
 fi
+if [[ "$(sudo --non-interactive id -u)" != "0" ]]; then
+    echo "smoke probe: host user does not have passwordless container-root access" >&2
+    exit 1
+fi
+if [[ "$(stat -c '%a' /etc/sudoers.d/codex-safe-host)" != "440" ]]; then
+    echo "smoke probe: sudoers policy does not have mode 0440" >&2
+    exit 1
+fi
+if [[ -w /etc/sudoers.d/codex-safe-host ]]; then
+    echo "smoke probe: host user can modify its sudoers policy" >&2
+    exit 1
+fi
 if [[ "$(git config --global --get codex-safe-smoke.marker)" != "${expected_git_config_marker}" ]]; then
     echo "smoke probe: host global Git config is not visible" >&2
     exit 1

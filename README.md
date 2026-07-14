@@ -63,7 +63,8 @@ make test
 The image pins Ubuntu 24.04 by digest. It also pins the official `crun` 1.28 binary by SHA-256 for the nested daemon.
 The nested runtime preserves the absolute bind-mount contract, including project paths that contain spaces.
 
-The environment includes Git, Docker Engine and CLI, Docker Compose V2, `make`, `less`, and `rg`.
+The environment includes Git, Docker Engine and CLI, Docker Compose V2, `sudo`, `make`, `less`, and `rg`.
+The recreated host user has passwordless `sudo` for container-local administration such as `sudo apt-get update`.
 Interactive Bash sessions also load the system completion framework, including Make target completion.
 The image defaults to `C.UTF-8` and `TERM=xterm-256color`, so Bash and text tools handle Cyrillic and terminal colors.
 The project Bash startup file enables a colored prompt plus automatic colors for `ls` and `grep`.
@@ -138,6 +139,8 @@ delete them. The primary checkout is read-only, except for its separately mounte
 The outer container is deliberately started without `--privileged`, host namespaces, or `/var/run/docker.sock`.
 Nested containers are controlled by a daemon whose socket and storage exist only inside that outer container. This is
 an infrastructure isolation check, not protection against kernel, Docker, Sysbox, image, or runtime vulnerabilities.
+Passwordless `sudo` grants root inside the outer container, not host root. It can modify the ephemeral image and all
+host paths already mounted read-write, but it does not add host mounts or expose the host Docker socket.
 
 This MVP intentionally omits:
 

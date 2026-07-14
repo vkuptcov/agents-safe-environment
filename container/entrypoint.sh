@@ -110,8 +110,17 @@ configure_host_user() {
     usermod --gid "${host_gid}" --home "${host_home}" "${host_user}"
 }
 
+configure_passwordless_sudo() {
+    local sudoers_file=/etc/sudoers.d/codex-safe-host
+
+    printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "${host_user}" >"${sudoers_file}"
+    chmod 0440 "${sudoers_file}"
+    visudo --check --file="${sudoers_file}" >/dev/null
+}
+
 configure_host_group
 configure_host_user
+configure_passwordless_sudo
 
 readonly dockerd_log=/tmp/codex-safe-dockerd.log
 dockerd_pid=""
