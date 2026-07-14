@@ -221,14 +221,15 @@ Done when: Compose V2, `make`, `less`, and `rg` are available, and a Compose ser
 
 Purpose: Standardize local build output and make interactive Make workflows behave like a normal development shell.
 Status: done
-Done when: builds write only to `bin/`, Make targets run the local checks, and Bash completes Make targets.
+Done when: builds write only to `bin/`, Make targets run checks and rebuild the image, and Bash completes Make targets.
 
 1. Ignore `bin/` and make `bin/codex-safe` the documented local binary path.
 2. Add `Makefile` targets named `build` and `test`.
-3. Install `bash-completion` in the outer image.
-4. Copy a project-owned Bash startup file into the ephemeral probe home before starting the interactive command.
-5. Source the system completion framework from that startup file.
-6. Extend the smoke probe to load and verify the registered Make completion handler.
+3. Add a `docker-build` target for rebuilding the local `codex-safe-mvp:local` image.
+4. Install `bash-completion` in the outer image.
+5. Copy a project-owned Bash startup file into the ephemeral probe home before starting the interactive command.
+6. Source the system completion framework from that startup file.
+7. Extend the smoke probe to load and verify the registered Make completion handler.
 
 ## Validation Gates
 
@@ -241,7 +242,8 @@ Done when: builds write only to `bin/`, Make targets run the local checks, and B
 - `tests/smoke/sysbox-linked-worktree.sh` passes on Linux with `sysbox-runc` registered.
 - A real PTY probe accepts `pwd`, `docker info`, and `exit`; a non-TTY pipe reaches `bash` stdin.
 - The smoke probe executes Compose V2, `make`, `less`, and `rg`, and manages a nested Compose service.
-- `make build` writes `bin/codex-safe`; `make test` passes; the smoke probe registers Make target completion.
+- `make build` writes `bin/codex-safe`; `make test` and `make docker-build` pass; the smoke probe registers Make target
+  completion.
 - `git diff --check` reports no whitespace errors.
 - `awk 'length($0) > 120 { print FILENAME ":" FNR ":" $0 }' README.md docs/*/*.md docs/*/*/*.md` prints nothing.
 - `grep -RIn '[[:blank:]]$' README.md docs` prints nothing.
@@ -297,3 +299,4 @@ Done when: builds write only to `bin/`, Make targets run the local checks, and B
 - 2026-07-13: Standardized local builds under `bin/`, added `make build` and `make test`, and enabled Make target
   completion through a project-owned `.bashrc` in the ephemeral home. The smoke probe now requires the `_make`
   completion handler to load successfully, and an interactive PTY probe expands `make bu<Tab>` to `make build`.
+- 2026-07-14: Added `make docker-build` as the documented command for rebuilding the local MVP image.

@@ -46,7 +46,7 @@ From the repository root:
 
 ```bash
 make build
-docker build -t codex-safe-mvp:local -f container/Dockerfile .
+make docker-build
 ```
 
 The launcher is written to `bin/codex-safe`. Run the local checks with:
