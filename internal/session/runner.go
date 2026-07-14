@@ -15,6 +15,7 @@ import (
 
 const (
 	connectionRetryInterval = 25 * time.Millisecond
+	registrationACKTimeout  = 250 * time.Millisecond
 	commandExitWait         = 5 * time.Second
 )
 
@@ -120,11 +121,20 @@ func connectRegistered(ctx context.Context, socketPath string, timeout time.Dura
 
 	var lastErr error
 	for {
+		if err := rejectCommittedShutdown(socketPath); err != nil {
+			return nil, err
+		}
 		connection, err := (&net.Dialer{}).DialContext(startupContext, "unix", socketPath)
 		if err == nil {
-			if deadline, ok := startupContext.Deadline(); ok {
-				_ = connection.SetReadDeadline(deadline)
+			if markerErr := rejectCommittedShutdown(socketPath); markerErr != nil {
+				_ = connection.Close()
+				return nil, markerErr
 			}
+			ackDeadline := time.Now().Add(registrationACKTimeout)
+			if startupDeadline, ok := startupContext.Deadline(); ok && startupDeadline.Before(ackDeadline) {
+				ackDeadline = startupDeadline
+			}
+			_ = connection.SetReadDeadline(ackDeadline)
 			acknowledgement := []byte{0}
 			_, err = io.ReadFull(connection, acknowledgement)
 			if err == nil && acknowledgement[0] == Acknowledgement {
@@ -137,6 +147,9 @@ func connectRegistered(ctx context.Context, socketPath string, timeout time.Dura
 			_ = connection.Close()
 		}
 		lastErr = err
+		if markerErr := rejectCommittedShutdown(socketPath); markerErr != nil {
+			return nil, markerErr
+		}
 
 		timer := time.NewTimer(connectionRetryInterval)
 		select {
@@ -147,6 +160,17 @@ func connectRegistered(ctx context.Context, socketPath string, timeout time.Dura
 		case <-timer.C:
 		}
 	}
+}
+
+func rejectCommittedShutdown(socketPath string) error {
+	_, err := os.Stat(stoppingMarkerPath(socketPath))
+	if err == nil {
+		return fmt.Errorf("register session command at %q: manager is stopping", socketPath)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect session stopping marker: %w", err)
+	}
+	return nil
 }
 
 func forwardSignals(process *os.Process, signals <-chan os.Signal, childDone <-chan struct{}) {

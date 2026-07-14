@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 const testIdleTimeout = 80 * time.Millisecond
@@ -19,6 +21,8 @@ func TestManagerExitsAfterStartupIdleTimeout(t *testing.T) {
 	running := startTestManager(t, testIdleTimeout)
 	waitForManager(t, running, 5*testIdleTimeout, nil)
 	assertSocketRemoved(t, running.socketPath)
+	_, err := os.Stat(stoppingMarkerPath(running.socketPath))
+	require.NoError(t, err, "manager shutdown must leave the stopping marker")
 }
 
 func TestManagerStaysAliveUntilEveryConnectionCloses(t *testing.T) {
@@ -27,13 +31,9 @@ func TestManagerStaysAliveUntilEveryConnectionCloses(t *testing.T) {
 	second := connectAcknowledged(t, running.socketPath)
 
 	assertManagerRunning(t, running, 2*testIdleTimeout)
-	if err := first.Close(); err != nil {
-		t.Fatalf("close first connection: %v", err)
-	}
+	require.NoError(t, first.Close(), "first wrapper connection must close")
 	assertManagerRunning(t, running, 2*testIdleTimeout)
-	if err := second.Close(); err != nil {
-		t.Fatalf("close second connection: %v", err)
-	}
+	require.NoError(t, second.Close(), "second wrapper connection must close")
 
 	waitForManager(t, running, 5*testIdleTimeout, nil)
 }
@@ -41,16 +41,12 @@ func TestManagerStaysAliveUntilEveryConnectionCloses(t *testing.T) {
 func TestManagerReconnectCancelsIdleShutdown(t *testing.T) {
 	running := startTestManager(t, 4*testIdleTimeout)
 	first := connectAcknowledged(t, running.socketPath)
-	if err := first.Close(); err != nil {
-		t.Fatalf("close first connection: %v", err)
-	}
+	require.NoError(t, first.Close(), "initial wrapper connection must close")
 
 	time.Sleep(testIdleTimeout)
 	second := connectAcknowledged(t, running.socketPath)
 	assertManagerRunning(t, running, 5*testIdleTimeout)
-	if err := second.Close(); err != nil {
-		t.Fatalf("close second connection: %v", err)
-	}
+	require.NoError(t, second.Close(), "reconnected wrapper connection must close")
 	waitForManager(t, running, 8*testIdleTimeout, nil)
 }
 
@@ -84,9 +80,9 @@ func TestManagerContextCancellationClosesActiveConnections(t *testing.T) {
 	waitForManager(t, running, time.Second, context.Canceled)
 	_ = connection.SetReadDeadline(time.Now().Add(time.Second))
 	buffer := []byte{0}
-	if read, err := connection.Read(buffer); read != 0 || err == nil {
-		t.Fatalf("connection remained open after cancellation: read=%d err=%v", read, err)
-	}
+	read, err := connection.Read(buffer)
+	require.Error(t, err, "manager cancellation must close active wrapper connections")
+	require.Zero(t, read, "closed wrapper connection must not return data")
 }
 
 func TestManagerCreatesPrivateSocket(t *testing.T) {
@@ -94,20 +90,16 @@ func TestManagerCreatesPrivateSocket(t *testing.T) {
 	t.Cleanup(running.cancel)
 
 	directoryInfo, err := os.Stat(filepath.Dir(running.socketPath))
-	if err != nil {
-		t.Fatalf("stat runtime directory: %v", err)
-	}
-	if got := directoryInfo.Mode().Perm(); got != runtimeDirectoryMode {
-		t.Fatalf("runtime directory mode = %o, want %o", got, runtimeDirectoryMode)
-	}
+	require.NoError(t, err, "manager runtime directory must exist")
+	require.Equal(t,
+		os.FileMode(runtimeDirectoryMode),
+		directoryInfo.Mode().Perm(),
+		"manager runtime directory must be private",
+	)
 	assertOwner(t, "runtime directory", directoryInfo)
 	socketInfo, err := os.Stat(running.socketPath)
-	if err != nil {
-		t.Fatalf("stat socket: %v", err)
-	}
-	if got := socketInfo.Mode().Perm(); got != socketMode {
-		t.Fatalf("socket mode = %o, want %o", got, socketMode)
-	}
+	require.NoError(t, err, "manager socket must exist")
+	require.Equal(t, os.FileMode(socketMode), socketInfo.Mode().Perm(), "manager socket must be private")
 	assertOwner(t, "socket", socketInfo)
 }
 
@@ -140,6 +132,7 @@ type runningManager struct {
 	socketPath string
 	cancel     context.CancelFunc
 	done       <-chan error
+	stopped    <-chan struct{}
 }
 
 func startTestManager(t *testing.T, idleTimeout time.Duration) runningManager {
@@ -151,12 +144,22 @@ func startTestManager(t *testing.T, idleTimeout time.Duration) runningManager {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
+	stopped := make(chan struct{})
 	go func() {
 		done <- manager.Serve(ctx)
+		close(stopped)
 	}()
 	waitForSocket(t, socketPath, done)
-	t.Cleanup(cancel)
-	return runningManager{socketPath: socketPath, cancel: cancel, done: done}
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-stopped:
+		case <-time.After(time.Second):
+			t.Errorf("manager cleanup did not stop within one second")
+		}
+		_ = os.Remove(stoppingMarkerPath(socketPath))
+	})
+	return runningManager{socketPath: socketPath, cancel: cancel, done: done, stopped: stopped}
 }
 
 func newTestManager(socketPath string, idleTimeout time.Duration) (*Manager, error) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestConfigureHostAccountReusesMatchingAccount(t *testing.T) {
@@ -19,9 +21,10 @@ func TestConfigureHostAccountReusesMatchingAccount(t *testing.T) {
 		},
 		commandKey("usermod", "--gid", "1001", "--home", "/home/alex", "alex"): {},
 	}}
-	if err := configureHostAccount(context.Background(), config, commands); err != nil {
-		t.Fatalf("configureHostAccount() error = %v", err)
-	}
+	require.NoError(t,
+		configureHostAccount(context.Background(), config, commands),
+		"matching host account must be reusable",
+	)
 }
 
 func TestConfigureHostAccountCreatesMissingEntries(t *testing.T) {
@@ -42,9 +45,10 @@ func TestConfigureHostAccountCreatesMissingEntries(t *testing.T) {
 			"alex",
 		): {},
 	}}
-	if err := configureHostAccount(context.Background(), config, commands); err != nil {
-		t.Fatalf("configureHostAccount() error = %v", err)
-	}
+	require.NoError(t,
+		configureHostAccount(context.Background(), config, commands),
+		"missing host account must be created",
+	)
 }
 
 func TestConfigureHostAccountRenamesImageEntries(t *testing.T) {
@@ -60,9 +64,10 @@ func TestConfigureHostAccountRenamesImageEntries(t *testing.T) {
 		commandKey("usermod", "--login", "alex", "ubuntu"):                     {},
 		commandKey("usermod", "--gid", "1001", "--home", "/home/alex", "alex"): {},
 	}}
-	if err := configureHostAccount(context.Background(), config, commands); err != nil {
-		t.Fatalf("configureHostAccount() error = %v", err)
-	}
+	require.NoError(t,
+		configureHostAccount(context.Background(), config, commands),
+		"image account must be renamed safely",
+	)
 }
 
 func TestConfigureHostAccountRejectsNameConflicts(t *testing.T) {
@@ -89,13 +94,12 @@ func TestConfigureHostAccountRejectsNameConflicts(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := configureHostAccount(
+			err := configureHostAccount(
 				context.Background(),
 				testConfig(t),
 				&fakeCommandRunner{responses: test.responses},
-			); err == nil {
-				t.Fatal("configureHostAccount() accepted a conflicting account")
-			}
+			)
+			require.Error(t, err, "conflicting account must be rejected")
 		})
 	}
 }

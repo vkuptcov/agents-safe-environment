@@ -111,6 +111,9 @@ func (manager *Manager) listen() (net.Listener, error) {
 	if err := os.Chmod(runtimeDirectory, runtimeDirectoryMode); err != nil {
 		return nil, fmt.Errorf("set session runtime directory mode: %w", err)
 	}
+	if err := os.Remove(stoppingMarkerPath(manager.config.SocketPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("remove stale session stopping marker: %w", err)
+	}
 
 	if err := ensureSocketPathAvailable(manager.config.SocketPath); err != nil {
 		return nil, err
@@ -269,10 +272,20 @@ func (state *managerState) commitShutdownLocked(err error) []net.Conn {
 }
 
 func (state *managerState) closeForShutdown(connections []net.Conn) {
+	markerPath := stoppingMarkerPath(state.config.SocketPath)
+	if err := os.WriteFile(markerPath, nil, socketMode); err != nil {
+		state.setError(fmt.Errorf("create session stopping marker: %w", err))
+	} else if err := os.Chown(markerPath, state.config.SocketUID, state.config.SocketGID); err != nil {
+		state.setError(fmt.Errorf("set session stopping marker owner: %w", err))
+	}
 	_ = state.listener.Close()
 	for _, connection := range connections {
 		_ = connection.Close()
 	}
+}
+
+func stoppingMarkerPath(socketPath string) string {
+	return filepath.Join(filepath.Dir(socketPath), StoppingMarkerName)
 }
 
 func (state *managerState) isStopping() bool {

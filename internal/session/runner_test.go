@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -173,6 +174,64 @@ func TestRunCommandRequiresManagerAcknowledgement(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed < 50*time.Millisecond || elapsed > time.Second {
 		t.Fatalf("registration timeout elapsed = %s", elapsed)
+	}
+}
+
+func TestRunCommandRejectsCommittedManagerShutdownWithoutStartingChild(t *testing.T) {
+	runtimeDirectory := t.TempDir()
+	socketPath := filepath.Join(runtimeDirectory, "session.sock")
+	if err := os.WriteFile(stoppingMarkerPath(socketPath), nil, 0o600); err != nil {
+		t.Fatalf("create stopping marker: %v", err)
+	}
+	started := time.Now()
+	err := RunCommand(context.Background(), RunnerConfig{
+		SocketPath:     socketPath,
+		StartupTimeout: time.Second,
+		Command:        helperCommand("exit", "99"),
+		Environment:    helperEnvironmentValues(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "manager is stopping") {
+		t.Fatalf("RunCommand() error = %v, want committed shutdown", err)
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("committed shutdown detection took %s", elapsed)
+	}
+}
+
+func TestRunCommandDoesNotWaitOnUnacknowledgedShutdownSocket(t *testing.T) {
+	runtimeDirectory := t.TempDir()
+	socketPath := filepath.Join(runtimeDirectory, "session.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			accepted <- connection
+		}
+	}()
+	go func() {
+		connection := <-accepted
+		defer connection.Close()
+		time.Sleep(50 * time.Millisecond)
+		_ = os.WriteFile(stoppingMarkerPath(socketPath), nil, 0o600)
+	}()
+
+	started := time.Now()
+	err = RunCommand(context.Background(), RunnerConfig{
+		SocketPath:     socketPath,
+		StartupTimeout: 5 * time.Second,
+		Command:        helperCommand("exit", "99"),
+		Environment:    helperEnvironmentValues(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "manager is stopping") {
+		t.Fatalf("RunCommand() error = %v, want committed shutdown", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("unacknowledged shutdown socket blocked for %s", elapsed)
 	}
 }
 

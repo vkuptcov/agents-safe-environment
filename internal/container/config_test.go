@@ -3,30 +3,22 @@ package container
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestConfigFromEnvironment(t *testing.T) {
 	environment := validEnvironment()
 	environment["CODEX_SAFE_DOCKER_READY_TIMEOUT"] = "17"
 	config, err := ConfigFromEnvironment(mapLookup(environment))
-	if err != nil {
-		t.Fatalf("ConfigFromEnvironment() error = %v", err)
-	}
-	if config.HostUID != 1000 || config.HostGID != 1001 {
-		t.Fatalf("identity = %d:%d, want 1000:1001", config.HostUID, config.HostGID)
-	}
-	if config.HostUser != "alex" || config.HostGroup != "developers" {
-		t.Fatalf("account = %q:%q", config.HostUser, config.HostGroup)
-	}
-	if config.HostHome != "/home/alex" {
-		t.Fatalf("home = %q", config.HostHome)
-	}
-	if config.DockerReadyTimeout != 17*time.Second {
-		t.Fatalf("ready timeout = %s", config.DockerReadyTimeout)
-	}
-	if config.DockerShutdownTimeout != defaultDockerShutdownTimeout {
-		t.Fatalf("shutdown timeout = %s", config.DockerShutdownTimeout)
-	}
+	require.NoError(t, err, "valid host environment must parse")
+	require.Equal(t, 1000, config.HostUID, "host UID must be parsed")
+	require.Equal(t, 1001, config.HostGID, "host GID must be parsed")
+	require.Equal(t, "alex", config.HostUser, "host username must be parsed")
+	require.Equal(t, "developers", config.HostGroup, "host group must be parsed")
+	require.Equal(t, "/home/alex", config.HostHome, "host home must be parsed")
+	require.Equal(t, 17*time.Second, config.DockerReadyTimeout, "daemon readiness timeout must be configurable")
+	require.Equal(t, defaultDockerShutdownTimeout, config.DockerShutdownTimeout, "shutdown timeout must use its default")
 }
 
 func TestConfigFromEnvironmentRejectsInvalidValues(t *testing.T) {
@@ -49,9 +41,8 @@ func TestConfigFromEnvironmentRejectsInvalidValues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			environment := validEnvironment()
 			environment[test.key] = test.value
-			if _, err := ConfigFromEnvironment(mapLookup(environment)); err == nil {
-				t.Fatalf("ConfigFromEnvironment() accepted %s=%q", test.key, test.value)
-			}
+			_, err := ConfigFromEnvironment(mapLookup(environment))
+			require.Error(t, err, "invalid environment value must be rejected")
 		})
 	}
 }
@@ -67,9 +58,8 @@ func TestConfigFromEnvironmentRequiresEveryIdentityValue(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			environment := validEnvironment()
 			delete(environment, name)
-			if _, err := ConfigFromEnvironment(mapLookup(environment)); err == nil {
-				t.Fatalf("ConfigFromEnvironment() accepted missing %s", name)
-			}
+			_, err := ConfigFromEnvironment(mapLookup(environment))
+			require.Error(t, err, "missing environment value must be rejected")
 		})
 	}
 }
@@ -94,8 +84,6 @@ func mapLookup(values map[string]string) func(string) (string, bool) {
 func testConfig(t *testing.T) Config {
 	t.Helper()
 	config, err := ConfigFromEnvironment(mapLookup(validEnvironment()))
-	if err != nil {
-		t.Fatalf("create test config: %v", err)
-	}
+	require.NoError(t, err, "test environment must be valid")
 	return config
 }

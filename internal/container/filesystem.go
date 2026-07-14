@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
 const (
@@ -36,7 +38,7 @@ func defaultRuntimePaths() runtimePaths {
 		dockerSocket:       "/var/run/docker.sock",
 		dockerdLog:         "/tmp/codex-safe-dockerd.log",
 		crunBinary:         "/usr/local/bin/crun",
-		sessionSocket:      "/run/codex-safe/session.sock",
+		sessionSocket:      session.DefaultSocketPath,
 		dockerdBinary:      "dockerd",
 	}
 }

@@ -17,6 +17,10 @@ const (
 	// that it may start its command.
 	Acknowledgement byte = 1
 
+	// StoppingMarkerName is created next to the socket after admission closes.
+	// A wrapper uses it only to distinguish bootstrap from committed shutdown.
+	StoppingMarkerName = "stopping"
+
 	// DefaultIdleTimeout is used both at manager startup and after the final
 	// registered command disconnects.
 	DefaultIdleTimeout = 5 * time.Second

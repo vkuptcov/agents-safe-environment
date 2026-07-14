@@ -60,17 +60,15 @@ RUN apt-get update \
         tini \
     && rm -rf /var/lib/apt/lists/*
 
-# The entrypoint reconciles the host account identity, starts the private daemon, then drops
-# privileges and execs the requested probe. It creates a container-local home at the host home's
-# absolute path and installs this bashrc there, enabling completion without mounting the host home.
-COPY container/entrypoint.sh /usr/local/bin/codex-safe-entrypoint
+# The Go entrypoint reconciles the host account, prepares its home and sudo policy, starts the
+# private daemon, and owns the session manager state machine. Managed commands enter later through
+# `docker exec` as the recreated user; the root entrypoint never receives their argv.
 COPY container/bashrc /etc/codex-safe/bashrc
 COPY --from=crun --chmod=0755 /crun /usr/local/bin/crun
 COPY --from=session-builder --chmod=0755 /out/codex-safe-session /usr/local/bin/codex-safe-session
 
 # Fail the image build immediately if either copied binary is unusable on the target platform.
-RUN chmod 0755 /usr/local/bin/codex-safe-entrypoint \
-    && /usr/local/bin/crun --version \
+RUN /usr/local/bin/crun --version \
     && /usr/local/bin/codex-safe-session --help
 
 # Both the probe and nested containers use only the daemon socket created inside the outer
@@ -85,5 +83,6 @@ ENV LANG=C.UTF-8
 # host terminal accepts ANSI colors. Tools using automatic color still disable it for non-TTY output.
 ENV TERM=xterm-256color
 
-# Tini is PID 1 so orphaned nested-daemon children are reaped and signals reach the entrypoint.
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/codex-safe-entrypoint"]
+# Tini remains PID 1 only to reap orphaned descendants and forward signals. The Go session manager
+# is the container's single lifecycle-owning workload and gracefully stops its dockerd child.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session", "serve"]
