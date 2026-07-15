@@ -90,7 +90,10 @@ func ResolveUserState(inputs UserStateInputs) (UserState, error) {
 func resolveCodexHome(lookupEnv func(string) (string, bool), homeDir string) (string, error) {
 	source := filepath.Join(homeDir, ".codex")
 	if requested, ok := lookupEnv(codexHomeEnv); ok && strings.TrimSpace(requested) != "" {
-		source = requested
+		// Use the trimmed value the emptiness guard already accepted, so a CODEX_HOME carrying a
+		// stray newline or space from command substitution resolves the real directory instead of
+		// failing canonicalization or the absolute-path check on the untrimmed string.
+		source = strings.TrimSpace(requested)
 		if !filepath.IsAbs(source) {
 			return "", fmt.Errorf("%s %q is not absolute", codexHomeEnv, source)
 		}

@@ -89,6 +89,27 @@ func TestResolveUserStateEmptyCodexHomeFallsBackToDefault(t *testing.T) {
 	}
 }
 
+func TestResolveUserStateTrimsCodexHomeWhitespace(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	custom := mkdir(t, filepath.Join(t.TempDir(), "custom codex"))
+
+	// A CODEX_HOME captured through command substitution often carries a trailing newline or a
+	// leading space; the launcher must resolve the real directory rather than reject it.
+	for _, raw := range []string{custom + "\n", " " + custom, "\t" + custom + " "} {
+		state, err := ResolveUserState(UserStateInputs{
+			LookupEnv: envLookup(map[string]string{codexHomeEnv: raw}),
+			HomeDir:   evalPath(t, home),
+		})
+		if err != nil {
+			t.Fatalf("ResolveUserState(CODEX_HOME=%q) error = %v", raw, err)
+		}
+		if state.CodexHome != evalPath(t, custom) {
+			t.Errorf("CodexHome = %q, want trimmed %q", state.CodexHome, evalPath(t, custom))
+		}
+	}
+}
+
 func TestResolveUserStateCanonicalizesSymlinkedCodexHome(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
