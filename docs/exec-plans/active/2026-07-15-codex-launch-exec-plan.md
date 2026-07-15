@@ -118,7 +118,7 @@ Commit: `feat: resolve codex home and personal skills`
 ### Phase 2: Codex CLI in the Outer Image
 
 Purpose: Ship a pinned, image-owned Codex CLI before any launcher path depends on it.
-Status: to be done
+Status: done
 Precondition: the owner approval in `Dependency Approval` is recorded.
 Done when: the image contains the pinned Codex at `/usr/local/bin/codex` and reports its version without a network
 install.
