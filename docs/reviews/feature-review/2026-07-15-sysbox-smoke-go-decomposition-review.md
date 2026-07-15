@@ -274,8 +274,11 @@ Status: implemented on 2026-07-15.
 - **S7 applied where relevant.** The environment probe computes each reported value once.
 - **R2 resolved.** The Go smoke test again proves that the host can append to a nested-container-created file and
   that the mounted host Git config remains byte-for-byte unchanged.
+- **Dependency isolation added.** `tests/smoke` is a separate Go module, so the Moby client and its transitive
+  dependencies no longer appear in the application module. `make test` explicitly tests and vets both modules;
+  no `go.work` file changes the behavior of ordinary root-module commands.
 
 Validation:
 
-- `GOCACHE=/tmp/codex-go-cache go test ./...`
-- `GOCACHE=/tmp/codex-go-cache make test-smoke-go` (`TestSysboxLinkedWorktreeGo` passed in 29.93 seconds)
+- `GOCACHE=/tmp/codex-go-cache make test`
+- `GOCACHE=/tmp/codex-go-cache make test-smoke-go` (`TestSysboxLinkedWorktreeGo` passed in 31.74 seconds)
