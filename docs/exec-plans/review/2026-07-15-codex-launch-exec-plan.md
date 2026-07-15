@@ -1,6 +1,6 @@
 # Exec Plan: Run Codex Inside the Container
 
-- Status: active
+- Status: in review
 - Created: 2026-07-15
 - Design: [`docs/design-docs/codex-safe.md`](../../design-docs/codex-safe.md)
 - Scope:
@@ -214,7 +214,7 @@ Commit: `test: prove codex runs in a sysbox session`
 ### Phase 7: Documentation and Review Handoff
 
 Purpose: Make the product launcher usage accurate and ready for owner review.
-Status: to be done
+Status: done
 Done when: user documentation matches verified behavior, all validation gates pass, and this plan moves to review.
 
 1. Update `README.md` for the product `codex-safe` usage: no-argument default, `--` forwarding, Codex-home resolution,
@@ -275,5 +275,29 @@ Commit: `docs: document codex product launcher`
 
 ## Progress Notes
 
-- Add dated notes before moving this plan to `review/`, including validation results, phase commits, deviations from
-  the plan above, and any intentionally deferred work.
+- 2026-07-15: All seven phases implemented and committed separately. Phase commits: `feat: resolve codex home and
+  personal skills`; `feat: install pinned codex cli in image`; `test: route smoke probes through a test-only
+  transport`; `feat: run codex by default with user-state mounts`; `feat: validate user-state labels on reuse`;
+  `test: prove codex runs in a sysbox session`; `docs: document codex product launcher`.
+- 2026-07-15: Validation gates passed on a real Sysbox host (Docker 28.3.3; `sysbox-runc` registered; Go 1.26.5):
+  - `gofmt -l cmd internal` clean; `go test ./internal/launcher ./cmd/codex-safe` and `go test -race
+    ./internal/launcher` pass; `make test` green (both modules).
+  - `make docker-build` builds `codex-safe-mvp:local` with the pinned Codex; `docker run --rm --entrypoint
+    /usr/local/bin/codex codex-safe-mvp:local --version` prints `codex-cli 0.144.4`.
+  - `rg -n "/usr/local/bin/codex" internal/launcher` shows the image-owned absolute path.
+  - `make test-smoke-go` passes `TestSysboxLinkedWorktreeGo` and `TestSysboxCodexProductLaunch` through the test-only
+    transport and product binary; the credentialed acceptance test skips without a dedicated account. Post-run
+    `docker ps -a --filter label=codex-safe.managed=true --quiet` prints nothing.
+  - `make check-docs` passes; `git diff --check` clean; changed Markdown lines are at most 120 characters.
+- 2026-07-15: Deviations and notes:
+  - Phase 3 proves the removed arbitrary-command surface at the build level (the untagged `codex-safe-probe` is a
+    stub that refuses to run a command); the product-CLI-level proof lands with the Phase 4 flip
+    (`TestRunNeverRunsArbitraryExecutable`).
+  - Phase 4 adds a minimal `$HOME/.codex` to the existing linked-worktree smoke fixture so that scenario stays green
+    after the launch behavior flips; Phase 6 enriches the sentinel home with configuration, skills, and assertions.
+  - Known flake (not caused by this plan): `make test-smoke-go` intermittently sees a first-run `exit status 137`
+    (SIGKILL) on cold start, consistent with the session manager's startup idle timeout racing nested-dockerd
+    readiness; it predates this plan's behavior changes and passes on retry. Deferred to the session-manager work
+    that owns the lifecycle contract. Tracked in `docs/reviews/tech-debt-tracker.md`.
+  - The opt-in credentialed acceptance test (`TestSysboxCodexCredentialedAcceptance`) is intentionally deferred to a
+    run with a dedicated test account; no real credentials are committed.

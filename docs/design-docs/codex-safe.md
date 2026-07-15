@@ -623,6 +623,10 @@ The minimal infrastructure proof is tracked in
 The shared project-container lifecycle is tracked in
 [`2026-07-14-go-session-manager-exec-plan.md`](../exec-plans/active/2026-07-14-go-session-manager-exec-plan.md).
 
+Running Codex inside the container — Codex-home resolution, personal skills, the product command, and user-state
+reuse labels — is tracked in
+[`2026-07-15-codex-launch-exec-plan.md`](../exec-plans/review/2026-07-15-codex-launch-exec-plan.md).
+
 ## References
 
 - [Sysbox project and Docker runtime usage](https://github.com/nestybox/sysbox)
