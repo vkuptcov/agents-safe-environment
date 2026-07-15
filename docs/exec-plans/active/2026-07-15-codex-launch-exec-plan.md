@@ -193,7 +193,7 @@ Commit: `feat: validate user-state labels on reuse`
 ### Phase 6: Real-Host Codex Smoke Proof
 
 Purpose: Prove Codex runs from a mounted host state directory with the intended isolation on a real Sysbox host.
-Status: to be done
+Status: done
 Done when: a live session runs Codex from a sentinel home and proves state round-trip, read-only skills, shadowing
 rejection, and the reuse-mismatch behavior beside the migrated transport.
 

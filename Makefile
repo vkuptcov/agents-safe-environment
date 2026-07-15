@@ -30,7 +30,7 @@ test:
 	bash -n container/bashrc
 
 test-smoke-go: build build-smoke-probe docker-build
-	CODEX_SAFE_RUN_SYSBOX_SMOKE=1 $(GO) -C $(SMOKE_DIR) test . -run TestSysboxLinkedWorktreeGo -count=1 -v
+	CODEX_SAFE_RUN_SYSBOX_SMOKE=1 $(GO) -C $(SMOKE_DIR) test . -run TestSysbox -count=1 -v
 
 check-docs: check-mermaid check-doc-links
 

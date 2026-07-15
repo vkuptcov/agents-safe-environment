@@ -111,9 +111,10 @@ func newSmokeArtifacts(project projectLayout) smokeArtifacts {
 }
 
 type launcherHarness struct {
-	t        *testing.T
-	binary   string
-	hostHome string
+	t             *testing.T
+	binary        string
+	productBinary string
+	hostHome      string
 }
 
 func newLauncherHarness(t *testing.T, hostHome string) *launcherHarness {
@@ -124,14 +125,30 @@ func newLauncherHarness(t *testing.T, hostHome string) *launcherHarness {
 	if _, err := os.Stat(binary); err != nil {
 		t.Skip("bin/codex-safe-probe is missing; run make build-smoke-probe first")
 	}
-	return &launcherHarness{t: t, binary: binary, hostHome: hostHome}
+	product := filepath.Join(workingDirectory, "..", "..", "bin", "codex-safe")
+	return &launcherHarness{t: t, binary: binary, productBinary: product, hostHome: hostHome}
 }
 
-func (launcher *launcherHarness) start(project string, command ...string) *launcherProcess {
+// launcherEnv builds the launcher process environment. It removes any ambient HOME and CODEX_HOME
+// so Codex-home resolution is deterministic, sets HOME to the synthetic host home, then applies the
+// caller's overrides (for example an explicit CODEX_HOME for the reuse-mismatch scenario).
+func (launcher *launcherHarness) launcherEnv(extra []string) []string {
+	environment := make([]string, 0, len(os.Environ())+1+len(extra))
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "HOME=") || strings.HasPrefix(entry, "CODEX_HOME=") {
+			continue
+		}
+		environment = append(environment, entry)
+	}
+	environment = append(environment, "HOME="+launcher.hostHome)
+	return append(environment, extra...)
+}
+
+func (launcher *launcherHarness) startBinary(binary string, project string, hostEnv []string, command ...string) *launcherProcess {
 	launcher.t.Helper()
 	arguments := append([]string{"--project", project, "--image", goSmokeImage, "--"}, command...)
-	process := exec.Command(launcher.binary, arguments...)
-	process.Env = append(os.Environ(), "HOME="+launcher.hostHome)
+	process := exec.Command(binary, arguments...)
+	process.Env = launcher.launcherEnv(hostEnv)
 	running := &launcherProcess{command: process, done: make(chan struct{})}
 	process.Stdout = &running.stdout
 	process.Stderr = &running.stderr
@@ -141,6 +158,11 @@ func (launcher *launcherHarness) start(project string, command ...string) *launc
 		close(running.done)
 	}()
 	return running
+}
+
+func (launcher *launcherHarness) start(project string, command ...string) *launcherProcess {
+	launcher.t.Helper()
+	return launcher.startBinary(launcher.binary, project, nil, command...)
 }
 
 func (launcher *launcherHarness) startWithEnvironment(project string, environment []string, command ...string) *launcherProcess {
