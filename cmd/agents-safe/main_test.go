@@ -59,6 +59,49 @@ func TestRunForwardsCommandWithoutSeparator(t *testing.T) {
 	}
 }
 
+func TestRunForwardsProjectPathAndPlan(t *testing.T) {
+	t.Parallel()
+
+	wantProject := gitproject.Project{RequestedDir: "/project/nested", WorktreeRoot: "/project"}
+	wantPlan := launcher.Plan{
+		ProjectRoot: "/project",
+		WorkingDir:  "/project/nested",
+		Mounts:      []launcher.Mount{{Source: "/project", Target: "/project"}},
+	}
+	fakeDocker := &recordingDocker{}
+	var discoverPath string
+	var builtFor gitproject.Project
+	app := application{
+		discover: func(_ context.Context, path string) (gitproject.Project, error) {
+			discoverPath = path
+			return wantProject, nil
+		},
+		buildPlan: func(project gitproject.Project) (launcher.Plan, error) {
+			builtFor = project
+			return wantPlan, nil
+		},
+		docker: fakeDocker,
+	}
+
+	exitCode := run(context.Background(), []string{"--project", "/project/nested", "bash"}, new(bytes.Buffer), new(bytes.Buffer), app)
+
+	if exitCode != 0 {
+		t.Errorf("run() = %d, want 0", exitCode)
+	}
+	// The --project value must reach discover, the discovered project must reach buildPlan, and the
+	// plan buildPlan returns must be the plan handed to docker.Launch. Otherwise a regression in
+	// project selection or plan forwarding would launch the container with wrong mounts unnoticed.
+	if discoverPath != "/project/nested" {
+		t.Errorf("discover path = %q, want %q", discoverPath, "/project/nested")
+	}
+	if !reflect.DeepEqual(builtFor, wantProject) {
+		t.Errorf("buildPlan project = %#v, want discovered %#v", builtFor, wantProject)
+	}
+	if !reflect.DeepEqual(fakeDocker.plan, wantPlan) {
+		t.Errorf("plan forwarded to Launch = %#v, want %#v", fakeDocker.plan, wantPlan)
+	}
+}
+
 func TestRunForwardsCommandAfterSeparator(t *testing.T) {
 	t.Parallel()
 
@@ -127,6 +170,7 @@ func panicApplication() application {
 }
 
 type recordingDocker struct {
+	plan          launcher.Plan
 	image         string
 	command       []string
 	err           error
@@ -135,13 +179,14 @@ type recordingDocker struct {
 
 func (docker *recordingDocker) Launch(
 	_ context.Context,
-	_ launcher.Plan,
+	plan launcher.Plan,
 	image string,
 	command []string,
 ) error {
 	if docker.panicOnLaunch {
 		panic("Launch should not be called")
 	}
+	docker.plan = plan
 	docker.image = image
 	docker.command = append([]string(nil), command...)
 	return docker.err
