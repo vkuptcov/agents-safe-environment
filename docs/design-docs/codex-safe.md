@@ -5,7 +5,9 @@ Status: Proposed
 Scope:
 
 - the `codex-safe` command contract on a Linux host;
-- discovery and mounting of the active Git project, linked worktrees, host `.gitconfig`, and `~/.codex`;
+- discovery and mounting of the active Git project, linked worktrees, host `.gitconfig`, the resolved Codex home,
+  and personal Codex skills;
+- the Codex CLI executable, process environment, argument forwarding, and authentication handoff;
 - an independent Docker daemon running inside a Sysbox container;
 - security boundaries, lifecycle, launch failures, and isolation verification.
 
@@ -37,7 +39,7 @@ After:
 cd /home/user/sources/app-feature
 codex-safe
 
-Codex runs inside a Sysbox container. It sees app-feature and ~/.codex,
+Codex runs inside a Sysbox container. It sees app-feature, its Codex home,
 while docker ps shows only containers from the nested Docker daemon.
 ```
 
@@ -49,6 +51,10 @@ rewriting repository metadata.
 
 `codex-safe` is a trusted Go program running on the host. It validates the environment, computes the minimum bind-mount
 set, starts an ephemeral system container through `sysbox-runc`, and hands control to Codex inside that container.
+
+The launcher resolves the Codex state directory from the host's `CODEX_HOME` or operating-system user-home API. It
+does not assume `/home/<user>`, `/Users/<user>`, or a Windows profile path. The resolved directory is mounted into the
+container as its Codex home, while the Codex executable itself comes from the pinned container image.
 
 The container has its own Docker daemon and Docker CLI. The host Docker socket is not mounted. Nested containers use
 only the outer container's daemon and storage and can access host files only through paths already visible inside the
@@ -62,6 +68,9 @@ construct the production `docker run` command.
 
 - One `codex-safe` invocation starts interactive Codex in the current Git project.
 - Project changes and Codex state persist on the host with usable file ownership.
+- Codex can read and persist its documented configuration, authentication, logs, sessions, skills, and standalone
+  package metadata through the explicitly mounted Codex paths.
+- Home and Codex-state discovery uses operating-system APIs and `CODEX_HOME`, not platform-specific path literals.
 - A linked worktree remains a fully functional Git working tree inside the container.
 - `docker build`, `docker run`, and Docker Compose use a separate nested daemon.
 - The agent cannot see the host daemon's socket, containers, images, or volumes.
@@ -73,7 +82,7 @@ construct the production `docker run` command.
 
 This container isolates the host more strongly than conventional Docker-in-Docker with `--privileged` or a host
 Docker socket mount. It is not a secrecy boundary for allowed mounts. The agent can read, change, delete, or transmit
-project files and `~/.codex` contents.
+project files and resolved Codex-home contents.
 
 Each outer-container session starts with clean nested Docker storage. Commands routed into that live session reuse its
 images, containers, volumes, and build cache. A new session after the last managed command finishes starts clean again;
@@ -93,20 +102,25 @@ codex-safe [launcher options] [-- codex arguments]
 - `--` separates launcher options from Codex arguments. Arguments after it are forwarded without reparsing.
 - The current subdirectory is preserved as the Codex working directory at the same absolute path.
 - With `--project`, the canonicalized project path becomes the working directory.
-- The canonical worktree root and invoking host UID identify a running outer container eligible for reuse.
+- The canonical worktree root and invoking host UID identify a running outer container. Its resolved Codex-home and
+  personal-skills sources must also match before it is eligible for reuse.
 - When exactly one eligible container is running, the command executes there with the requested working directory.
 - `--image` selects an image only when creating a new outer container; it does not replace an active environment.
 - Interactive mode attaches stdin, stdout, stderr, and the terminal to the container process.
 - After successful environment setup, the Codex exit code becomes the `codex-safe` exit code.
+
+The product command always executes the image-provided `codex` binary. Arguments after `--` are Codex arguments, not
+an arbitrary executable. The lower-level session wrapper remains command-agnostic for testing and container-local
+supervision, but that is not part of the user-facing product interface.
 
 Minimum launcher options:
 
 - `--help`: show launcher help and exit;
 - `--project <path>`: select a project instead of the current directory;
 - `--image <reference>`: override the image for diagnostics or experiments;
-- `--cpus <count>`: override the outer-session CPU limit;
-- `--memory <size>`: override the outer-session memory limit;
-- `--pids-limit <count>`: override the outer-session PID limit.
+- `--cpus <count>`: optionally cap the outer-session CPU; unset means no limit;
+- `--memory <size>`: optionally cap the outer-session memory; unset means no limit;
+- `--pids-limit <count>`: optionally cap the outer-session PID count; unset means no limit.
 
 The project controls the default image and pins it by immutable digest. An image override intentionally expands the
 trusted computing base and is always displayed before launch.
@@ -142,7 +156,6 @@ the host mount namespace.
 
 - The active working-tree root is mounted read-write at the same absolute path.
 - The outer container starts in the absolute equivalent of the original current directory.
-- Host `~/.codex` is mounted read-write at `$HOME/.codex` for the container's Codex user.
 
 #### Linked worktree
 
@@ -166,10 +179,20 @@ the broadest read-only directory first and then applies narrower read-write moun
 If a target requires incompatible sources or modes that this rule cannot resolve, preflight fails. The launcher never
 silently broadens read-write access.
 
+#### Shared user mounts
+
+Every regular-checkout and linked-worktree launch receives the same user-state mounts:
+
+- The resolved host Codex home is mounted read-write as the container's Codex home.
+- When host `$HOME/.agents/skills` exists, that exact directory is mounted read-only at the equivalent path for the
+  container user.
+
 #### Host home path and Git configuration
 
-- The launcher creates a container-local home directory at the same absolute path as host `$HOME` and sets both the
-  process environment and container passwd entry to that path.
+- The launcher resolves the invoking user's home with the operating-system user-home API. Environment variables and
+  path examples such as `/home/user`, `/Users/user`, or `C:\Users\user` are not hard-coded launcher branches.
+- The launcher creates a container-local home directory at the same absolute path as the resolved host home on the
+  supported Linux host and sets both the process environment and container passwd entry to that path.
 - The host home directory itself is not mounted. Apart from explicitly allowed file mounts, its contents exist only
   in the ephemeral outer-container filesystem.
 - When host `$HOME/.gitconfig` exists as a regular file, it is canonicalized and mounted read-only as
@@ -178,18 +201,83 @@ silently broadens read-write access.
 - Files referenced through `include.path`, credential helpers, and other configuration are not mounted implicitly.
   They work only when already available in the image or through another allowed mount.
 
-### 4. Codex State and Credentials
+### 4. Codex Agent Integration
 
-The entire host `~/.codex` directory is available to Codex read-write. This persists authentication, configuration,
-history, and other state between launches.
+#### Codex home resolution
 
-This mount is an explicitly allowed host area, not a secret store. Code running with agent permissions can read its
+The launcher resolves exactly one host Codex-home source before it creates or reuses a container:
+
+1. When host `CODEX_HOME` is set and non-empty, its value is the requested source.
+2. Otherwise, the source is `.codex` below the operating-system-resolved host home.
+3. The source must be an existing, accessible directory. A missing path, relative `CODEX_HOME`, filesystem root,
+   unsupported path, or non-directory fails preflight without creating it or falling back to another location.
+4. The source is canonicalized before the mount plan is built. A symlink used as the source may resolve to another
+   directory, but symlinks inside it do not authorize additional host mounts.
+
+The canonical host source is bind-mounted read-write at `$HOME/.codex` inside the outer container. The managed command
+always receives `CODEX_HOME=<container-home>/.codex`, even when the host selected a custom source. This separates
+host-native path syntax from the Linux container path and gives Codex one stable container-local location.
+
+For example, the default source may be `/home/alex/.codex` on Linux, `/Users/alex/.codex` on macOS, or
+`C:\Users\alex\.codex` on Windows. The first release still launches only on Linux because the Sysbox runtime and
+identity mapping are Linux contracts. The resolution rule avoids hard-coded Linux paths but does not by itself add
+Docker Desktop, macOS, or Windows runtime support.
+
+Codex also discovers personal authored skills under `$HOME/.agents/skills`. When that exact host directory exists, the
+launcher canonicalizes it and mounts it read-only at the equivalent container path. A missing directory is allowed.
+The launcher does not mount the broader `$HOME/.agents` directory or follow skill symlinks by adding their external
+targets to the mount plan.
+
+#### Codex executable and process
+
+The outer image contains a pinned Linux Codex CLI and its runtime dependencies. The build records the version and
+verifies the downloaded artifact or package through the repository's dependency policy. Updating Codex requires a new
+image build; the launcher does not install or update Codex from the network at startup.
+
+The executable is selected from an image-owned path that the Codex-home mount cannot shadow. Host-side Codex binaries,
+including standalone package caches under the mounted state directory, are data and are never executed as the
+container's launcher binary.
+
+Every product invocation runs this process through the session wrapper:
+
+```text
+codex-safe-session run -- codex [forwarded Codex arguments]
+```
+
+The process uses the invoking host UID and GID, the selected project directory as its working directory, the
+container-local `HOME` and `CODEX_HOME`, and the launcher's terminal streams. Arguments stay separate argv elements;
+the launcher does not invoke a shell. Start failures and Codex exit status propagate through the wrapper and launcher.
+
+#### Persistent state, configuration, and skills
+
+The read-write Codex-home mount persists Codex's documented configuration, authentication, logs, sessions, skills,
+and standalone package metadata. Other files physically present below the mounted source remain visible, but the
+launcher does not promise that Codex interprets them. Project-scoped `.codex` configuration and repository skills
+remain available through the project mount and keep their normal precedence.
+
+The launcher does not rewrite configuration. Hooks, MCP server commands, skills, plugins, or config values that refer
+to host paths or binaries outside the allowed mounts can fail inside the Linux container. Platform-specific binaries
+from a macOS or Windows Codex home are not made Linux-compatible by mounting the directory.
+
+The mount is an explicitly allowed host area, not a secret store. Code running with agent permissions can read its
 tokens, change its configuration, or delete its state. A nested container can also receive the directory if the agent
-explicitly bind-mounts it through the inner Docker daemon.
+explicitly bind-mounts it through the inner Docker daemon. Personal skills are read-only through their separate mount,
+but scripts they contain execute with the same permissions as the agent when Codex selects them.
 
-The launcher does not mount the rest of the home directory, `.ssh`, cloud credentials, password stores, Git credential
-helpers, or arbitrary Unix sockets. It does not copy the complete host environment. Only a documented allowlist needed
-for the terminal, locale, and an explicitly configured proxy is forwarded.
+#### Authentication boundary
+
+File-based credentials in `$CODEX_HOME/auth.json` are available through the Codex-home mount. Credentials stored only
+in the host operating system's keychain or keyring are not available inside the container. The launcher does not mount
+keyring services, browser profiles, desktop sockets, `.ssh`, cloud credential directories, password stores, Git
+credential helpers, or arbitrary Unix sockets.
+
+The launcher neither changes `cli_auth_credentials_store` nor converts credentials between storage modes. If the
+mounted configuration requires an unavailable keyring, Codex reports the authentication error and the launcher
+propagates it. An interactive login performed inside the container may persist file-based credentials in the mounted
+Codex home according to Codex's own configuration.
+
+The launcher does not copy the complete host environment or implicitly forward API keys. Only the documented allowlist
+needed for the terminal, locale, Codex paths, and an explicitly configured proxy is forwarded.
 
 ### 5. Outer Container and Sysbox
 
@@ -214,7 +302,7 @@ one trusted local user rather than mutually untrusted tenants.
 
 The container image includes:
 
-- Codex and its runtime dependencies;
+- a pinned Codex CLI and its runtime dependencies at an image-owned executable path;
 - Docker CLI, Docker daemon, and the Compose plugin;
 - `sudo` with a validated passwordless policy for the recreated host account;
 - an init process that reaps child processes and handles signals correctly;
@@ -267,18 +355,24 @@ filesystems are unsupported without separate evidence that their ID mapping beha
 
 ### 8. Resource Policy
 
-The outer container receives cgroup limits for CPU, memory, and process count. All nested containers share those limits
-and cannot collectively exceed the outer session's cgroup.
+By default the outer container runs with no CPU, memory, or PID cgroup limit. It behaves like a local development
+process and may use as much host CPU and memory as its workload and nested containers require. Nested containers share
+the outer container's unbounded resource view and are limited only by the host.
 
-Default values are:
+The launcher computes no default limits and runs no minimum-memory preflight. It does not derive caps from host CPU or
+memory count.
 
-- CPU: `min(4, max(1, floor(host logical CPUs / 2)))`;
-- memory: `min(8 GiB, floor(host memory / 2))`;
-- PID: `4096`.
+Optional caps are opt-in and unset by default:
 
-If the computed memory limit is below `2 GiB`, preflight fails and suggests an explicit override. Positive values can
-be changed with launcher options. The active limits are printed before launch so OOM, throttling, and PID exhaustion
-can be diagnosed.
+- `--cpus <count>`: cap the outer-session CPU;
+- `--memory <size>`: cap the outer-session memory;
+- `--pids-limit <count>`: cap the outer-session process count.
+
+When a cap is provided, it applies as an outer-container cgroup limit shared by all nested containers, its value is
+validated, and the active caps are printed before launch. When no cap is provided, no limit is set and none is printed.
+
+Running unbounded is a deliberate tradeoff. A runaway agent or nested build can exhaust host CPU or memory and trigger
+host-level OOM, exactly as an unsandboxed local process can. Users who need a bound set an explicit cap.
 
 A portable disk limit for the writable layer is outside the first release because support depends on the host Docker
 storage driver and filesystem. This is a known residual risk. Installation documentation must require free-space
@@ -290,15 +384,22 @@ The outer container uses a separate Docker bridge network. Outbound access is en
 and Docker registries require network access. Nested Docker networks remain inside this network boundary.
 
 `codex-safe` does not prevent network exfiltration. Code in the container can transmit accessible project or
-`~/.codex` content. Domain allowlists, enforced proxies, and fully offline operation require a separate design.
+Codex-home content. Domain allowlists, enforced proxies, and fully offline operation require a separate design.
 
 ### 10. Lifecycle and Concurrency
 
 A new outer container has a deterministic name derived from the canonical worktree root and invoking host UID. The
-launcher inspects that exact name, then validates labels containing the full project path, host UID, ownership marker,
-and manager protocol version. A compatible running container receives the new command through `docker exec`; an absent
-name is created with detached `docker run --rm`; a mismatched name fails. Different worktrees continue to use distinct
-Docker daemons and writable layers.
+launcher inspects that exact name, then validates `codex-safe.managed`, `codex-safe.project-path`,
+`codex-safe.host-uid`, `codex-safe.manager-protocol`, `codex-safe.codex-home`, and
+`codex-safe.personal-skills`. The last label contains the canonical personal-skills source or the literal `absent`.
+A compatible running container receives the new command through `docker exec`; an absent name is created with detached
+`docker run --rm`. Different worktrees continue to use distinct Docker daemons and writable layers.
+
+User-state mounts are fixed when the outer container is created and cannot be changed by `docker exec`. If a later
+invocation resolves a different `CODEX_HOME` or personal-skills directory, it must not reuse the live container. The
+launcher reports the mismatch and asks the user to finish the active session before retrying; it does not silently use
+stale configuration or terminate another command. Ownership or protocol label mismatches remain name conflicts. The
+companion session design defines the complete inspection algorithm and diagnostics.
 
 The container's foreground workload is a Go session manager. Every `docker exec`, including the first, invokes
 `codex-safe-session run -- COMMAND`. That wrapper connects to a container-local Unix socket, runs the requested command,
@@ -370,10 +471,12 @@ Before creating a container, the launcher verifies:
 2. The `docker` command exists and a local Docker daemon responds.
 3. The Docker Engine has `sysbox-runc` registered.
 4. The project is a Git working tree and all computed mount sources exist.
-5. `~/.codex` exists, is a directory, and is accessible to the invoking user.
-6. The image resolves to the pinned digest or was explicitly supplied by the user.
-7. The mount plan contains no conflicts or paths outside the allowed set.
-8. Resource-limit configuration is syntactically valid.
+5. The resolved Codex home exists, is a directory, is accessible read-write, and can be represented safely as a bind
+   source.
+6. The optional personal-skills source is absent or is an accessible directory representable as a read-only bind.
+7. The image resolves to the pinned digest or was explicitly supplied by the user and contains the expected Codex CLI.
+8. The mount plan contains no conflicts or paths outside the allowed set.
+9. Any provided resource-limit cap is syntactically valid; no cap is required.
 
 An error identifies the failed check and provides a diagnostic action. The launcher never compensates for missing
 Sysbox by using `runc`, `--privileged`, the host Docker socket, or direct host execution of Codex.
@@ -387,12 +490,16 @@ mode.
 - Each worktree session receives a separate nested Docker daemon; registered concurrent commands in that session share
   it.
 - No user command is the outer container's lifecycle-owning main process.
-- Read-write host access is limited to the active working tree, linked-worktree common Git directory, and `~/.codex`.
+- Read-write host access is limited to the active working tree, linked-worktree common Git directory, and resolved
+  Codex home.
+- Personal host skills outside the Codex home are exposed only through the narrow read-only
+  `$HOME/.agents/skills` mount.
 - The linked worktree's primary checkout is read-only except for the nested common Git directory.
 - Git working-tree and common-directory absolute paths match their host paths.
 - The outer container is never privileged and never shares host namespaces.
 - Unsafe fallback behavior is forbidden.
 - Host-side orchestration and Docker argument construction are implemented in Go.
+- The product command executes the pinned image-owned Codex binary with an explicit container-local `CODEX_HOME`.
 - Arguments and paths are separate argv elements and are never passed through `eval` or shell reinterpretation.
 - After the final managed command finishes normally, the session does not intentionally leave nested containers
   running.
@@ -413,15 +520,18 @@ The trusted computing base includes:
 
 The design intentionally does not promise:
 
-- protection of the active project, common Git directory, or `~/.codex` from the agent;
+- protection of the active project, common Git directory, or resolved Codex home from the agent;
 - protection of Codex tokens from code running in the same environment;
 - network isolation or exfiltration prevention;
 - protection from vulnerabilities in the kernel, Docker, Sysbox, or the container image;
 - isolation between untrusted local tenants when Sysbox CE uses a shared UID/GID mapping;
-- safe concurrent writes by multiple agents to one worktree or `~/.codex`;
+- safe concurrent writes by multiple agents to one worktree or resolved Codex home;
 - access to USB, GPU, FUSE, or other host devices;
 - SSH agent forwarding, Git credential helpers, or automatic `git push`;
 - Docker Desktop, macOS, Windows, rootless host Docker, or remote Docker daemons in the first release;
+- automatic translation of host-specific hooks, MCP commands, skill scripts, plugins, or absolute paths for the Linux
+  container;
+- reuse of credentials stored only in the host operating system's keychain or keyring;
 - linked worktrees attached to bare repositories or common Git directories outside a primary checkout;
 - automatic discovery and mounting of external Git submodules;
 - publishing nested-container ports on the host;
@@ -445,7 +555,13 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Discover a linked worktree whose path contains spaces and shell metacharacters.
 - Resolve canonical paths when the launcher starts through a symbolic link.
 - Verify the exact mount plan and mode of every mount without starting a container.
-- Reject launches outside Git or without `~/.codex`, Docker, or `sysbox-runc`.
+- Resolve default and explicit `CODEX_HOME` sources without hard-coded home prefixes.
+- Reject a missing, relative, root, non-directory, unreadable, or unwritable Codex-home source.
+- Canonicalize a symlinked Codex-home source without adding mounts for external symlinks contained inside it.
+- Mount an existing `$HOME/.agents/skills` read-only, allow it to be absent, and reject an invalid source.
+- Verify `HOME` and `CODEX_HOME`, the image-owned `codex` argv, forwarded arguments, working directory, and exit status.
+- Reject reuse when Codex-home or personal-skills compatibility labels differ from the current resolution.
+- Reject launches outside Git or without Docker or `sysbox-runc`.
 - Prove that unknown options and arguments after `--` cannot trigger shell injection.
 - Prove that every preflight and runtime failure has no fallback path.
 
@@ -458,8 +574,15 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Create a nested image, container, network, and volume and prove they are absent from host Docker.
 - Prove that host containers and `/var/run/docker.sock` are inaccessible from outer and nested containers.
 - Attempt to read a known host-home marker outside allowed mounts and prove the path is absent.
+- Mount a temporary Codex home with sentinel configuration, global instructions, and a skill; verify Codex sees them
+  and writes session state back to the host without exposing a real credential.
+- Prove personal skills are readable but not writable and that an external symlink target remains unavailable.
+- Prove a host standalone Codex binary under the mounted state cannot shadow the image-owned Linux executable.
+- Verify file-based authentication with a dedicated test account only in an opt-in credentialed acceptance test; keep
+  real user credentials out of fixtures, logs, and CI artifacts.
 - Prove that the primary checkout's read-only mount cannot be remounted read-write from either container layer.
-- Exercise CPU, memory, and PID limits with load from multiple nested containers.
+- With no caps, run load from multiple nested containers and prove no default CPU, memory, or PID limit is imposed.
+- With explicit `--cpus`, `--memory`, and `--pids-limit`, prove each cap is enforced on the outer session.
 - Run a second command for one live worktree and prove it shares the outer container and nested Docker daemon.
 - Exit the first of two overlapping commands and prove the second command and outer container remain alive.
 - Run sessions for two worktrees concurrently and prove they do not share nested Docker state.
@@ -482,7 +605,7 @@ Before the first release, inspect the actual outer-container configuration throu
 - runtime, namespaces, capabilities, and disabled privileged mode;
 - the complete mount list and read-write modes;
 - the absence of the host Docker socket and broad host paths;
-- network mode and cgroup limits;
+- network mode and any explicitly configured cgroup limits;
 - the pinned image digest;
 - Sysbox UID/GID behavior on every supported filesystem.
 
@@ -500,3 +623,6 @@ The shared project-container lifecycle is tracked in
 - [Sysbox security model](https://github.com/nestybox/sysbox/blob/master/docs/user-guide/security.md)
 - [Sysbox host requirements](https://github.com/nestybox/sysbox/blob/master/docs/user-guide/install-package.md)
 - [Docker bind mounts and propagation](https://docs.docker.com/engine/storage/bind-mounts/)
+- [Codex environment variables and `CODEX_HOME`](https://learn.chatgpt.com/docs/config-file/environment-variables)
+- [Codex authentication and credential storage](https://learn.chatgpt.com/docs/auth)
+- [Codex skill locations](https://learn.chatgpt.com/docs/build-skills)

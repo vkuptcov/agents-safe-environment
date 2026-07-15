@@ -7,6 +7,7 @@ Scope:
 - the lifetime of one outer Sysbox container shared by concurrent `codex-safe` commands;
 - container-local registration of foreground commands;
 - startup, shutdown, and create-versus-stop races;
+- session reuse compatibility for creation-time user-state mounts;
 - ownership boundaries between the host launcher, Go session-manager entrypoint, and command wrapper.
 
 ## Purpose and Intent
@@ -122,13 +123,20 @@ codex-safe-<project key>
 The UID remains part of the hash input and is also stored explicitly in `codex-safe.host-uid`; repeating it in the
 container name would not add identity information.
 
-The full, unhashed identity remains in labels so the launcher can validate the name and operators can find sessions by
-project path:
+The full, unhashed identity and creation-time user-state compatibility inputs remain in labels so the launcher can
+validate the container before reuse and operators can find sessions by project path:
 
 - `codex-safe.managed=true`: marks containers owned by this launcher;
 - `codex-safe.project-path`: canonical worktree root;
 - `codex-safe.host-uid`: invoking numeric UID;
-- `codex-safe.manager-protocol=1`: required wrapper-manager compatibility.
+- `codex-safe.manager-protocol=1`: required wrapper-manager compatibility;
+- `codex-safe.codex-home`: canonical host source mounted as the container's Codex home;
+- `codex-safe.personal-skills`: canonical host source mounted for personal skills, or the literal `absent` when the
+  optional directory does not exist.
+
+The project path and UID determine the container name. The Codex-home and personal-skills labels do not create a second
+container for the same worktree; they prove that a running container has the user-state mounts requested by the new
+invocation.
 
 The deterministic name is the creation lock. Docker permits only one container with a given name, so concurrent
 launchers cannot both create the same project session.
@@ -152,6 +160,8 @@ docker run --detach --rm \
     --label codex-safe.project-path=/home/alex/sources/example-project \
     --label codex-safe.host-uid=1000 \
     --label codex-safe.manager-protocol=1 \
+    --label codex-safe.codex-home=/home/alex/.codex \
+    --label codex-safe.personal-skills=/home/alex/.agents/skills \
     codex-safe-mvp:local
 ```
 
@@ -164,9 +174,11 @@ docker inspect codex-safe-aba8b4ca4ff345d5d0443c0c \
 
 ```json
 {
+  "codex-safe.codex-home": "/home/alex/.codex",
   "codex-safe.host-uid": "1000",
   "codex-safe.managed": "true",
   "codex-safe.manager-protocol": "1",
+  "codex-safe.personal-skills": "/home/alex/.agents/skills",
   "codex-safe.project-path": "/home/alex/sources/example-project"
 }
 ```
@@ -190,11 +202,13 @@ The launcher follows this algorithm:
 1. Derive the deterministic name from the canonical project root and host UID.
 2. Inspect that exact name.
 3. If it does not exist, create it with `docker run --detach --rm`.
-4. If any identity or protocol label differs, fail with a name-conflict diagnostic.
-5. If it is running and all labels match, run the wrapper in it.
-6. If it is not running, or its manager rejects registration during shutdown, wait a bounded time for the name to be
+4. If an ownership, project, UID, or manager-protocol label differs, fail with a name-conflict diagnostic.
+5. If it is running and either user-state label differs, report that the active session uses different Codex-home or
+   personal-skills mounts and ask the user to finish that session before retrying.
+6. If it is running and all labels match, run the wrapper in it.
+7. If it is not running, or its manager rejects registration during shutdown, wait a bounded time for the name to be
    released and retry once.
-7. If a concurrent create loses the name race, inspect and validate the winner using the same rules.
+8. If a concurrent create loses the name race, inspect and validate the winner using the same rules.
 
 A hash collision or unrelated stale container is never treated as a reusable session based on name alone. Full labels
 remain authoritative after Docker provides atomic name ownership.
@@ -387,6 +401,7 @@ from the socket.
 - A wrapper connection is counted at most once and released exactly once.
 - No manager-protocol message contains or executes command data.
 - Docker's deterministic-name constraint prevents duplicate outer-container creation.
+- A running container is reused only when its Codex-home and personal-skills labels match the requested mount sources.
 - Once manager shutdown commits, the old manager never accepts another command.
 - Final-command shutdown retains `docker run --rm` cleanup.
 - Manager failure never triggers host execution, a privileged container, or use of the host Docker socket.
@@ -448,10 +463,11 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 
 - Derive the same Docker name for the same canonical root and UID.
 - Derive different names for different worktrees or UIDs.
-- Verify direct inspection of the deterministic name and the exact identity labels.
+- Verify direct inspection of the deterministic name and the exact identity and user-state labels.
 - Verify detached `docker run --rm` uses that name.
 - Verify first and subsequent commands receive the same wrapper prefix.
-- Handle matching name conflicts by reuse and mismatched conflicts by explicit failure.
+- Handle matching name conflicts by reuse and ownership or protocol mismatches by a name-conflict diagnostic.
+- Reject a running container with different Codex-home or personal-skills labels using the active-session diagnostic.
 - Prove discovery does not require listing containers by label.
 - Preserve TTY selection, working directory, user identity, and argv boundaries.
 
@@ -460,6 +476,7 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 - Start Bash and `make test`, exit Bash, and prove Make and nested Docker remain alive.
 - Exit the final command and prove manager, dockerd, and outer container disappear after the idle timeout.
 - Run two first callers concurrently and prove exactly one outer container and nested daemon exist.
+- Launch the same worktree with different user-state sources and prove the live container is not reused or terminated.
 - Start a command during the idle timeout and prove reuse or one clean replacement after committed shutdown.
 - Disconnect a host Docker CLI while its command continues and prove the command keeps the session active.
 - Crash the wrapper, manager, and dockerd independently and verify bounded cleanup and diagnostics.

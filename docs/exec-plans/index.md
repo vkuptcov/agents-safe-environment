@@ -5,6 +5,7 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 ## Active
 
 - [Go Session Manager](active/2026-07-14-go-session-manager-exec-plan.md)
+- [Run Codex Inside the Container](active/2026-07-15-codex-launch-exec-plan.md)
 
 ## Review
 
