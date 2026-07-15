@@ -42,15 +42,33 @@ func TestSysboxLinkedWorktreeGo(t *testing.T) {
 	require.NoError(t, err, "Moby client must initialize from the Docker environment")
 	defer dockerClient.Close()
 
-	project := filepath.Join(t.TempDir(), "linked worktree")
-	initGitProject(t, project)
+	root := t.TempDir()
+	primary := filepath.Join(root, "primary repo")
+	project := filepath.Join(root, "feature worktree")
+	nested := filepath.Join(project, "nested directory")
+	initGitProject(t, primary)
+	runInDir(t, primary, "git", "worktree", "add", "-b", "smoke/feature", project)
+	require.NoError(t, os.MkdirAll(nested, 0o755), "nested project directory must be created")
+	hostHome := filepath.Join(root, "host home")
+	require.NoError(t, os.MkdirAll(hostHome, 0o755), "host home directory must be created")
+	marker := "go-smoke-marker"
+	require.NoError(t, os.WriteFile(filepath.Join(hostHome, ".gitconfig"), []byte("[codex-safe-smoke]\n\tmarker = "+marker+"\n"), 0o400), "host git config must be written")
+	t.Setenv("CODEX_SAFE_SMOKE_HOME", hostHome)
 	containerName, err := launcher.ProjectContainerName(os.Getuid(), project)
 	require.NoError(t, err, "deterministic project container name must be derivable")
 
+	report := filepath.Join(project, "go-smoke.report")
 	ready := filepath.Join(project, "first.ready")
 	releaseFirst := filepath.Join(project, "first.release")
-	first := startLauncherCommand(t, binaryPath, project, "bash", "-c", "printf ready >\"$1\"; while [[ ! -e \"$2\" ]]; do sleep 1; done", "bash", ready, releaseFirst)
+	nestedMarker := filepath.Join(project, "nested.marker")
+	first := startLauncherCommand(t, binaryPath, nested, "bash", "-c", probeScript, "bash", report, ready, releaseFirst, project, primary, nestedMarker, marker, hostHome)
 	waitForPath(t, ready)
+	probe := readFile(t, report)
+	require.Contains(t, probe, "home="+hostHome, "container home must preserve the host path")
+	require.Contains(t, probe, "git="+marker, "mounted gitconfig marker must be visible")
+	require.Contains(t, probe, "locale=UTF-8", "container locale must support UTF-8")
+	require.Contains(t, probe, "commands=true", "container tools must be available")
+	require.FileExists(t, nestedMarker, "nested Docker bind mount must write the project")
 
 	firstInspection := inspectContainer(t, ctx, dockerClient, containerName)
 	managed := listManagedContainers(t, ctx, dockerClient, containerName)
@@ -58,6 +76,14 @@ func TestSysboxLinkedWorktreeGo(t *testing.T) {
 	require.True(t, firstInspection.State.Running, "outer container must run while the first command is active")
 	require.Equal(t, "true", firstInspection.Config.Labels["codex-safe.managed"], "managed label must identify the session")
 	require.Equal(t, project, firstInspection.Config.Labels["codex-safe.project-path"], "project label must match the root")
+	require.Equal(t, "1", firstInspection.Config.Labels["codex-safe.manager-protocol"], "manager protocol label must be present")
+	require.Equal(t, nested, firstInspection.Config.WorkingDir, "outer working directory must preserve the nested path")
+	require.False(t, firstInspection.HostConfig.Privileged, "outer container must not be privileged")
+	require.Equal(t, "sysbox-runc", firstInspection.HostConfig.Runtime, "outer container must use Sysbox runtime")
+	for _, mount := range firstInspection.Mounts {
+		require.NotEqual(t, "/var/run/docker.sock", mount.Source, "host Docker socket must not be mounted")
+		require.NotEqual(t, "/var/run/docker.sock", mount.Destination, "container Docker socket must not be mounted")
+	}
 
 	secondReady := filepath.Join(project, "second.ready")
 	releaseSecond := filepath.Join(project, "second.release")
@@ -86,10 +112,29 @@ func initGitProject(t *testing.T, path string) {
 	runInDir(t, path, "git", "commit", "-qm", "baseline")
 }
 
+const probeScript = `set -Eeuo pipefail
+report=$1; ready=$2; release=$3; linked=$4; primary=$5; nested_marker=$6; marker=$7
+printf 'home=%s\nlocale=%s\ngit=%s\ncommands=%s\n' "$HOME" "$(locale charmap)" "$(git config --global --get codex-safe-smoke.marker)" "$(command -v less >/dev/null && command -v make >/dev/null && command -v rg >/dev/null && docker compose version >/dev/null && echo true || echo false)" > "$report"
+printf 'Привет из codex-safe\n' > "$linked/cyrillic.txt"
+git -C "$linked" status --short >/dev/null
+printf nested > "$nested_marker"
+if printf forbidden > "$primary/forbidden.txt" 2>/dev/null; then rm -f "$primary/forbidden.txt"; fi
+printf ready > "$ready"; while [[ ! -e "$release" ]]; do sleep 1; done`
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "smoke report %q must be readable", path)
+	return string(data)
+}
+
 func startLauncherCommand(t *testing.T, binaryPath, project string, command ...string) *exec.Cmd {
 	t.Helper()
 	args := append([]string{"--project", project, "--image", goSmokeImage, "--"}, command...)
 	process := exec.Command(binaryPath, args...)
+	if hostHome := os.Getenv("CODEX_SAFE_SMOKE_HOME"); hostHome != "" {
+		process.Env = append(os.Environ(), "HOME="+hostHome)
+	}
 	process.Stdout = new(bytes.Buffer)
 	process.Stderr = new(bytes.Buffer)
 	require.NoError(t, process.Start(), "codex-safe command must start")
