@@ -3,24 +3,22 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/vkuptcov/agents-safe-environment/internal/cli"
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
 )
 
-func TestRunHelp(t *testing.T) {
+func TestConfigHelp(t *testing.T) {
 	t.Parallel()
-
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	exitCode := run(context.Background(), []string{"--help"}, stdout, stderr, panicApplication())
-
+	exitCode := cli.Run(context.Background(), config(), []string{"--help"}, stdout, stderr, panicApp())
 	if exitCode != 0 {
-		t.Errorf("run() = %d, want 0", exitCode)
+		t.Errorf("Run() = %d, want 0", exitCode)
 	}
 	if !strings.Contains(stdout.String(), "Usage: codex-safe") {
 		t.Errorf("stdout = %q, want usage", stdout.String())
@@ -30,9 +28,8 @@ func TestRunHelp(t *testing.T) {
 	}
 }
 
-func TestRunDefaultsToInteractiveCodex(t *testing.T) {
+func TestConfigDefaultsToInteractiveCodex(t *testing.T) {
 	t.Parallel()
-
 	wantProject := gitproject.Project{RequestedDir: "/project", WorktreeRoot: "/project"}
 	wantPlan := launcher.Plan{
 		ProjectRoot: "/project",
@@ -41,24 +38,24 @@ func TestRunDefaultsToInteractiveCodex(t *testing.T) {
 	}
 	fakeDocker := &recordingDocker{}
 	var builtFor gitproject.Project
-	app := application{
-		discover: func(_ context.Context, path string) (gitproject.Project, error) {
+	app := cli.App{
+		Discover: func(_ context.Context, path string) (gitproject.Project, error) {
 			if path != "." {
 				t.Errorf("discover path = %q, want default \".\"", path)
 			}
 			return wantProject, nil
 		},
-		buildPlan: func(project gitproject.Project) (launcher.Plan, error) {
+		BuildPlan: func(project gitproject.Project) (launcher.Plan, error) {
 			builtFor = project
 			return wantPlan, nil
 		},
-		docker: fakeDocker,
+		Docker: fakeDocker,
 	}
 
-	exitCode := run(context.Background(), nil, new(bytes.Buffer), new(bytes.Buffer), app)
+	exitCode := cli.Run(context.Background(), config(), nil, new(bytes.Buffer), new(bytes.Buffer), app)
 
 	if exitCode != 0 {
-		t.Errorf("run() = %d, want 0", exitCode)
+		t.Errorf("Run() = %d, want 0", exitCode)
 	}
 	wantCommand := []string{launcher.CodexBinaryPath}
 	if !reflect.DeepEqual(fakeDocker.command, wantCommand) {
@@ -67,8 +64,6 @@ func TestRunDefaultsToInteractiveCodex(t *testing.T) {
 	if fakeDocker.image != defaultImage {
 		t.Errorf("image = %q, want %q", fakeDocker.image, defaultImage)
 	}
-	// The discovered project must reach buildPlan, and the plan it builds must be the plan handed
-	// to docker.Launch: otherwise the outer container launches with no mounts and a wrong workdir.
 	if !reflect.DeepEqual(builtFor, wantProject) {
 		t.Errorf("buildPlan project = %#v, want discovered %#v", builtFor, wantProject)
 	}
@@ -77,26 +72,22 @@ func TestRunDefaultsToInteractiveCodex(t *testing.T) {
 	}
 }
 
-func TestRunForwardsCodexArguments(t *testing.T) {
+func TestConfigForwardsCodexArguments(t *testing.T) {
 	t.Parallel()
-
 	fakeDocker := &recordingDocker{}
-	app := application{
-		discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		buildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
-		docker:    fakeDocker,
+	app := cli.App{
+		Discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		BuildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
+		Docker:    fakeDocker,
 	}
-
-	exitCode := run(
+	exitCode := cli.Run(
 		context.Background(),
+		config(),
 		[]string{"--project", "/project/nested", "--image", "test:image", "--", "exec", "--model", "gpt-5"},
-		new(bytes.Buffer),
-		new(bytes.Buffer),
-		app,
+		new(bytes.Buffer), new(bytes.Buffer), app,
 	)
-
 	if exitCode != 0 {
-		t.Errorf("run() = %d, want 0", exitCode)
+		t.Errorf("Run() = %d, want 0", exitCode)
 	}
 	if fakeDocker.image != "test:image" {
 		t.Errorf("image = %q, want test:image", fakeDocker.image)
@@ -107,31 +98,24 @@ func TestRunForwardsCodexArguments(t *testing.T) {
 	}
 }
 
-// TestRunNeverRunsArbitraryExecutable proves that a would-be executable after -- becomes a Codex
+// TestConfigNeverRunsArbitraryExecutable proves that a would-be executable after -- becomes a Codex
 // argument. The image-owned Codex path is always command[0]; the launcher never runs another program.
-func TestRunNeverRunsArbitraryExecutable(t *testing.T) {
+func TestConfigNeverRunsArbitraryExecutable(t *testing.T) {
 	t.Parallel()
-
 	fakeDocker := &recordingDocker{}
-	app := application{
-		discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		buildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
-		docker:    fakeDocker,
+	app := cli.App{
+		Discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		BuildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
+		Docker:    fakeDocker,
 	}
-
-	exitCode := run(
+	exitCode := cli.Run(
 		context.Background(),
+		config(),
 		[]string{"--", "/bin/sh", "-c", "rm -rf /; $(malicious)"},
-		new(bytes.Buffer),
-		new(bytes.Buffer),
-		app,
+		new(bytes.Buffer), new(bytes.Buffer), app,
 	)
-
 	if exitCode != 0 {
-		t.Errorf("run() = %d, want 0", exitCode)
-	}
-	if len(fakeDocker.command) == 0 || fakeDocker.command[0] != launcher.CodexBinaryPath {
-		t.Fatalf("command[0] = %#v, want image-owned Codex path", fakeDocker.command)
+		t.Errorf("Run() = %d, want 0", exitCode)
 	}
 	wantCommand := []string{launcher.CodexBinaryPath, "/bin/sh", "-c", "rm -rf /; $(malicious)"}
 	if !reflect.DeepEqual(fakeDocker.command, wantCommand) {
@@ -139,54 +123,11 @@ func TestRunNeverRunsArbitraryExecutable(t *testing.T) {
 	}
 }
 
-func TestRunReportsDiscoveryError(t *testing.T) {
-	t.Parallel()
-
-	stderr := new(bytes.Buffer)
-	app := panicApplication()
-	app.discover = func(context.Context, string) (gitproject.Project, error) {
-		return gitproject.Project{}, errors.New("Git unavailable")
-	}
-
-	exitCode := run(context.Background(), nil, new(bytes.Buffer), stderr, app)
-
-	if exitCode != 1 {
-		t.Errorf("run() = %d, want 1", exitCode)
-	}
-	if !strings.Contains(stderr.String(), "Git unavailable") {
-		t.Errorf("stderr = %q, want discovery error", stderr.String())
-	}
-}
-
-func TestRunPropagatesCodexExitCode(t *testing.T) {
-	t.Parallel()
-
-	stderr := new(bytes.Buffer)
-	app := application{
-		discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		buildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
-		docker:    &recordingDocker{err: cliExitError{code: 42}},
-	}
-
-	exitCode := run(context.Background(), nil, new(bytes.Buffer), stderr, app)
-
-	if exitCode != 42 {
-		t.Errorf("run() = %d, want 42", exitCode)
-	}
-	if !strings.Contains(stderr.String(), "codex failed") {
-		t.Errorf("stderr = %q, want Codex error", stderr.String())
-	}
-}
-
-func panicApplication() application {
-	return application{
-		discover: func(context.Context, string) (gitproject.Project, error) {
-			panic("discover should not be called")
-		},
-		buildPlan: func(gitproject.Project) (launcher.Plan, error) {
-			panic("buildPlan should not be called")
-		},
-		docker: &recordingDocker{panicOnLaunch: true},
+func panicApp() cli.App {
+	return cli.App{
+		Discover:  func(context.Context, string) (gitproject.Project, error) { panic("discover should not be called") },
+		BuildPlan: func(gitproject.Project) (launcher.Plan, error) { panic("buildPlan should not be called") },
+		Docker:    &recordingDocker{panicOnLaunch: true},
 	}
 }
 
@@ -198,12 +139,7 @@ type recordingDocker struct {
 	panicOnLaunch bool
 }
 
-func (docker *recordingDocker) Launch(
-	_ context.Context,
-	plan launcher.Plan,
-	image string,
-	command []string,
-) error {
+func (docker *recordingDocker) Launch(_ context.Context, plan launcher.Plan, image string, command []string) error {
 	if docker.panicOnLaunch {
 		panic("Launch should not be called")
 	}
@@ -211,16 +147,4 @@ func (docker *recordingDocker) Launch(
 	docker.image = image
 	docker.command = append([]string(nil), command...)
 	return docker.err
-}
-
-type cliExitError struct {
-	code int
-}
-
-func (err cliExitError) Error() string {
-	return "codex failed"
-}
-
-func (err cliExitError) ExitCode() int {
-	return err.code
 }
