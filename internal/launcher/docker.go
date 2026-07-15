@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,15 +14,23 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
-	"unsafe"
+	"time"
+
+	"github.com/vkuptcov/agents-safe-environment/internal/session"
+	"github.com/vkuptcov/agents-safe-environment/internal/terminal"
 )
 
 const (
-	sysboxRuntime    = "sysbox-runc"
-	sessionLabel     = "codex-safe.session"
-	projectPathLabel = "codex-safe.project-path"
-	hostUIDLabel     = "codex-safe.host-uid"
+	sysboxRuntime        = "sysbox-runc"
+	managedLabel         = "codex-safe.managed"
+	projectPathLabel     = "codex-safe.project-path"
+	hostUIDLabel         = "codex-safe.host-uid"
+	managerProtocolLabel = "codex-safe.manager-protocol"
+	managedLabelValue    = "true"
+
+	containerStateTimeout   = 20 * time.Second
+	containerPollInterval   = 50 * time.Millisecond
+	containerCreateAttempts = 5
 )
 
 // CommandRunner makes Docker process execution replaceable in focused tests.
@@ -62,8 +69,6 @@ type Docker struct {
 	HostGitConfig string
 	// TTY controls whether Docker allocates a terminal for the outer container.
 	TTY bool
-	// NameGenerator creates a unique Docker container name for each session.
-	NameGenerator func() (string, error)
 }
 
 // NewDocker creates a launcher backed by os/exec and the current process streams.
@@ -107,18 +112,18 @@ func NewDocker() (*Docker, error) {
 		HostGroup:     hostGroup.Name,
 		HostHome:      hostHome,
 		HostGitConfig: hostGitConfig,
-		TTY:           isTerminal(os.Stdin) && isTerminal(os.Stdout),
-		NameGenerator: randomSessionName,
+		TTY:           terminal.IsReader(os.Stdin) && terminal.IsReader(os.Stdout),
 	}, nil
 }
 
-// Launch executes the probe in an active project container or starts a new ephemeral one.
-func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, probe []string) error {
+// Launch executes the command through the wrapper in the one deterministic
+// project container, creating that detached container when necessary.
+func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, command []string) error {
 	if err := docker.validateConfiguration(); err != nil {
 		return err
 	}
-	if len(probe) == 0 {
-		return errors.New("probe command is required")
+	if len(command) == 0 {
+		return errors.New("command is required")
 	}
 	if strings.TrimSpace(image) == "" {
 		return errors.New("container image is required")
@@ -126,63 +131,149 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, probe
 	if _, err := validatePlan(plan); err != nil {
 		return err
 	}
-
-	containerID, err := docker.findRunningProjectContainer(ctx, plan.ProjectRoot)
+	containerName, err := ProjectContainerName(docker.HostUID, plan.ProjectRoot)
 	if err != nil {
 		return err
 	}
-	if containerID != "" {
-		if err := docker.waitForProjectContainer(ctx, containerID); err != nil {
-			return err
-		}
-		args, err := BuildDockerExecArgs(
-			plan,
-			probe,
-			containerID,
-			docker.HostUID,
-			docker.HostGID,
-			docker.HostHome,
-			docker.TTY,
-		)
-		if err != nil {
-			return err
-		}
-		if err := docker.Runner.Run(
-			ctx,
-			docker.Binary,
-			args,
-			docker.Stdin,
-			docker.Stdout,
-			docker.Stderr,
-		); err != nil {
-			return fmt.Errorf("exec in active Sysbox container: %w", err)
-		}
+	containerID, err := docker.acquireProjectContainer(ctx, plan, image, containerName)
+	if err != nil {
+		return err
+	}
+
+	execErr := docker.execProjectCommand(ctx, plan, command, containerID)
+	if execErr == nil {
 		return nil
+	}
+	if !isRetryableExecError(execErr) {
+		return execErr
+	}
+	retry, retryErr := docker.containerStoppedAfterExec(ctx, plan, containerName)
+	if retryErr != nil {
+		return errors.Join(execErr, retryErr)
+	}
+	if !retry {
+		return execErr
+	}
+
+	containerID, err = docker.acquireProjectContainer(ctx, plan, image, containerName)
+	if err != nil {
+		return errors.Join(execErr, err)
+	}
+	if err := docker.execProjectCommand(ctx, plan, command, containerID); err != nil {
+		return fmt.Errorf("exec in replacement Sysbox container: %w", err)
+	}
+	return nil
+}
+
+func (docker *Docker) acquireProjectContainer(
+	ctx context.Context,
+	plan Plan,
+	image string,
+	containerName string,
+) (string, error) {
+	inspection, found, err := docker.inspectProjectContainer(ctx, containerName)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		if err := docker.validateProjectContainer(inspection, plan.ProjectRoot); err != nil {
+			return "", err
+		}
+		if inspection.State.Running {
+			return inspection.ID, nil
+		}
+		containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName)
+		if err != nil {
+			return "", err
+		}
+		if containerID != "" {
+			return containerID, nil
+		}
 	}
 
 	if err := docker.preflight(ctx, image); err != nil {
-		return err
+		return "", err
 	}
+	for attempt := 0; attempt < containerCreateAttempts; attempt++ {
+		containerID, conflict, err := docker.createProjectContainer(ctx, plan, image, containerName)
+		if err != nil {
+			return "", err
+		}
+		if !conflict {
+			return containerID, nil
+		}
+		containerID, err = docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName)
+		if err != nil {
+			return "", err
+		}
+		if containerID != "" {
+			return containerID, nil
+		}
+		if err := waitForPoll(ctx); err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("container name %q was not released after a concurrent create", containerName)
+}
 
-	sessionName, err := docker.NameGenerator()
-	if err != nil {
-		return fmt.Errorf("generate session name: %w", err)
+func waitForPoll(ctx context.Context) error {
+	timer := time.NewTimer(containerPollInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
-	if err := validateSessionName(sessionName); err != nil {
-		return err
-	}
+}
 
-	args, err := BuildDockerArgs(
+func (docker *Docker) createProjectContainer(
+	ctx context.Context,
+	plan Plan,
+	image string,
+	containerName string,
+) (string, bool, error) {
+	arguments, err := BuildDockerRunArgs(
 		plan,
 		image,
-		probe,
-		sessionName,
+		containerName,
 		docker.HostUID,
 		docker.HostGID,
 		docker.HostUser,
 		docker.HostGroup,
 		docker.HostHome,
 		docker.HostGitConfig,
+	)
+	if err != nil {
+		return "", false, err
+	}
+	output, err := docker.Runner.CombinedOutput(ctx, docker.Binary, arguments...)
+	if err != nil {
+		if isContainerNameConflict(output, err) {
+			return "", true, nil
+		}
+		return "", false, commandFailure("create detached Sysbox container", output, err)
+	}
+	containerID := strings.TrimSpace(string(output))
+	if err := validateContainerID(containerID); err != nil {
+		return "", false, fmt.Errorf("parse created Sysbox container: %w", err)
+	}
+	return containerID, false, nil
+}
+
+func (docker *Docker) execProjectCommand(
+	ctx context.Context,
+	plan Plan,
+	command []string,
+	containerID string,
+) error {
+	arguments, err := BuildDockerExecArgs(
+		plan,
+		command,
+		containerID,
+		docker.HostUID,
+		docker.HostGID,
+		docker.HostHome,
 		docker.TTY,
 	)
 	if err != nil {
@@ -191,74 +282,136 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, probe
 	if err := docker.Runner.Run(
 		ctx,
 		docker.Binary,
-		args,
+		arguments,
 		docker.Stdin,
 		docker.Stdout,
 		docker.Stderr,
 	); err != nil {
-		return fmt.Errorf("run Sysbox container: %w", err)
+		return fmt.Errorf("exec in managed Sysbox container: %w", err)
 	}
 	return nil
 }
 
-func (docker *Docker) waitForProjectContainer(ctx context.Context, containerID string) error {
-	const waitCommand = `for ((attempt = 0; attempt < 240; attempt++)); do
-	[[ -e /run/codex-safe/ready ]] && exit 0
-	sleep 0.25
-done
-exit 1`
-
-	output, err := docker.Runner.CombinedOutput(
-		ctx,
-		docker.Binary,
-		"exec",
-		containerID,
-		"bash",
-		"-c",
-		waitCommand,
-	)
-	if err != nil {
-		return commandFailure("wait for active codex-safe project container", output, err)
-	}
-	return nil
+type containerInspection struct {
+	ID     string `json:"Id"`
+	Config struct {
+		Labels map[string]string `json:"Labels"`
+	} `json:"Config"`
+	State struct {
+		Running bool   `json:"Running"`
+		Status  string `json:"Status"`
+	} `json:"State"`
 }
 
-func (docker *Docker) findRunningProjectContainer(ctx context.Context, projectRoot string) (string, error) {
-	output, err := docker.Runner.CombinedOutput(
-		ctx,
-		docker.Binary,
-		"container",
-		"ls",
-		"--quiet",
-		"--no-trunc",
-		"--filter",
-		"label="+sessionLabel,
-		"--filter",
-		"label="+projectPathLabel+"="+projectRoot,
-		"--filter",
-		"label="+hostUIDLabel+"="+strconv.Itoa(docker.HostUID),
-	)
+func (docker *Docker) inspectProjectContainer(
+	ctx context.Context,
+	containerName string,
+) (containerInspection, bool, error) {
+	output, err := docker.Runner.CombinedOutput(ctx, docker.Binary, "container", "inspect", containerName)
 	if err != nil {
-		return "", commandFailure("find active codex-safe project container", output, err)
-	}
-
-	containerIDs := strings.Fields(string(output))
-	for _, containerID := range containerIDs {
-		if err := validateContainerID(containerID); err != nil {
-			return "", fmt.Errorf("parse active codex-safe project container: %w", err)
+		if isContainerNotFound(output, err) {
+			return containerInspection{}, false, nil
 		}
-	}
-	if len(containerIDs) > 1 {
-		return "", fmt.Errorf(
-			"multiple active codex-safe containers manage project %q: %s",
-			projectRoot,
-			strings.Join(containerIDs, ", "),
+		return containerInspection{}, false, commandFailure(
+			fmt.Sprintf("inspect managed container %q", containerName),
+			output,
+			err,
 		)
 	}
-	if len(containerIDs) == 1 {
-		return containerIDs[0], nil
+	var inspections []containerInspection
+	if err := json.Unmarshal(output, &inspections); err != nil {
+		return containerInspection{}, false, fmt.Errorf("parse managed container inspection: %w", err)
 	}
-	return "", nil
+	if len(inspections) != 1 {
+		return containerInspection{}, false, fmt.Errorf(
+			"inspect managed container %q returned %d records",
+			containerName,
+			len(inspections),
+		)
+	}
+	if err := validateContainerID(inspections[0].ID); err != nil {
+		return containerInspection{}, false, fmt.Errorf("parse managed container inspection: %w", err)
+	}
+	return inspections[0], true, nil
+}
+
+func (docker *Docker) validateProjectContainer(inspection containerInspection, projectRoot string) error {
+	expected := map[string]string{
+		managedLabel:         managedLabelValue,
+		projectPathLabel:     projectRoot,
+		hostUIDLabel:         strconv.Itoa(docker.HostUID),
+		managerProtocolLabel: session.ProtocolVersion,
+	}
+	for name, value := range expected {
+		if got := inspection.Config.Labels[name]; got != value {
+			return fmt.Errorf(
+				"container %s has label %s=%q, expected %q; refusing deterministic-name reuse",
+				inspection.ID,
+				name,
+				got,
+				value,
+			)
+		}
+	}
+	return nil
+}
+
+func (docker *Docker) waitForReusableOrReleased(
+	ctx context.Context,
+	projectRoot string,
+	containerName string,
+) (string, error) {
+	waitContext, cancel := context.WithTimeout(ctx, containerStateTimeout)
+	defer cancel()
+	ticker := time.NewTicker(containerPollInterval)
+	defer ticker.Stop()
+	for {
+		inspection, found, err := docker.inspectProjectContainer(waitContext, containerName)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			return "", nil
+		}
+		if err := docker.validateProjectContainer(inspection, projectRoot); err != nil {
+			return "", err
+		}
+		if inspection.State.Running {
+			return inspection.ID, nil
+		}
+		select {
+		case <-waitContext.Done():
+			return "", fmt.Errorf(
+				"wait for managed container %q state %q: %w",
+				containerName,
+				inspection.State.Status,
+				waitContext.Err(),
+			)
+		case <-ticker.C:
+		}
+	}
+}
+
+func (docker *Docker) containerStoppedAfterExec(
+	ctx context.Context,
+	plan Plan,
+	containerName string,
+) (bool, error) {
+	inspection, found, err := docker.inspectProjectContainer(ctx, containerName)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return true, nil
+	}
+	if err := docker.validateProjectContainer(inspection, plan.ProjectRoot); err != nil {
+		return false, err
+	}
+	if inspection.State.Running {
+		return false, nil
+	}
+	containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName)
+	return containerID == "" && err == nil, err
 }
 
 func (docker *Docker) validateConfiguration() error {
@@ -273,9 +426,6 @@ func (docker *Docker) validateConfiguration() error {
 	}
 	if docker.Runner == nil {
 		return errors.New("Docker command runner is nil")
-	}
-	if docker.NameGenerator == nil {
-		return errors.New("session name generator is nil")
 	}
 	if docker.HostUID < 0 || docker.HostGID < 0 {
 		return fmt.Errorf("invalid host identity %d:%d", docker.HostUID, docker.HostGID)
@@ -331,27 +481,23 @@ func (docker *Docker) preflight(ctx context.Context, image string) error {
 	return nil
 }
 
-// BuildDockerArgs returns argv for one outer-container launch without invoking a shell.
-func BuildDockerArgs(
+// BuildDockerRunArgs returns argv for one detached outer-container creation
+// without attaching a user command, stdin, or TTY.
+func BuildDockerRunArgs(
 	plan Plan,
 	image string,
-	probe []string,
-	sessionName string,
+	containerName string,
 	hostUID int,
 	hostGID int,
 	hostUser string,
 	hostGroup string,
 	hostHome string,
 	hostGitConfig string,
-	tty bool,
 ) ([]string, error) {
 	if strings.TrimSpace(image) == "" {
 		return nil, errors.New("container image is required")
 	}
-	if len(probe) == 0 {
-		return nil, errors.New("probe command is required")
-	}
-	if err := validateSessionName(sessionName); err != nil {
+	if err := validateSessionName(containerName); err != nil {
 		return nil, err
 	}
 	if hostUID < 0 || hostGID < 0 {
@@ -381,22 +527,21 @@ func BuildDockerArgs(
 
 	args := []string{
 		"run",
+		"--detach",
 		"--rm",
-		"--interactive",
-	}
-	if tty {
-		args = append(args, "--tty")
 	}
 	args = append(args,
 		"--runtime="+sysboxRuntime,
 		"--name",
-		sessionName,
+		containerName,
 		"--label",
-		sessionLabel+"="+sessionName,
+		managedLabel+"="+managedLabelValue,
 		"--label",
 		projectPathLabel+"="+plan.ProjectRoot,
 		"--label",
 		hostUIDLabel+"="+strconv.Itoa(hostUID),
+		"--label",
+		managerProtocolLabel+"="+session.ProtocolVersion,
 		"--env",
 		"CODEX_SAFE_HOST_UID="+strconv.Itoa(hostUID),
 		"--env",
@@ -425,23 +570,22 @@ func BuildDockerArgs(
 		args = append(args, "--mount", specification)
 	}
 	args = append(args, image)
-	args = append(args, probe...)
 
 	return args, nil
 }
 
-// BuildDockerExecArgs returns argv for a probe in an already-running project container.
+// BuildDockerExecArgs returns argv for one wrapped command in an already-running project container.
 func BuildDockerExecArgs(
 	plan Plan,
-	probe []string,
+	command []string,
 	containerID string,
 	hostUID int,
 	hostGID int,
 	hostHome string,
 	tty bool,
 ) ([]string, error) {
-	if len(probe) == 0 {
-		return nil, errors.New("probe command is required")
+	if len(command) == 0 {
+		return nil, errors.New("command is required")
 	}
 	if err := validateContainerID(containerID); err != nil {
 		return nil, err
@@ -474,8 +618,11 @@ func BuildDockerExecArgs(
 		"--workdir",
 		plan.WorkingDir,
 		containerID,
+		"codex-safe-session",
+		"run",
+		"--",
 	)
-	args = append(args, probe...)
+	args = append(args, command...)
 
 	return args, nil
 }
@@ -532,21 +679,6 @@ func validateAccountName(label string, name string) error {
 	return nil
 }
 
-// isTerminal uses the Linux terminal ioctl so other character devices, such as /dev/null, are not treated as TTYs.
-func isTerminal(file *os.File) bool {
-	var termios syscall.Termios
-	_, _, errno := syscall.Syscall6(
-		syscall.SYS_IOCTL,
-		file.Fd(),
-		syscall.TCGETS,
-		uintptr(unsafe.Pointer(&termios)),
-		0,
-		0,
-		0,
-	)
-	return errno == 0
-}
-
 func validateSessionName(name string) error {
 	if name == "" {
 		return errors.New("session name is empty")
@@ -563,12 +695,45 @@ func validateSessionName(name string) error {
 	return nil
 }
 
-func randomSessionName() (string, error) {
-	identifier := make([]byte, 6)
-	if _, err := rand.Read(identifier); err != nil {
-		return "", err
+func isContainerNotFound(output []byte, err error) bool {
+	if commandExitCode(err) != 1 {
+		return false
 	}
-	return "codex-safe-" + hex.EncodeToString(identifier), nil
+	message := strings.ToLower(string(output))
+	return strings.Contains(message, "no such container") || strings.Contains(message, "no such object")
+}
+
+func isContainerNameConflict(output []byte, err error) bool {
+	if commandExitCode(err) != 125 {
+		return false
+	}
+	message := strings.ToLower(string(output))
+	return strings.Contains(message, "container name") && strings.Contains(message, "already in use")
+}
+
+func commandExitCode(err error) int {
+	var exitError interface{ ExitCode() int }
+	if errors.As(err, &exitError) {
+		return exitError.ExitCode()
+	}
+	return -1
+}
+
+func isRetryableExecError(err error) bool {
+	var commandError interface{ CommandStderr() string }
+	if !errors.As(err, &commandError) {
+		return false
+	}
+	message := strings.ToLower(commandError.CommandStderr())
+	if commandExitCode(err) == 125 {
+		return strings.Contains(message, "codex-safe-session: register session command")
+	}
+	if commandExitCode(err) != 1 || !strings.Contains(message, "error response from daemon:") {
+		return false
+	}
+	return strings.Contains(message, "is not running") ||
+		strings.Contains(message, "no such container") ||
+		strings.Contains(message, "container is restarting")
 }
 
 func commandFailure(action string, output []byte, err error) error {
@@ -596,6 +761,58 @@ func (execCommandRunner) Run(
 	command := exec.CommandContext(ctx, name, args...)
 	command.Stdin = stdin
 	command.Stdout = stdout
-	command.Stderr = stderr
-	return command.Run()
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	capturedStderr := &tailBuffer{limit: 64 * 1024}
+	command.Stderr = io.MultiWriter(stderr, capturedStderr)
+	if err := command.Run(); err != nil {
+		return &dockerCommandError{err: err, stderr: capturedStderr.String()}
+	}
+	return nil
+}
+
+type dockerCommandError struct {
+	err    error
+	stderr string
+}
+
+func (err *dockerCommandError) Error() string {
+	return err.err.Error()
+}
+
+func (err *dockerCommandError) Unwrap() error {
+	return err.err
+}
+
+func (err *dockerCommandError) ExitCode() int {
+	return commandExitCode(err.err)
+}
+
+func (err *dockerCommandError) CommandStderr() string {
+	return err.stderr
+}
+
+type tailBuffer struct {
+	limit int
+	data  []byte
+}
+
+func (buffer *tailBuffer) Write(data []byte) (int, error) {
+	originalLength := len(data)
+	if originalLength >= buffer.limit {
+		buffer.data = append(buffer.data[:0], data[originalLength-buffer.limit:]...)
+		return originalLength, nil
+	}
+	overflow := len(buffer.data) + originalLength - buffer.limit
+	if overflow > 0 {
+		copy(buffer.data, buffer.data[overflow:])
+		buffer.data = buffer.data[:len(buffer.data)-overflow]
+	}
+	buffer.data = append(buffer.data, data...)
+	return originalLength, nil
+}
+
+func (buffer *tailBuffer) String() string {
+	return string(buffer.data)
 }
