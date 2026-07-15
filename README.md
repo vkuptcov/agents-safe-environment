@@ -138,7 +138,9 @@ worktrees attached to bare repositories are rejected.
 bash tests/smoke/sysbox-linked-worktree.sh
 ```
 
-The same core lifecycle proof is also available as an opt-in Go test using the Docker Engine client:
+The full Sysbox smoke scenario is also available as an opt-in Go test. It uses the Docker Engine client for host-side
+container creation and inspection, while a small embedded workload checks commands executed through `codex-safe` inside
+the isolated container:
 
 ```bash
 make test-smoke-go
