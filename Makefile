@@ -5,7 +5,7 @@ SESSION_BINARY := bin/codex-safe-session
 IMAGE := codex-safe-mvp:local
 SMOKE_DIR := tests/smoke
 
-.PHONY: build docker-build test test-smoke-go
+.PHONY: build docker-build test test-smoke-go check-docs check-doc-links check-mermaid
 
 build:
 	mkdir -p $(dir $(BINARY))
@@ -24,3 +24,15 @@ test:
 
 test-smoke-go: build docker-build
 	CODEX_SAFE_RUN_SYSBOX_SMOKE=1 $(GO) -C $(SMOKE_DIR) test . -run TestSysboxLinkedWorktreeGo -count=1 -v
+
+check-docs: check-mermaid check-doc-links
+
+check-doc-links:
+	@command -v $(DOCKER) >/dev/null 2>&1 || { echo "check-doc-links: docker is required"; exit 1; }
+	@$(DOCKER) build -q -t doc-links-check harness/doc-links-check >/dev/null
+	@$(DOCKER) run --rm -v "$(CURDIR):/work:ro" doc-links-check
+
+check-mermaid:
+	@command -v $(DOCKER) >/dev/null 2>&1 || { echo "check-mermaid: docker is required"; exit 1; }
+	@$(DOCKER) build -q -t mermaid-check harness/mermaid-check >/dev/null
+	@$(DOCKER) run --rm -v "$(CURDIR):/work:ro" mermaid-check docs ARCHITECTURE.md
