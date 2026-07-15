@@ -134,21 +134,17 @@ worktrees attached to bare repositories are rejected.
 
 ## Run the real-host smoke test
 
-```bash
-bash tests/smoke/sysbox-linked-worktree.sh
-```
-
-The full Sysbox smoke scenario is also available as an opt-in Go test. It uses the Docker Engine client for host-side
-container creation and inspection, while focused embedded workloads check the environment, linked worktree, and nested
-Docker commands executed through `codex-safe` inside the isolated container:
+The full Sysbox smoke scenario is an opt-in Go test. It uses the Docker Engine client for host-side container creation
+and inspection, while focused embedded workloads check the environment, linked worktree, and nested Docker commands
+executed through `codex-safe` inside the isolated container:
 
 ```bash
 make test-smoke-go
 ```
 
 It is intentionally separate from `make test`: the Go test requires a real Sysbox host and a Docker image build. The
-Bash and Go harnesses exercise the same deterministic naming, overlapping-command lifetime, idle removal, and
-concurrent-first-caller behavior for comparison.
+harness exercises deterministic naming, overlapping-command lifetime, idle removal, and concurrent-first-caller
+behavior.
 
 The harness builds the Go binary and image, creates a temporary primary repository and linked worktree, starts a host
 sentinel container, and performs live assertions against the outer and nested containers. It verifies account names,

@@ -143,14 +143,14 @@ Purpose: Create a deterministic real-host fixture and coordinate inspection of a
 Status: done
 Done when: the harness starts a linked-worktree probe, pauses it for inspection, and cleans all labeled resources.
 
-1. Add `tests/smoke/sysbox-linked-worktree.sh` with strict error handling and cleanup traps.
+1. Add `tests/smoke/sysbox_linked_worktree_test.go` with explicit assertions and automatic test cleanup.
 2. Create a temporary primary repository and linked worktree in paths containing spaces.
 3. Configure local Git identity, add a baseline file, and create an initial commit.
 4. Start a uniquely named and labeled sentinel container in the host Docker daemon.
 5. Build `codex-safe-mvp:local` and the Go launcher.
 6. Launch the probe from a nested linked-worktree directory and identify it through the unique session label.
 7. Coordinate through ready and continue marker files so the host can inspect the outer container while it is alive.
-8. Make every fixture, marker, container, and temporary repository removable by the cleanup trap.
+8. Make every fixture, marker, container, and temporary repository removable by `t.Cleanup`.
 
 ### Phase 7: Sysbox and Worktree Proof
 
@@ -319,9 +319,9 @@ Done when: a second invocation for one live worktree uses the same outer contain
 - `go test ./...` passes, including tests that create real temporary linked worktrees.
 - `go vet ./...` passes.
 - `go build -o /tmp/codex-safe ./cmd/codex-safe` succeeds.
-- `bash -n container/entrypoint.sh tests/smoke/sysbox-linked-worktree.sh` succeeds.
+- `bash -n container/bashrc` succeeds.
 - `docker build -t codex-safe-mvp:local -f container/Dockerfile .` succeeds.
-- `tests/smoke/sysbox-linked-worktree.sh` passes on Linux with `sysbox-runc` registered.
+- `make test-smoke-go` passes on Linux with `sysbox-runc` registered.
 - A real PTY probe accepts `pwd`, `docker info`, and `exit`; a non-TTY pipe reaches `bash` stdin.
 - The smoke probe executes Compose V2, `make`, `less`, and `rg`, and manages a nested Compose service.
 - The smoke probe reports the same login and primary group names as the invoking host account.

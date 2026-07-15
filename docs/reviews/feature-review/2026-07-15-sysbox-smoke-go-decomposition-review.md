@@ -277,8 +277,10 @@ Status: implemented on 2026-07-15.
 - **Dependency isolation added.** `tests/smoke` is a separate Go module, so the Moby client and its transitive
   dependencies no longer appear in the application module. `make test` explicitly tests and vets both modules;
   no `go.work` file changes the behavior of ordinary root-module commands.
+- **Legacy Bash harness removed.** The Go scenario is now the single maintained real-host smoke test. Historical
+  references earlier in this review describe the Bash baseline that existed when the decomposition was reviewed.
 
 Validation:
 
 - `GOCACHE=/tmp/codex-go-cache make test`
-- `GOCACHE=/tmp/codex-go-cache make test-smoke-go` (`TestSysboxLinkedWorktreeGo` passed in 31.74 seconds)
+- `GOCACHE=/tmp/codex-go-cache make test-smoke-go` (`TestSysboxLinkedWorktreeGo` passed in 31.88 seconds)

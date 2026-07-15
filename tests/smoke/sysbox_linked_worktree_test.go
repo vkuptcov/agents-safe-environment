@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSysboxLinkedWorktreeGo is the Go equivalent of sysbox-linked-worktree.sh.
+// TestSysboxLinkedWorktreeGo exercises the complete real-host Sysbox scenario.
 // The launcher is invoked as a real host process and host Docker is accessed
 // through Moby; focused embedded workloads exercise the container itself.
 func TestSysboxLinkedWorktreeGo(t *testing.T) {

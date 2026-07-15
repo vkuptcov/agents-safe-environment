@@ -189,7 +189,7 @@ Commit: `docs: document managed project sessions`
   command without a shell script.
 - `docker run --rm --entrypoint /usr/local/bin/codex-safe-session codex-safe-mvp:local --help` exits zero.
 - `test ! -e container/entrypoint.sh` succeeds after the atomic cutover.
-- `bash tests/smoke/sysbox-linked-worktree.sh` passes on the supported real Sysbox host.
+- `make test-smoke-go` passes on the supported real Sysbox host.
 - After the smoke test, `docker ps -a --filter label=codex-safe.managed=true --quiet` prints nothing.
 - `rg -n 'docker container ls|--filter.*project-path|codex-safe\.session' internal/launcher` prints nothing.
 - `rg -n 'XDG_RUNTIME_DIR|control.*mount|create\.lock' cmd internal container` prints nothing.
@@ -225,7 +225,7 @@ Commit: `docs: document managed project sessions`
 ## Progress Notes
 
 - 2026-07-14: Phase 5 completed; the Sysbox smoke proves overlapping command survival, final-command idle removal,
-  deterministic labels, and concurrent first callers. `bash tests/smoke/sysbox-linked-worktree.sh` passes.
+  deterministic labels, and concurrent first callers. The scenario is now maintained by `make test-smoke-go`.
 - 2026-07-14: Phase 4 completed in `50ff335`; deterministic naming, exact-name inspection, detached lifecycle,
   wrapper-prefixed exec, Go entrypoint cutover, and shell entrypoint removal are implemented and tested.
 - 2026-07-14: Phase 3 moved identity, home, sudoers, dockerd readiness, diagnostics, and shutdown behavior into tested
