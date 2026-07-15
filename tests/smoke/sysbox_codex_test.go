@@ -129,6 +129,7 @@ func (fixture *smokeFixture) assertCodexReadsSentinelAndWritesState() {
 	codex := fixture.launcher.startBinary(
 		fixture.launcher.productBinary,
 		fixture.project.worktree,
+		true,
 		nil,
 		"exec", "--skip-git-repo-check", "codex-safe sentinel probe",
 	)
@@ -148,7 +149,7 @@ func (fixture *smokeFixture) assertCodexReadsSentinelAndWritesState() {
 func (fixture *smokeFixture) assertImageCodexNotShadowed(sentinel codexSentinel) {
 	fixture.t.Helper()
 	require.FileExists(fixture.t, sentinel.fakeBinary, "the host Codex binary under the state must still exist")
-	doctor := fixture.launcher.startBinary(fixture.launcher.productBinary, fixture.project.worktree, nil, "doctor")
+	doctor := fixture.launcher.startBinary(fixture.launcher.productBinary, fixture.project.worktree, true, nil, "doctor")
 	doctor.waitDone(fixture.t, "product codex doctor")
 	combined := doctor.stdout.String() + doctor.stderr.String()
 	require.Contains(fixture.t, combined, "/usr/local/bin/codex",
@@ -165,6 +166,7 @@ func (fixture *smokeFixture) assertReuseMismatchDiagnostic(sentinel codexSentine
 	mismatch := fixture.launcher.startBinary(
 		fixture.launcher.productBinary,
 		fixture.project.worktree,
+		true,
 		[]string{"CODEX_HOME=" + sentinel.otherCodexHome},
 		"doctor",
 	)
@@ -203,6 +205,7 @@ func TestSysboxCodexCredentialedAcceptance(t *testing.T) {
 	codex := fixture.launcher.startBinary(
 		fixture.launcher.productBinary,
 		fixture.project.worktree,
+		true,
 		nil,
 		"exec", "--skip-git-repo-check", "Reply with the single word ACK and nothing else.",
 	)

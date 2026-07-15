@@ -146,15 +146,19 @@ func (launcher *launcherHarness) launcherEnv(extra []string) []string {
 	return append(environment, extra...)
 }
 
-func (launcher *launcherHarness) startBinary(binary string, project string, hostEnv []string, command ...string) *launcherProcess {
+func (launcher *launcherHarness) startBinary(binary string, project string, separator bool, hostEnv []string, command ...string) *launcherProcess {
 	launcher.t.Helper()
-	arguments := append([]string{"--project", project, "--image", goSmokeImage, "--"}, command...)
+	arguments := []string{"--project", project, "--image", goSmokeImage}
+	if separator {
+		arguments = append(arguments, "--")
+	}
+	arguments = append(arguments, command...)
 	process := exec.Command(binary, arguments...)
 	process.Env = launcher.launcherEnv(hostEnv)
 	running := &launcherProcess{command: process, done: make(chan struct{})}
 	process.Stdout = &running.stdout
 	process.Stderr = &running.stderr
-	require.NoError(launcher.t, process.Start(), "codex-safe command must start: %s", strings.Join(arguments, " "))
+	require.NoError(launcher.t, process.Start(), "%s command must start: %s", filepath.Base(binary), strings.Join(arguments, " "))
 	go func() {
 		running.err = process.Wait()
 		close(running.done)
@@ -164,25 +168,14 @@ func (launcher *launcherHarness) startBinary(binary string, project string, host
 
 func (launcher *launcherHarness) start(project string, command ...string) *launcherProcess {
 	launcher.t.Helper()
-	return launcher.startBinary(launcher.binary, project, nil, command...)
+	return launcher.startBinary(launcher.binary, project, true, nil, command...)
 }
 
 // startAgents invokes the public generic launcher without a separator, exercising the documented
-// `agents-safe bash` argument form rather than the smoke-only probe transport.
+// `agents-safe bash` argument form.
 func (launcher *launcherHarness) startAgents(project string, command ...string) *launcherProcess {
 	launcher.t.Helper()
-	arguments := append([]string{"--project", project, "--image", goSmokeImage}, command...)
-	process := exec.Command(launcher.agentsBinary, arguments...)
-	process.Env = launcher.launcherEnv(nil)
-	running := &launcherProcess{command: process, done: make(chan struct{})}
-	process.Stdout = &running.stdout
-	process.Stderr = &running.stderr
-	require.NoError(launcher.t, process.Start(), "agents-safe command must start: %s", strings.Join(arguments, " "))
-	go func() {
-		running.err = process.Wait()
-		close(running.done)
-	}()
-	return running
+	return launcher.startBinary(launcher.agentsBinary, project, false, nil, command...)
 }
 
 func (launcher *launcherHarness) startWithEnvironment(project string, environment []string, command ...string) *launcherProcess {
