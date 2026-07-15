@@ -28,8 +28,9 @@ const (
 	managerProtocolLabel = "codex-safe.manager-protocol"
 	managedLabelValue    = "true"
 
-	containerStateTimeout = 20 * time.Second
-	containerPollInterval = 50 * time.Millisecond
+	containerStateTimeout   = 20 * time.Second
+	containerPollInterval   = 50 * time.Millisecond
+	containerCreateAttempts = 5
 )
 
 // CommandRunner makes Docker process execution replaceable in focused tests.
@@ -193,7 +194,7 @@ func (docker *Docker) acquireProjectContainer(
 	if err := docker.preflight(ctx, image); err != nil {
 		return "", err
 	}
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < containerCreateAttempts; attempt++ {
 		containerID, conflict, err := docker.createProjectContainer(ctx, plan, image, containerName)
 		if err != nil {
 			return "", err
@@ -208,8 +209,22 @@ func (docker *Docker) acquireProjectContainer(
 		if containerID != "" {
 			return containerID, nil
 		}
+		if err := waitForPoll(ctx); err != nil {
+			return "", err
+		}
 	}
 	return "", fmt.Errorf("container name %q was not released after a concurrent create", containerName)
+}
+
+func waitForPoll(ctx context.Context) error {
+	timer := time.NewTimer(containerPollInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (docker *Docker) createProjectContainer(
