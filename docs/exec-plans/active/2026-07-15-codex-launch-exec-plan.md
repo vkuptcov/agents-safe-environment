@@ -176,7 +176,7 @@ Commit: `feat: run codex by default with user-state mounts`
 ### Phase 5: User-State Reuse Labels and Mismatch Diagnostic
 
 Purpose: Make container reuse honor the Codex-home and personal-skills sources.
-Status: to be done
+Status: done
 Done when: a differing Codex home or skills source for the same worktree is rejected with the active-session
 diagnostic instead of reused.
 

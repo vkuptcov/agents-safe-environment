@@ -38,6 +38,15 @@ func (state UserState) SkillsPresent() bool {
 	return state.PersonalSkills != "" && state.PersonalSkills != PersonalSkillsAbsent
 }
 
+// personalSkillsLabel returns the codex-safe.personal-skills label value: the canonical source, or
+// the literal absent marker when no personal-skills directory was resolved.
+func (state UserState) personalSkillsLabel() string {
+	if state.PersonalSkills == "" {
+		return PersonalSkillsAbsent
+	}
+	return state.PersonalSkills
+}
+
 // UserStateInputs carries the host inputs needed to resolve launch user state.
 type UserStateInputs struct {
 	// LookupEnv reads host environment variables; it is os.LookupEnv in production.

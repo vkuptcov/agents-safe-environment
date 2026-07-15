@@ -26,6 +26,8 @@ const (
 	projectPathLabel     = "codex-safe.project-path"
 	hostUIDLabel         = "codex-safe.host-uid"
 	managerProtocolLabel = "codex-safe.manager-protocol"
+	codexHomeLabel       = "codex-safe.codex-home"
+	personalSkillsLabel  = "codex-safe.personal-skills"
 	managedLabelValue    = "true"
 
 	containerStateTimeout   = 20 * time.Second
@@ -190,7 +192,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, comma
 	if !isRetryableExecError(execErr) {
 		return execErr
 	}
-	retry, retryErr := docker.containerStoppedAfterExec(ctx, plan, containerName)
+	retry, retryErr := docker.containerStoppedAfterExec(ctx, plan, containerName, userState)
 	if retryErr != nil {
 		return errors.Join(execErr, retryErr)
 	}
@@ -220,13 +222,13 @@ func (docker *Docker) acquireProjectContainer(
 		return "", err
 	}
 	if found {
-		if err := docker.validateProjectContainer(inspection, plan.ProjectRoot); err != nil {
+		if err := docker.validateProjectContainer(inspection, plan.ProjectRoot, userState); err != nil {
 			return "", err
 		}
 		if inspection.State.Running {
 			return inspection.ID, nil
 		}
-		containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName)
+		containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName, userState)
 		if err != nil {
 			return "", err
 		}
@@ -246,7 +248,7 @@ func (docker *Docker) acquireProjectContainer(
 		if !conflict {
 			return containerID, nil
 		}
-		containerID, err = docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName)
+		containerID, err = docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName, userState)
 		if err != nil {
 			return "", err
 		}
@@ -381,31 +383,78 @@ func (docker *Docker) inspectProjectContainer(
 	return inspections[0], true, nil
 }
 
-func (docker *Docker) validateProjectContainer(inspection containerInspection, projectRoot string) error {
-	expected := map[string]string{
-		managedLabel:         managedLabelValue,
-		projectPathLabel:     projectRoot,
-		hostUIDLabel:         strconv.Itoa(docker.HostUID),
-		managerProtocolLabel: session.ProtocolVersion,
+func (docker *Docker) validateProjectContainer(
+	inspection containerInspection,
+	projectRoot string,
+	userState UserState,
+) error {
+	// Ownership and protocol mismatches remain name conflicts: a different owner, project, or wire
+	// protocol occupies the deterministic name and the launcher refuses to reuse it. Order matters,
+	// so these are checked before the user-state labels.
+	ownership := []struct{ name, want string }{
+		{managedLabel, managedLabelValue},
+		{projectPathLabel, projectRoot},
+		{hostUIDLabel, strconv.Itoa(docker.HostUID)},
+		{managerProtocolLabel, session.ProtocolVersion},
 	}
-	for name, value := range expected {
-		if got := inspection.Config.Labels[name]; got != value {
+	for _, label := range ownership {
+		if got := inspection.Config.Labels[label.name]; got != label.want {
 			return fmt.Errorf(
 				"container %s has label %s=%q, expected %q; refusing deterministic-name reuse",
 				inspection.ID,
-				name,
+				label.name,
 				got,
-				value,
+				label.want,
 			)
 		}
 	}
+
+	// User-state mismatches are different: the same owner and project are running, but with a Codex
+	// home or personal-skills source fixed at creation that this launch cannot change through exec.
+	// The launcher neither reuses stale user state nor terminates the live session.
+	userStateLabels := []struct{ name, want string }{
+		{codexHomeLabel, userState.CodexHome},
+		{personalSkillsLabel, userState.personalSkillsLabel()},
+	}
+	for _, label := range userStateLabels {
+		if got := inspection.Config.Labels[label.name]; got != label.want {
+			return &userStateMismatchError{
+				projectRoot: projectRoot,
+				label:       label.name,
+				running:     got,
+				requested:   label.want,
+			}
+		}
+	}
 	return nil
+}
+
+// userStateMismatchError reports that the running session for a worktree was created with a
+// different Codex home or personal-skills source than this launch resolved. The launcher does not
+// reuse it (its mounts are fixed) and does not stop it (another command may be active).
+type userStateMismatchError struct {
+	projectRoot string
+	label       string
+	running     string
+	requested   string
+}
+
+func (err *userStateMismatchError) Error() string {
+	return fmt.Sprintf(
+		"a codex-safe session for worktree %q is already running with %s=%q, but this launch resolved "+
+			"%q; finish the active session before retrying, then relaunch",
+		err.projectRoot,
+		err.label,
+		err.running,
+		err.requested,
+	)
 }
 
 func (docker *Docker) waitForReusableOrReleased(
 	ctx context.Context,
 	projectRoot string,
 	containerName string,
+	userState UserState,
 ) (string, error) {
 	waitContext, cancel := context.WithTimeout(ctx, containerStateTimeout)
 	defer cancel()
@@ -419,7 +468,7 @@ func (docker *Docker) waitForReusableOrReleased(
 		if !found {
 			return "", nil
 		}
-		if err := docker.validateProjectContainer(inspection, projectRoot); err != nil {
+		if err := docker.validateProjectContainer(inspection, projectRoot, userState); err != nil {
 			return "", err
 		}
 		if inspection.State.Running {
@@ -442,6 +491,7 @@ func (docker *Docker) containerStoppedAfterExec(
 	ctx context.Context,
 	plan Plan,
 	containerName string,
+	userState UserState,
 ) (bool, error) {
 	inspection, found, err := docker.inspectProjectContainer(ctx, containerName)
 	if err != nil {
@@ -450,13 +500,13 @@ func (docker *Docker) containerStoppedAfterExec(
 	if !found {
 		return true, nil
 	}
-	if err := docker.validateProjectContainer(inspection, plan.ProjectRoot); err != nil {
+	if err := docker.validateProjectContainer(inspection, plan.ProjectRoot, userState); err != nil {
 		return false, err
 	}
 	if inspection.State.Running {
 		return false, nil
 	}
-	containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName)
+	containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName, userState)
 	return containerID == "" && err == nil, err
 }
 
@@ -596,6 +646,10 @@ func BuildDockerRunArgs(
 		hostUIDLabel+"="+strconv.Itoa(hostUID),
 		"--label",
 		managerProtocolLabel+"="+session.ProtocolVersion,
+		"--label",
+		codexHomeLabel+"="+userState.CodexHome,
+		"--label",
+		personalSkillsLabel+"="+userState.personalSkillsLabel(),
 		"--env",
 		"CODEX_SAFE_HOST_UID="+strconv.Itoa(hostUID),
 		"--env",

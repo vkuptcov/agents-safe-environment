@@ -48,6 +48,10 @@ func TestBuildDockerRunArgsUsesDetachedSysboxAndIdentityLabels(t *testing.T) {
 		"codex-safe.host-uid=1000",
 		"--label",
 		"codex-safe.manager-protocol=1",
+		"--label",
+		"codex-safe.codex-home=/home/developer/.codex",
+		"--label",
+		"codex-safe.personal-skills=absent",
 		"--env",
 		"CODEX_SAFE_HOST_UID=1000",
 		"--env",
@@ -277,6 +281,61 @@ func TestDockerLaunchRejectsMismatchedDeterministicNameOccupant(t *testing.T) {
 	if len(runner.runCalls) != 0 {
 		t.Fatalf("Run calls = %#v, want none", runner.runCalls)
 	}
+}
+
+func TestDockerLaunchRejectsUserStateMismatchWithActiveSessionDiagnostic(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		label      string
+		runningVal string
+	}{
+		{name: "codex home", label: codexHomeLabel, runningVal: "/home/developer/other-codex"},
+		{name: "personal skills", label: personalSkillsLabel, runningVal: "/host/other-skills"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			containerID := strings.Repeat("7", 64)
+			labels := matchingLabels("/project", 1000)
+			labels[test.label] = test.runningVal
+			runner := &fakeCommandRunner{outputs: []commandResult{{
+				output: inspectionJSON(t, containerID, true, "running", labels),
+			}}}
+			err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"})
+			if err == nil || !strings.Contains(err.Error(), "finish the active session") {
+				t.Fatalf("Launch() error = %v, want finish-active-session diagnostic", err)
+			}
+			if !strings.Contains(err.Error(), test.label) {
+				t.Fatalf("diagnostic must name %s: %v", test.label, err)
+			}
+			var mismatch *userStateMismatchError
+			if !errors.As(err, &mismatch) {
+				t.Fatalf("error must be a userStateMismatchError: %v", err)
+			}
+			// Neither reuse (no exec) nor terminate (no stop/rm): only the single inspect ran.
+			if len(runner.combinedCalls) != 1 {
+				t.Fatalf("CombinedOutput calls = %#v, want inspect only", runner.combinedCalls)
+			}
+			if len(runner.runCalls) != 0 {
+				t.Fatalf("Run calls = %#v, want none", runner.runCalls)
+			}
+		})
+	}
+}
+
+func TestBuildDockerRunArgsRecordsUserStateLabels(t *testing.T) {
+	t.Parallel()
+	userState := UserState{CodexHome: "/host/custom codex", PersonalSkills: "/host/skills"}
+	args, err := BuildDockerRunArgs(
+		testPlan(), "image", "codex-safe-test", 1000, 1000,
+		"developer", "developers", "/home/developer", "", userState,
+	)
+	if err != nil {
+		t.Fatalf("BuildDockerRunArgs() error = %v", err)
+	}
+	assertLabel(t, args, codexHomeLabel, "/host/custom codex")
+	assertLabel(t, args, personalSkillsLabel, "/host/skills")
 }
 
 func TestDockerLaunchReusesConcurrentCreateWinner(t *testing.T) {
@@ -518,7 +577,20 @@ func matchingLabels(projectRoot string, hostUID int) map[string]string {
 		projectPathLabel:     projectRoot,
 		hostUIDLabel:         strconv.Itoa(hostUID),
 		managerProtocolLabel: "1",
+		codexHomeLabel:       "/home/developer/.codex",
+		personalSkillsLabel:  PersonalSkillsAbsent,
 	}
+}
+
+func assertLabel(t *testing.T, args []string, name string, want string) {
+	t.Helper()
+	target := name + "=" + want
+	for index, arg := range args {
+		if arg == "--label" && index+1 < len(args) && args[index+1] == target {
+			return
+		}
+	}
+	t.Fatalf("args missing --label %q: %#v", target, args)
 }
 
 func inspectionJSON(
