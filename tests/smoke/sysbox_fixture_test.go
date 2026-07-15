@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,24 +40,15 @@ func newSmokeFixture(t *testing.T) *smokeFixture {
 		launcher: newLauncherHarness(t, project.hostHome),
 		docker:   newDockerHarness(t, project),
 	}
-	t.Cleanup(fixture.cleanup)
+	t.Cleanup(fixture.docker.close)
 	return fixture
-}
-
-func (fixture *smokeFixture) cleanup() {
-	fixture.docker.close()
-}
-
-func (fixture *smokeFixture) startHostSentinel() {
-	fixture.docker.startSentinel()
 }
 
 func (fixture *smokeFixture) startEnvironmentProbe() *launcherProcess {
 	fixture.t.Helper()
 	probe := fixture.files.environment
 	return fixture.launcher.start(fixture.project.nested, "bash", "-c", environmentProbeScript, "bash",
-		probe.report, probe.ready, probe.release,
-		fixture.host.user, fixture.host.group, fixture.host.gitMarker, fixture.project.hostHome)
+		probe.report, probe.ready, probe.release)
 }
 
 func (fixture *smokeFixture) startWorktreeProbe() *launcherProcess {
@@ -70,10 +60,24 @@ func (fixture *smokeFixture) startWorktreeProbe() *launcherProcess {
 func (fixture *smokeFixture) startNestedDockerProbe() *launcherProcess {
 	fixture.t.Helper()
 	probe := fixture.files.nestedDocker
-	return fixture.launcher.start(fixture.project.worktree, "bash", "-c", nestedDockerProbeScript, "bash",
-		probe.report, probe.ready, probe.release, fixture.project.worktree,
-		fixture.files.nestedMarker, fixture.docker.names.sentinel, fixture.docker.names.nested,
-		fixture.files.composeFile, fixture.files.composeProject, fixture.docker.names.compose, nestedImage)
+	environment := []string{
+		"REPORT=" + probe.report,
+		"READY=" + probe.ready,
+		"RELEASE=" + probe.release,
+		"LINKED_WORKTREE=" + fixture.project.worktree,
+		"NESTED_MARKER=" + fixture.files.nestedMarker,
+		"HOST_SENTINEL_NAME=" + fixture.docker.names.sentinel,
+		"NESTED_CONTAINER_NAME=" + fixture.docker.names.nested,
+		"COMPOSE_FILE=" + fixture.files.composeFile,
+		"COMPOSE_PROJECT=" + fixture.files.composeProject,
+		"COMPOSE_CONTAINER_NAME=" + fixture.docker.names.compose,
+		"NESTED_IMAGE=" + nestedImage,
+	}
+	return fixture.launcher.startWithEnvironment(
+		fixture.project.worktree,
+		environment,
+		"bash", "-c", nestedDockerProbeScript,
+	)
 }
 
 func (fixture *smokeFixture) startReuseCommand() *launcherProcess {
@@ -106,26 +110,6 @@ func (fixture *smokeFixture) waitForFile(path string, process *launcherProcess) 
 		case <-ticker.C:
 		}
 	}
-}
-
-func (fixture *smokeFixture) inspectOuter() container.InspectResponse {
-	return fixture.docker.inspectOuter()
-}
-
-func (fixture *smokeFixture) managedContainers() []container.Summary {
-	return fixture.docker.managedContainers()
-}
-
-func (fixture *smokeFixture) containersNamed(name string) []container.Summary {
-	return fixture.docker.containersNamed(name)
-}
-
-func (fixture *smokeFixture) waitForOuter() {
-	fixture.docker.waitForOuter()
-}
-
-func (fixture *smokeFixture) waitForOuterRemoval() {
-	fixture.docker.waitForOuterRemoval()
 }
 
 const reuseScript = `report=$1; release=$2

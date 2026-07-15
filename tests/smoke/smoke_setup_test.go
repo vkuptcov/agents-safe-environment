@@ -46,14 +46,16 @@ type hostIdentity struct {
 	user      string
 	group     string
 	gitMarker string
+	gitConfig string
 }
 
 func newHostIdentity(t *testing.T, project projectLayout) hostIdentity {
 	t.Helper()
 	identity := hostIdentity{gitMarker: "go-smoke-marker"}
+	identity.gitConfig = "[codex-safe-smoke]\n\tmarker = " + identity.gitMarker + "\n"
 	require.NoError(t, os.WriteFile(
 		project.hostGit,
-		[]byte("[codex-safe-smoke]\n\tmarker = "+identity.gitMarker+"\n"),
+		[]byte(identity.gitConfig),
 		0o400,
 	), "temporary host Git config must be written")
 	currentUser, err := user.Current()
@@ -133,6 +135,13 @@ func (launcher *launcherHarness) start(project string, command ...string) *launc
 		close(running.done)
 	}()
 	return running
+}
+
+func (launcher *launcherHarness) startWithEnvironment(project string, environment []string, command ...string) *launcherProcess {
+	launcher.t.Helper()
+	containerCommand := append([]string{"env"}, environment...)
+	containerCommand = append(containerCommand, command...)
+	return launcher.start(project, containerCommand...)
 }
 
 type launcherProcess struct {

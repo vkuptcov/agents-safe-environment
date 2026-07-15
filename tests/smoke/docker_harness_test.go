@@ -3,7 +3,6 @@ package smoke_test
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -13,6 +12,11 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/stretchr/testify/require"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
+)
+
+const (
+	cleanupTimeout     = 15 * time.Second
+	idleRemovalTimeout = 20 * time.Second
 )
 
 type containerNames struct {
@@ -41,7 +45,8 @@ func newDockerHarness(t *testing.T, project projectLayout) *dockerHarness {
 	require.NoError(t, err, "Moby client must inspect the host Docker daemon")
 	outer, err := launcher.ProjectContainerName(os.Getuid(), project.worktree)
 	require.NoError(t, err, "deterministic project container name must be derivable")
-	suffix := filepath.Base(project.root)
+	projectKey, err := launcher.ProjectKey(os.Getuid(), project.worktree)
+	require.NoError(t, err, "unique project key must be derivable for smoke container names")
 	return &dockerHarness{
 		t:        t,
 		ctx:      ctx,
@@ -51,16 +56,16 @@ func newDockerHarness(t *testing.T, project projectLayout) *dockerHarness {
 		daemonID: info.ID,
 		names: containerNames{
 			outer:    outer,
-			sentinel: "codex-safe-host-sentinel-" + suffix,
-			nested:   "codex-safe-nested-" + suffix,
-			compose:  "codex-safe-compose-" + suffix,
+			sentinel: "codex-safe-host-sentinel-" + projectKey,
+			nested:   "codex-safe-nested-" + projectKey,
+			compose:  "codex-safe-compose-" + projectKey,
 		},
 	}
 }
 
 func (docker *dockerHarness) close() {
 	docker.cancel()
-	cleanupContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	cleanupContext, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	_ = docker.client.ContainerRemove(cleanupContext, docker.names.outer, container.RemoveOptions{Force: true})
 	_ = docker.client.ContainerRemove(cleanupContext, docker.names.sentinel, container.RemoveOptions{Force: true})
@@ -122,7 +127,7 @@ func (docker *dockerHarness) waitForOuter() {
 
 func (docker *dockerHarness) waitForOuterRemoval() {
 	docker.t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(idleRemovalTimeout)
 	for time.Now().Before(deadline) {
 		_, err := docker.client.ContainerInspect(docker.ctx, docker.names.outer)
 		if client.IsErrNotFound(err) {

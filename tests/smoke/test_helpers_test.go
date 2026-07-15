@@ -54,6 +54,18 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
+func appendFile(path string, data []byte) error {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
 func requireHostOwnership(t *testing.T, paths ...string) {
 	t.Helper()
 	for _, root := range paths {
