@@ -15,12 +15,13 @@ import (
 )
 
 type projectLayout struct {
-	root     string
-	primary  string
-	worktree string
-	nested   string
-	hostHome string
-	hostGit  string
+	root      string
+	primary   string
+	worktree  string
+	nested    string
+	hostHome  string
+	hostGit   string
+	codexHome string
 }
 
 func newProjectLayout(t *testing.T) projectLayout {
@@ -34,11 +35,16 @@ func newProjectLayout(t *testing.T) projectLayout {
 	}
 	layout.nested = filepath.Join(layout.worktree, "nested directory")
 	layout.hostGit = filepath.Join(layout.hostHome, ".gitconfig")
+	layout.codexHome = filepath.Join(layout.hostHome, ".codex")
 
 	initGitProject(t, layout.primary)
 	runInDir(t, layout.primary, "git", "worktree", "add", "-b", "smoke/feature", layout.worktree)
 	require.NoError(t, os.MkdirAll(layout.nested, 0o755), "nested project directory must be created")
 	require.NoError(t, os.MkdirAll(layout.hostHome, 0o755), "temporary host home must be created")
+	// The product resolves and mounts $HOME/.codex read-write; the launcher fails closed without it,
+	// so every launch through the probe transport needs a resolvable Codex home. Phase 6 enriches
+	// this directory with sentinel configuration and dedicated Codex assertions.
+	require.NoError(t, os.MkdirAll(layout.codexHome, 0o755), "temporary Codex home must be created")
 	return layout
 }
 

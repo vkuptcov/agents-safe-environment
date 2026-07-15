@@ -30,58 +30,54 @@ func TestRunHelp(t *testing.T) {
 	}
 }
 
-func TestRunRequiresProbeCommand(t *testing.T) {
+func TestRunDefaultsToInteractiveCodex(t *testing.T) {
 	t.Parallel()
 
-	stdout := new(bytes.Buffer)
-	stderr := new(bytes.Buffer)
-	exitCode := run(context.Background(), nil, stdout, stderr, panicApplication())
-
-	if exitCode != 2 {
-		t.Errorf("run() = %d, want 2", exitCode)
-	}
-	if !strings.Contains(stderr.String(), "probe command is required after --") {
-		t.Errorf("stderr = %q, want missing probe error", stderr.String())
-	}
-}
-
-func TestRunParsesFlagsAndForwardsProbe(t *testing.T) {
-	t.Parallel()
-
-	wantProject := gitproject.Project{
-		RequestedDir: "/project/nested",
-		WorktreeRoot: "/project",
-	}
+	wantProject := gitproject.Project{RequestedDir: "/project", WorktreeRoot: "/project"}
 	wantPlan := launcher.Plan{
 		ProjectRoot: "/project",
-		WorkingDir:  "/project/nested",
+		WorkingDir:  "/project",
 		Mounts:      []launcher.Mount{{Source: "/project", Target: "/project"}},
 	}
 	fakeDocker := &recordingDocker{}
 	app := application{
 		discover: func(_ context.Context, path string) (gitproject.Project, error) {
-			if path != "/project/nested" {
-				t.Errorf("discover path = %q, want /project/nested", path)
+			if path != "." {
+				t.Errorf("discover path = %q, want default \".\"", path)
 			}
 			return wantProject, nil
 		},
-		buildPlan: func(project gitproject.Project) (launcher.Plan, error) {
-			if !reflect.DeepEqual(project, wantProject) {
-				t.Errorf("buildPlan project = %#v, want %#v", project, wantProject)
-			}
-			return wantPlan, nil
-		},
-		docker: fakeDocker,
+		buildPlan: func(gitproject.Project) (launcher.Plan, error) { return wantPlan, nil },
+		docker:    fakeDocker,
+	}
+
+	exitCode := run(context.Background(), nil, new(bytes.Buffer), new(bytes.Buffer), app)
+
+	if exitCode != 0 {
+		t.Errorf("run() = %d, want 0", exitCode)
+	}
+	wantCommand := []string{launcher.CodexBinaryPath}
+	if !reflect.DeepEqual(fakeDocker.command, wantCommand) {
+		t.Errorf("command = %#v, want interactive Codex %#v", fakeDocker.command, wantCommand)
+	}
+	if fakeDocker.image != defaultImage {
+		t.Errorf("image = %q, want %q", fakeDocker.image, defaultImage)
+	}
+}
+
+func TestRunForwardsCodexArguments(t *testing.T) {
+	t.Parallel()
+
+	fakeDocker := &recordingDocker{}
+	app := application{
+		discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		buildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
+		docker:    fakeDocker,
 	}
 
 	exitCode := run(
 		context.Background(),
-		[]string{
-			"--project", "/project/nested",
-			"--image", "test:image",
-			"--",
-			"printf", "%s", "value; $(not-shell)",
-		},
+		[]string{"--project", "/project/nested", "--image", "test:image", "--", "exec", "--model", "gpt-5"},
 		new(bytes.Buffer),
 		new(bytes.Buffer),
 		app,
@@ -93,12 +89,41 @@ func TestRunParsesFlagsAndForwardsProbe(t *testing.T) {
 	if fakeDocker.image != "test:image" {
 		t.Errorf("image = %q, want test:image", fakeDocker.image)
 	}
-	wantProbe := []string{"printf", "%s", "value; $(not-shell)"}
-	if !reflect.DeepEqual(fakeDocker.probe, wantProbe) {
-		t.Errorf("probe = %#v, want %#v", fakeDocker.probe, wantProbe)
+	wantCommand := []string{launcher.CodexBinaryPath, "exec", "--model", "gpt-5"}
+	if !reflect.DeepEqual(fakeDocker.command, wantCommand) {
+		t.Errorf("command = %#v, want %#v", fakeDocker.command, wantCommand)
 	}
-	if !reflect.DeepEqual(fakeDocker.plan, wantPlan) {
-		t.Errorf("plan = %#v, want %#v", fakeDocker.plan, wantPlan)
+}
+
+// TestRunNeverRunsArbitraryExecutable proves that a would-be executable after -- becomes a Codex
+// argument. The image-owned Codex path is always command[0]; the launcher never runs another program.
+func TestRunNeverRunsArbitraryExecutable(t *testing.T) {
+	t.Parallel()
+
+	fakeDocker := &recordingDocker{}
+	app := application{
+		discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		buildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
+		docker:    fakeDocker,
+	}
+
+	exitCode := run(
+		context.Background(),
+		[]string{"--", "/bin/sh", "-c", "rm -rf /; $(malicious)"},
+		new(bytes.Buffer),
+		new(bytes.Buffer),
+		app,
+	)
+
+	if exitCode != 0 {
+		t.Errorf("run() = %d, want 0", exitCode)
+	}
+	if len(fakeDocker.command) == 0 || fakeDocker.command[0] != launcher.CodexBinaryPath {
+		t.Fatalf("command[0] = %#v, want image-owned Codex path", fakeDocker.command)
+	}
+	wantCommand := []string{launcher.CodexBinaryPath, "/bin/sh", "-c", "rm -rf /; $(malicious)"}
+	if !reflect.DeepEqual(fakeDocker.command, wantCommand) {
+		t.Errorf("command = %#v, want the executable forwarded as a Codex argument %#v", fakeDocker.command, wantCommand)
 	}
 }
 
@@ -111,7 +136,7 @@ func TestRunReportsDiscoveryError(t *testing.T) {
 		return gitproject.Project{}, errors.New("Git unavailable")
 	}
 
-	exitCode := run(context.Background(), []string{"--", "true"}, new(bytes.Buffer), stderr, app)
+	exitCode := run(context.Background(), nil, new(bytes.Buffer), stderr, app)
 
 	if exitCode != 1 {
 		t.Errorf("run() = %d, want 1", exitCode)
@@ -121,27 +146,23 @@ func TestRunReportsDiscoveryError(t *testing.T) {
 	}
 }
 
-func TestRunPropagatesProbeExitCode(t *testing.T) {
+func TestRunPropagatesCodexExitCode(t *testing.T) {
 	t.Parallel()
 
 	stderr := new(bytes.Buffer)
 	app := application{
-		discover: func(context.Context, string) (gitproject.Project, error) {
-			return gitproject.Project{}, nil
-		},
-		buildPlan: func(gitproject.Project) (launcher.Plan, error) {
-			return launcher.Plan{}, nil
-		},
-		docker: &recordingDocker{err: cliExitError{code: 42}},
+		discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		buildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
+		docker:    &recordingDocker{err: cliExitError{code: 42}},
 	}
 
-	exitCode := run(context.Background(), []string{"--", "false"}, new(bytes.Buffer), stderr, app)
+	exitCode := run(context.Background(), nil, new(bytes.Buffer), stderr, app)
 
 	if exitCode != 42 {
 		t.Errorf("run() = %d, want 42", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "probe failed") {
-		t.Errorf("stderr = %q, want probe error", stderr.String())
+	if !strings.Contains(stderr.String(), "codex failed") {
+		t.Errorf("stderr = %q, want Codex error", stderr.String())
 	}
 }
 
@@ -160,7 +181,7 @@ func panicApplication() application {
 type recordingDocker struct {
 	plan          launcher.Plan
 	image         string
-	probe         []string
+	command       []string
 	err           error
 	panicOnLaunch bool
 }
@@ -169,14 +190,14 @@ func (docker *recordingDocker) Launch(
 	_ context.Context,
 	plan launcher.Plan,
 	image string,
-	probe []string,
+	command []string,
 ) error {
 	if docker.panicOnLaunch {
 		panic("Launch should not be called")
 	}
 	docker.plan = plan
 	docker.image = image
-	docker.probe = append([]string(nil), probe...)
+	docker.command = append([]string(nil), command...)
 	return docker.err
 }
 
@@ -185,7 +206,7 @@ type cliExitError struct {
 }
 
 func (err cliExitError) Error() string {
-	return "probe failed"
+	return "codex failed"
 }
 
 func (err cliExitError) ExitCode() int {

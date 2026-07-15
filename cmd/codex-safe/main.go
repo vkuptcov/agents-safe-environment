@@ -15,7 +15,7 @@ import (
 const defaultImage = "codex-safe-mvp:local"
 
 type dockerLauncher interface {
-	Launch(ctx context.Context, plan launcher.Plan, image string, probe []string) error
+	Launch(ctx context.Context, plan launcher.Plan, image string, command []string) error
 }
 
 type application struct {
@@ -65,12 +65,9 @@ func run(
 		return 2
 	}
 
-	probe := flags.Args()
-	if len(probe) == 0 {
-		fmt.Fprintln(stderr, "codex-safe: probe command is required after --")
-		printUsage(stderr)
-		return 2
-	}
+	// The product always runs the image-owned Codex binary. Arguments after -- are Codex
+	// arguments, never a standalone executable, so no arbitrary command reaches the container.
+	command := launcher.DefaultCodexCommand(flags.Args())
 
 	project, err := app.discover(ctx, *projectPath)
 	if err != nil {
@@ -80,7 +77,7 @@ func run(
 	if err != nil {
 		return reportError(stderr, err)
 	}
-	if err := app.docker.Launch(ctx, plan, *image, probe); err != nil {
+	if err := app.docker.Launch(ctx, plan, *image, command); err != nil {
 		fmt.Fprintf(stderr, "codex-safe: %v\n", err)
 		return errorExitCode(err)
 	}
@@ -105,7 +102,8 @@ func errorExitCode(err error) int {
 }
 
 func printUsage(output io.Writer) {
-	fmt.Fprintln(output, "Usage: codex-safe [--project PATH] [--image REF] -- COMMAND [ARG...]")
+	fmt.Fprintln(output, "Usage: codex-safe [--project PATH] [--image REF] [-- CODEX ARG...]")
 	fmt.Fprintln(output)
-	fmt.Fprintln(output, "Run an explicit MVP probe command inside an ephemeral Sysbox container.")
+	fmt.Fprintln(output, "Run interactive Codex for the current Git project inside an ephemeral Sysbox container.")
+	fmt.Fprintln(output, "Arguments after -- are forwarded to Codex; the launcher never runs another executable.")
 }

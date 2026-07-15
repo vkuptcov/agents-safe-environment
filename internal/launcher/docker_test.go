@@ -28,6 +28,7 @@ func TestBuildDockerRunArgsUsesDetachedSysboxAndIdentityLabels(t *testing.T) {
 		"developers",
 		"/home/developer",
 		"",
+		testUserState(),
 	)
 	if err != nil {
 		t.Fatalf("BuildDockerRunArgs() error = %v", err)
@@ -82,8 +83,11 @@ func TestBuildDockerRunArgsUsesDetachedSysboxAndIdentityLabels(t *testing.T) {
 	}
 }
 
-func TestBuildDockerRunArgsPreservesMountOrderAndGitConfig(t *testing.T) {
+func TestBuildDockerRunArgsPreservesMountOrderAndUserState(t *testing.T) {
 	t.Parallel()
+	// A custom CODEX_HOME source differs from its container target, and skills are present, so this
+	// exercises every mount mode and the source-not-equal-target user-state mounts in one place.
+	userState := UserState{CodexHome: "/host/custom codex", PersonalSkills: "/host/skills"}
 	args, err := BuildDockerRunArgs(
 		testPlan(),
 		"image",
@@ -94,6 +98,7 @@ func TestBuildDockerRunArgsPreservesMountOrderAndGitConfig(t *testing.T) {
 		"developers",
 		"/home/developer profile",
 		"/home/developer profile/.gitconfig",
+		userState,
 	)
 	if err != nil {
 		t.Fatalf("BuildDockerRunArgs() error = %v", err)
@@ -111,9 +116,25 @@ func TestBuildDockerRunArgsPreservesMountOrderAndGitConfig(t *testing.T) {
 		"type=bind,source=/sources/primary/.git,target=/sources/primary/.git,bind-propagation=rprivate",
 		"type=bind,source=/sources/feature worktree," +
 			"target=/sources/feature worktree,bind-propagation=rprivate",
+		"type=bind,source=/host/custom codex," +
+			"target=/home/developer profile/.codex,bind-propagation=rprivate",
+		"type=bind,source=/host/skills," +
+			"target=/home/developer profile/.agents/skills,bind-propagation=rprivate,readonly",
 	}
 	if !reflect.DeepEqual(mounts, want) {
 		t.Fatalf("mounts = %#v, want %#v", mounts, want)
+	}
+}
+
+func TestBuildDockerRunArgsRejectsMissingCodexHome(t *testing.T) {
+	t.Parallel()
+	_, err := BuildDockerRunArgs(
+		testPlan(), "image", "codex-safe-test", 1000, 1000,
+		"developer", "developers", "/home/developer", "",
+		UserState{PersonalSkills: PersonalSkillsAbsent},
+	)
+	if err == nil || !strings.Contains(err.Error(), "resolved Codex home is required") {
+		t.Fatalf("BuildDockerRunArgs() error = %v, want missing Codex home", err)
 	}
 }
 
@@ -133,6 +154,8 @@ func TestBuildDockerExecArgsWrapsCommandAndPreservesTerminalContract(t *testing.
 		"1000:1001",
 		"--env",
 		"HOME=/home/developer profile",
+		"--env",
+		"CODEX_HOME=/home/developer profile/.codex",
 		"--workdir",
 		"/sources/feature worktree/nested",
 		containerID,
@@ -182,7 +205,7 @@ func TestBuildDockerRunArgsRejectsInvalidIdentityInputs(t *testing.T) {
 			t.Parallel()
 			_, err := BuildDockerRunArgs(
 				testPlan(), "image", "codex-safe-test", 1000, 1000,
-				test.hostUser, test.hostGroup, test.hostHome, test.gitConfig,
+				test.hostUser, test.hostGroup, test.hostHome, test.gitConfig, testUserState(),
 			)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("BuildDockerRunArgs() error = %v, want %q", err, test.want)
@@ -468,7 +491,16 @@ func testDocker(runner CommandRunner) *Docker {
 		HostUser:  "developer",
 		HostGroup: "developers",
 		HostHome:  "/home/developer",
+		// Focused Launch tests use fake paths, so inject a resolver instead of touching the
+		// filesystem. User-state resolution itself is covered in userstate_test.go.
+		resolveUserState: func(Plan) (UserState, error) {
+			return UserState{CodexHome: "/home/developer/.codex", PersonalSkills: PersonalSkillsAbsent}, nil
+		},
 	}
+}
+
+func testUserState() UserState {
+	return UserState{CodexHome: "/home/developer/.codex", PersonalSkills: PersonalSkillsAbsent}
 }
 
 func mustContainerName(t *testing.T, hostUID int, projectRoot string) string {

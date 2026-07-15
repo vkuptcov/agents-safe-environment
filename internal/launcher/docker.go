@@ -69,6 +69,12 @@ type Docker struct {
 	HostGitConfig string
 	// TTY controls whether Docker allocates a terminal for the outer container.
 	TTY bool
+	// LookupEnv reads host environment variables during user-state resolution. It is os.LookupEnv
+	// in production and a stub in focused tests.
+	LookupEnv func(string) (string, bool)
+	// resolveUserState resolves one launch's Codex home and personal skills from the plan. It is the
+	// filesystem-backed resolver in production and is overridden in focused tests that use fake paths.
+	resolveUserState func(Plan) (UserState, error)
 }
 
 // NewDocker creates a launcher backed by os/exec and the current process streams.
@@ -99,7 +105,7 @@ func NewDocker() (*Docker, error) {
 		return nil, err
 	}
 
-	return &Docker{
+	docker := &Docker{
 		Binary:        "docker",
 		GOOS:          runtime.GOOS,
 		Runner:        execCommandRunner{},
@@ -113,7 +119,36 @@ func NewDocker() (*Docker, error) {
 		HostHome:      hostHome,
 		HostGitConfig: hostGitConfig,
 		TTY:           terminal.IsReader(os.Stdin) && terminal.IsReader(os.Stdout),
-	}, nil
+		LookupEnv:     os.LookupEnv,
+	}
+	docker.resolveUserState = docker.defaultResolveUserState
+	return docker, nil
+}
+
+// defaultResolveUserState resolves the launch user state from the host filesystem and environment.
+func (docker *Docker) defaultResolveUserState(plan Plan) (UserState, error) {
+	lookup := docker.LookupEnv
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	return ResolveUserState(UserStateInputs{
+		LookupEnv:       lookup,
+		HomeDir:         docker.HostHome,
+		WritableSources: writableMountSources(plan.Mounts),
+	})
+}
+
+// writableMountSources returns the canonical read-write bind sources in the plan. They are the
+// worktree root and, for a linked worktree, the common Git directory used to reject a personal-skills
+// source that overlaps a writable mount.
+func writableMountSources(mounts []Mount) []string {
+	sources := make([]string, 0, len(mounts))
+	for _, mount := range mounts {
+		if !mount.ReadOnly {
+			sources = append(sources, mount.Source)
+		}
+	}
+	return sources
 }
 
 // Launch executes the command through the wrapper in the one deterministic
@@ -131,11 +166,19 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, comma
 	if _, err := validatePlan(plan); err != nil {
 		return err
 	}
+	resolve := docker.resolveUserState
+	if resolve == nil {
+		resolve = docker.defaultResolveUserState
+	}
+	userState, err := resolve(plan)
+	if err != nil {
+		return err
+	}
 	containerName, err := ProjectContainerName(docker.HostUID, plan.ProjectRoot)
 	if err != nil {
 		return err
 	}
-	containerID, err := docker.acquireProjectContainer(ctx, plan, image, containerName)
+	containerID, err := docker.acquireProjectContainer(ctx, plan, image, containerName, userState)
 	if err != nil {
 		return err
 	}
@@ -155,7 +198,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, comma
 		return execErr
 	}
 
-	containerID, err = docker.acquireProjectContainer(ctx, plan, image, containerName)
+	containerID, err = docker.acquireProjectContainer(ctx, plan, image, containerName, userState)
 	if err != nil {
 		return errors.Join(execErr, err)
 	}
@@ -170,6 +213,7 @@ func (docker *Docker) acquireProjectContainer(
 	plan Plan,
 	image string,
 	containerName string,
+	userState UserState,
 ) (string, error) {
 	inspection, found, err := docker.inspectProjectContainer(ctx, containerName)
 	if err != nil {
@@ -195,7 +239,7 @@ func (docker *Docker) acquireProjectContainer(
 		return "", err
 	}
 	for attempt := 0; attempt < containerCreateAttempts; attempt++ {
-		containerID, conflict, err := docker.createProjectContainer(ctx, plan, image, containerName)
+		containerID, conflict, err := docker.createProjectContainer(ctx, plan, image, containerName, userState)
 		if err != nil {
 			return "", err
 		}
@@ -232,6 +276,7 @@ func (docker *Docker) createProjectContainer(
 	plan Plan,
 	image string,
 	containerName string,
+	userState UserState,
 ) (string, bool, error) {
 	arguments, err := BuildDockerRunArgs(
 		plan,
@@ -243,6 +288,7 @@ func (docker *Docker) createProjectContainer(
 		docker.HostGroup,
 		docker.HostHome,
 		docker.HostGitConfig,
+		userState,
 	)
 	if err != nil {
 		return "", false, err
@@ -493,6 +539,7 @@ func BuildDockerRunArgs(
 	hostGroup string,
 	hostHome string,
 	hostGitConfig string,
+	userState UserState,
 ) ([]string, error) {
 	if strings.TrimSpace(image) == "" {
 		return nil, errors.New("container image is required")
@@ -520,8 +567,15 @@ func BuildDockerRunArgs(
 			return nil, err
 		}
 	}
+	if userState.CodexHome == "" {
+		return nil, errors.New("resolved Codex home is required")
+	}
 	mounts, err := validatePlan(plan)
 	if err != nil {
+		return nil, err
+	}
+	mounts = append(mounts, userStateMounts(hostHome, userState)...)
+	if mounts, err = normalizeMounts(mounts); err != nil {
 		return nil, err
 	}
 
@@ -574,6 +628,25 @@ func BuildDockerRunArgs(
 	return args, nil
 }
 
+// userStateMounts returns the shared user-state mounts every launch receives. The container-local
+// home shares the host home's absolute path, so the Codex home is mounted read-write at
+// <home>/.codex and personal skills, when present, read-only at <home>/.agents/skills. The mount
+// sources are the canonical host paths, which may differ from the targets when CODEX_HOME points
+// at a custom location.
+func userStateMounts(hostHome string, userState UserState) []Mount {
+	mounts := []Mount{
+		{Source: userState.CodexHome, Target: filepath.Join(hostHome, ".codex")},
+	}
+	if userState.SkillsPresent() {
+		mounts = append(mounts, Mount{
+			Source:   userState.PersonalSkills,
+			Target:   filepath.Join(hostHome, ".agents", "skills"),
+			ReadOnly: true,
+		})
+	}
+	return mounts
+}
+
 // BuildDockerExecArgs returns argv for one wrapped command in an already-running project container.
 func BuildDockerExecArgs(
 	plan Plan,
@@ -615,6 +688,8 @@ func BuildDockerExecArgs(
 		strconv.Itoa(hostUID)+":"+strconv.Itoa(hostGID),
 		"--env",
 		"HOME="+hostHome,
+		"--env",
+		"CODEX_HOME="+filepath.Join(hostHome, ".codex"),
 		"--workdir",
 		plan.WorkingDir,
 		containerID,

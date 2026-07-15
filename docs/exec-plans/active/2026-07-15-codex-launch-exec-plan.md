@@ -156,7 +156,7 @@ Commit: `test: route smoke probes through a test-only transport`
 ### Phase 4: User-State Mounts, Environment, and Default Codex Command
 
 Purpose: Put Codex home and skills into the mount plan and make Codex the default wrapped command.
-Status: to be done
+Status: done
 Done when: tests prove the plan mounts both user-state sources and the product CLI runs the image-owned Codex by
 default through the wrapper.
 
