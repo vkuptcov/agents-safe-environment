@@ -69,8 +69,8 @@ Done when: the real-host test and durable docs describe and prove the direct Bas
 
 - The command interface intentionally permits an arbitrary program inside the already-authorized container. It must
   not add host command execution, mounts, Docker-socket access, or shell interpolation.
-- `agents-safe` keeps the existing Git-project and Codex-home preflight because it reuses the same session and mount
-  plan.
+- `agents-safe` keeps the Git-project preflight and the shared session and mount plan. The Codex-home coupling was
+  later relaxed (see the 2026-07-16 progress note): `agents-safe` mounts the Codex home only when it already exists.
 
 ## Out of Scope
 
@@ -84,3 +84,8 @@ Done when: the real-host test and durable docs describe and prove the direct Bas
 - 2026-07-15: Phase 2 added the real-host `agents-safe bash` scenario and updated the architecture and user docs.
 - 2026-07-15: `go test ./cmd/agents-safe ./internal/launcher`, `make test`, the focused real-host Bash scenario,
   and the full Sysbox smoke invocation completed successfully. Documentation and whitespace checks passed.
+- 2026-07-16: The implementation review under `docs/reviews/feature-review/` drove follow-up changes:
+  `agents-safe` now treats the Codex home as optional and `codex-safe` offers to create a missing default
+  `~/.codex`; the shared CLI scaffold moved to `internal/cli` (+`clitest`); and the `codex-safe-probe` smoke
+  transport was retired so the suite drives `agents-safe` directly. Unit tests and `go vet` pass on both modules;
+  real-host `make test-smoke-go` and `make check-docs` are pending an environment with Sysbox/registry access.
