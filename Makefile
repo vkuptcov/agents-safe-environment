@@ -1,6 +1,7 @@
 GO := go
 DOCKER := docker
-BINARY := bin/codex-safe
+CODEX_BINARY := bin/codex-safe
+AGENTS_BINARY := bin/agents-safe
 SESSION_BINARY := bin/codex-safe-session
 PROBE_BINARY := bin/codex-safe-probe
 IMAGE := codex-safe-mvp:local
@@ -9,8 +10,9 @@ SMOKE_DIR := tests/smoke
 .PHONY: build build-smoke-probe docker-build test test-smoke-go check-docs check-doc-links check-mermaid
 
 build:
-	mkdir -p $(dir $(BINARY))
-	$(GO) build -o $(BINARY) ./cmd/codex-safe
+	mkdir -p $(dir $(CODEX_BINARY))
+	$(GO) build -o $(CODEX_BINARY) ./cmd/codex-safe
+	$(GO) build -o $(AGENTS_BINARY) ./cmd/agents-safe
 	$(GO) build -o $(SESSION_BINARY) ./cmd/codex-safe-session
 
 # The smoke transport is compiled only under the smoke tag, so the product binary above never

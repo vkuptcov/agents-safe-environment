@@ -4,7 +4,7 @@ Status: Proposed
 
 Scope:
 
-- the `codex-safe` command contract on a Linux host;
+- the `codex-safe` and `agents-safe` command contracts on a Linux host;
 - discovery and mounting of the active Git project, linked worktrees, host `.gitconfig`, the resolved Codex home,
   and personal Codex skills;
 - the Codex CLI executable, process environment, argument forwarding, and authentication handoff;
@@ -43,14 +43,25 @@ Codex runs inside a Sysbox container. It sees app-feature, its Codex home,
 while docker ps shows only containers from the nested Docker daemon.
 ```
 
+The same isolated project environment can run an explicit foreground command:
+
+```text
+cd /home/user/sources/app-feature
+agents-safe bash
+```
+
+`agents-safe` passes `bash` directly to the container session wrapper. It does not start a host shell and does not
+interpret the command through another shell.
+
 If `app-feature` is a linked worktree, the command also mounts the primary checkout and common Git directory. The
 absolute target referenced by `.git` remains valid, so `git status`, `git commit`, and branch operations work without
 rewriting repository metadata.
 
 ### Chosen Shape
 
-`codex-safe` is a trusted Go program running on the host. It validates the environment, computes the minimum bind-mount
-set, starts an ephemeral system container through `sysbox-runc`, and hands control to Codex inside that container.
+`codex-safe` and `agents-safe` are trusted Go programs running on the host. They validate the environment, compute the
+minimum bind-mount set, start an ephemeral system container through `sysbox-runc`, and hand control to a managed
+foreground process inside that container.
 
 The launcher resolves the Codex state directory from the host's `CODEX_HOME` or operating-system user-home API. It
 does not assume `/home/<user>`, `/Users/<user>`, or a Windows profile path. The resolved directory is mounted into the
@@ -67,6 +78,7 @@ construct the production `docker run` command.
 ### Success Criteria
 
 - One `codex-safe` invocation starts interactive Codex in the current Git project.
+- One `agents-safe bash` invocation starts Bash in that same isolated project environment.
 - Project changes and Codex state persist on the host with usable file ownership.
 - Codex can read and persist its documented configuration, authentication, logs, sessions, skills, and standalone
   package metadata through the explicitly mounted Codex paths.
@@ -96,6 +108,7 @@ The user-facing interface is:
 
 ```text
 codex-safe [launcher options] [-- codex arguments]
+agents-safe [launcher options] [--] command [argument ...]
 ```
 
 - With no arguments, the command starts interactive `codex` for the Git project containing the current directory.
@@ -109,9 +122,18 @@ codex-safe [launcher options] [-- codex arguments]
 - Interactive mode attaches stdin, stdout, stderr, and the terminal to the container process.
 - After successful environment setup, the Codex exit code becomes the `codex-safe` exit code.
 
-The product command always executes the image-provided `codex` binary. Arguments after `--` are Codex arguments, not
-an arbitrary executable. The lower-level session wrapper remains command-agnostic for testing and container-local
-supervision, but that is not part of the user-facing product interface.
+`codex-safe` always executes the image-provided `codex` binary. Arguments after `--` are Codex arguments, not an
+arbitrary executable.
+
+`agents-safe` requires a command. Launcher options precede that command; `--` is optional and can disambiguate a
+command name that starts with a hyphen. The command and every argument remain separate argv elements and run directly
+through the session wrapper. For example, `agents-safe bash` runs image-provided Bash, and
+`agents-safe bash -c 'make test'` passes the script to that Bash. `agents-safe` does not invoke a shell implicitly.
+It can execute only programs available in the image or explicitly mounted project paths.
+
+Both commands use the same project discovery, mount plan, image selection, session-reuse validation, terminal
+attachment, and exit-code propagation. The lower-level session wrapper remains command-agnostic for container-local
+supervision.
 
 Minimum launcher options:
 
@@ -244,7 +266,7 @@ The executable is selected from an image-owned path that the Codex-home mount ca
 including standalone package caches under the mounted state directory, are data and are never executed as the
 container's launcher binary.
 
-Every product invocation runs this process through the session wrapper:
+Every `codex-safe` invocation runs this process through the session wrapper:
 
 ```text
 codex-safe-session run -- codex [forwarded Codex arguments]
@@ -253,6 +275,9 @@ codex-safe-session run -- codex [forwarded Codex arguments]
 The process uses the invoking host UID and GID, the selected project directory as its working directory, the
 container-local `HOME` and `CODEX_HOME`, and the launcher's terminal streams. Arguments stay separate argv elements;
 the launcher does not invoke a shell. Start failures and Codex exit status propagate through the wrapper and launcher.
+
+`agents-safe` uses the same identity, working directory, user-state mounts, terminal streams, and wrapper, but replaces
+the Codex argv with the required command argv. Its command exit status propagates through `agents-safe`.
 
 #### Persistent state, configuration, and skills
 
@@ -505,7 +530,8 @@ mode.
 - The outer container is never privileged and never shares host namespaces.
 - Unsafe fallback behavior is forbidden.
 - Host-side orchestration and Docker argument construction are implemented in Go.
-- The product command executes the pinned image-owned Codex binary with an explicit container-local `CODEX_HOME`.
+- `codex-safe` executes the pinned image-owned Codex binary with an explicit container-local `CODEX_HOME`.
+- `agents-safe` executes the requested command only inside the managed container and never through a host shell.
 - Arguments and paths are separate argv elements and are never passed through `eval` or shell reinterpretation.
 - After the final managed command finishes normally, the session does not intentionally leave nested containers
   running.
@@ -517,7 +543,7 @@ It also reduces the impact of root access inside the agent environment through t
 
 The trusted computing base includes:
 
-- the host-side Go `codex-safe` program;
+- the host-side Go `codex-safe` and `agents-safe` programs;
 - the container-side Go session manager and its registration protocol;
 - the local Docker Engine and its configuration;
 - Sysbox and the Linux kernel;
@@ -566,6 +592,8 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Canonicalize a symlinked Codex-home source without adding mounts for external symlinks contained inside it.
 - Mount an existing `$HOME/.agents/skills` read-only, allow it to be absent, and reject an invalid source.
 - Verify `HOME` and `CODEX_HOME`, the image-owned `codex` argv, forwarded arguments, working directory, and exit status.
+- Verify `agents-safe bash` preserves direct argv, starts in the selected project, rejects an omitted command, and
+  propagates the command exit status.
 - Reject reuse when Codex-home or personal-skills compatibility labels differ from the current resolution.
 - Reject launches outside Git or without Docker or `sysbox-runc`.
 - Prove that unknown options and arguments after `--` cannot trigger shell injection.
@@ -592,6 +620,7 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Run a second command for one live worktree and prove it shares the outer container and nested Docker daemon.
 - Exit the first of two overlapping commands and prove the second command and outer container remain alive.
 - Run sessions for two worktrees concurrently and prove they do not share nested Docker state.
+- Run `agents-safe bash` and prove the public generic command path starts Bash in the selected project.
 
 ### Lifecycle tests
 

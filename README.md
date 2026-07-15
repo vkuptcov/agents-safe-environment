@@ -1,16 +1,17 @@
 # codex-safe
 
 `codex-safe` runs interactive Codex for the current Git project inside an ephemeral outer container started through
-Sysbox. It mounts the active checkout at its original absolute path, mounts the resolved host Codex home read-write,
-starts a private Docker daemon inside the container, and runs the image-owned Codex CLI. A later invocation for the
-same live worktree reuses that container instead of creating another nested Docker environment.
+Sysbox. `agents-safe` runs an explicit command in that same environment. Both mount the active checkout at its original
+absolute path, mount the resolved host Codex home read-write, start a private Docker daemon inside the container, and
+reuse a live worktree container instead of creating another nested Docker environment.
 
-The product command runs only Codex. Arguments after `--` are forwarded to Codex, not executed as an arbitrary
-program.
+`codex-safe` runs only Codex. Arguments after `--` are forwarded to Codex, not executed as an arbitrary program.
+`agents-safe` is the explicit command launcher: for example, `agents-safe bash` starts Bash inside the container.
 
-## What codex-safe provides
+## What the environment provides
 
 - No-argument `codex-safe` starts interactive Codex for the Git project containing the current directory.
+- `agents-safe COMMAND [ARG...]` starts the requested command in the same isolated project environment.
 - The resolved host Codex home (`CODEX_HOME`, else `~/.codex`) is mounted read-write at `$HOME/.codex`, and the
   managed command always receives `CODEX_HOME=$HOME/.codex`.
 - Personal authored skills under `$HOME/.agents/skills` are mounted read-only when present.
@@ -24,7 +25,7 @@ program.
   home directory at the same absolute path as host `$HOME`.
 - An existing host `$HOME/.gitconfig` is available as a read-only global Git config.
 - Interactive tools use a UTF-8 locale and handle Cyrillic input and output; Bash uses a colored prompt.
-- Files created by Codex and nested containers retain ownership that remains usable from the host.
+- Files created by managed commands and nested containers retain ownership that remains usable from the host.
 - Concurrent commands for one worktree execute in its already-running outer container and share its nested daemon.
 
 See the [design document](docs/design-docs/codex-safe.md) for the full product and security model. The
@@ -60,7 +61,7 @@ make build
 make docker-build
 ```
 
-The launcher is written to `bin/codex-safe`. Run the local checks with:
+The launchers are written to `bin/codex-safe` and `bin/agents-safe`. Run the local checks with:
 
 ```bash
 make test
@@ -120,6 +121,26 @@ neither reuses the stale session nor terminates the live one.
 When stdin and stdout are attached to a terminal, the launcher allocates a Docker TTY and forwards terminal input, so
 interactive Codex behaves as it does on the host.
 
+## Run a command
+
+The generic command interface is:
+
+```text
+agents-safe [--project PATH] [--image REF] [--] COMMAND [ARG...]
+```
+
+For example, open Bash inside the environment for the current Git project:
+
+```bash
+./bin/agents-safe bash
+```
+
+Options must precede `COMMAND`. The optional `--` marks the end of launcher options; it is useful when the command
+name starts with a hyphen. `agents-safe` sends the command and arguments directly to the container session wrapper,
+without invoking a host shell. The command can use programs installed in the image, such as Bash, Git, Make, Docker,
+and `rg`, or executables available under the mounted project. It receives the same project, user-state mounts,
+identity, nested Docker daemon, working directory, and lifecycle behavior as `codex-safe`.
+
 ### Codex home, personal skills, and authentication
 
 - The launcher resolves the Codex home from host `CODEX_HOME`, or `~/.codex` below the operating-system home, and
@@ -148,8 +169,8 @@ make test-smoke-go
 
 It is intentionally separate from `make test`: the Go test requires a real Sysbox host and a Docker image build. The
 lifecycle probes run through a test-only `codex-safe-probe` transport compiled under the `smoke` build tag; the
-product `codex-safe` binary carries no arbitrary-command surface. The Codex scenario launches the product binary
-itself.
+`codex-safe` product binary carries no arbitrary-command surface. The suite separately launches `agents-safe bash`
+through its public command path.
 
 The harness builds the binaries and image, creates a temporary primary repository and linked worktree, starts a host
 sentinel container, and performs live assertions against the outer and nested containers. It verifies account names,

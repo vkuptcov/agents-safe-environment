@@ -114,6 +114,7 @@ type launcherHarness struct {
 	t             *testing.T
 	binary        string
 	productBinary string
+	agentsBinary  string
 	hostHome      string
 }
 
@@ -126,7 +127,8 @@ func newLauncherHarness(t *testing.T, hostHome string) *launcherHarness {
 		t.Skip("bin/codex-safe-probe is missing; run make build-smoke-probe first")
 	}
 	product := filepath.Join(workingDirectory, "..", "..", "bin", "codex-safe")
-	return &launcherHarness{t: t, binary: binary, productBinary: product, hostHome: hostHome}
+	agents := filepath.Join(workingDirectory, "..", "..", "bin", "agents-safe")
+	return &launcherHarness{t: t, binary: binary, productBinary: product, agentsBinary: agents, hostHome: hostHome}
 }
 
 // launcherEnv builds the launcher process environment. It removes any ambient HOME and CODEX_HOME
@@ -163,6 +165,24 @@ func (launcher *launcherHarness) startBinary(binary string, project string, host
 func (launcher *launcherHarness) start(project string, command ...string) *launcherProcess {
 	launcher.t.Helper()
 	return launcher.startBinary(launcher.binary, project, nil, command...)
+}
+
+// startAgents invokes the public generic launcher without a separator, exercising the documented
+// `agents-safe bash` argument form rather than the smoke-only probe transport.
+func (launcher *launcherHarness) startAgents(project string, command ...string) *launcherProcess {
+	launcher.t.Helper()
+	arguments := append([]string{"--project", project, "--image", goSmokeImage}, command...)
+	process := exec.Command(launcher.agentsBinary, arguments...)
+	process.Env = launcher.launcherEnv(nil)
+	running := &launcherProcess{command: process, done: make(chan struct{})}
+	process.Stdout = &running.stdout
+	process.Stderr = &running.stderr
+	require.NoError(launcher.t, process.Start(), "agents-safe command must start: %s", strings.Join(arguments, " "))
+	go func() {
+		running.err = process.Wait()
+		close(running.done)
+	}()
+	return running
 }
 
 func (launcher *launcherHarness) startWithEnvironment(project string, environment []string, command ...string) *launcherProcess {

@@ -21,10 +21,12 @@ make test-smoke-go
 
 The target:
 
-1. builds `bin/codex-safe`, `bin/codex-safe-session`, and the smoke-tagged `bin/codex-safe-probe`;
+1. builds `bin/codex-safe`, `bin/agents-safe`, `bin/codex-safe-session`, and the smoke-tagged
+   `bin/codex-safe-probe`;
 2. builds the `codex-safe-mvp:local` image;
 3. enables the opt-in smoke test with `CODEX_SAFE_RUN_SYSBOX_SMOKE=1`;
-4. runs every `TestSysbox` scenario (linked worktree and Codex product launch) without the Go test cache.
+4. runs every `TestSysbox` scenario (linked worktree, Codex product launch, and `agents-safe bash`) without the Go
+   test cache.
 
 The test requires:
 
@@ -64,7 +66,7 @@ observed inside the managed environment.
 
 ```text
 Host Go test
-├── launcherHarness ── starts bin/codex-safe-probe as a real host process
+├── launcherHarness ── starts bin/codex-safe-probe and bin/agents-safe as real host processes
 ├── dockerHarness ──── inspects the host daemon through the Moby client
 ├── temporary Git primary checkout + linked worktree
 └── host sentinel container
@@ -105,6 +107,9 @@ Commands in the outer container talk to the private nested daemon instead.
    validate nested cleanup and host-side file ownership.
 9. Start two first callers concurrently against a fresh session and prove that exactly one deterministic outer
    container is created.
+
+`TestSysboxAgentsSafeBash` starts `agents-safe bash -c ...` without a separator and verifies that Bash runs in the
+selected project before the idle lifecycle removes the outer container.
 
 ## Probe synchronization
 

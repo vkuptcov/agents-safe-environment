@@ -7,13 +7,13 @@ container-local command lifetime protocol.
 
 ## Runtime Topology
 
-`codex-safe` discovers the requested Git worktree, derives a mount and identity plan, and creates or reuses one
-deterministically named outer container. The outer container runs under Sysbox and never receives the host Docker
-socket.
+`codex-safe` and `agents-safe` discover the requested Git worktree, derive a mount and identity plan, and create or
+reuse one deterministically named outer container. The outer container runs under Sysbox and never receives the host
+Docker socket.
 
 ```mermaid
 flowchart LR
-    CLI["Host codex-safe CLI"] --> HostDocker["Host Docker daemon"]
+    CLI["Host codex-safe / agents-safe CLI"] --> HostDocker["Host Docker daemon"]
     HostDocker --> Outer["Sysbox outer container"]
     Outer --> Supervisor["codex-safe-session serve"]
     Supervisor --> InnerDocker["Private dockerd"]
@@ -37,6 +37,7 @@ both the module paths and document links.
 | Module | Responsibility | Owning design doc |
 | --- | --- | --- |
 | `cmd/codex-safe/` | Host CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `cmd/agents-safe/` | Host CLI for arbitrary container commands. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `cmd/codex-safe-probe/` | Test-only smoke transport. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/gitproject/` | Git discovery. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/launcher/` | Mount and Docker planning. | [Safe environment](docs/design-docs/codex-safe.md) |
