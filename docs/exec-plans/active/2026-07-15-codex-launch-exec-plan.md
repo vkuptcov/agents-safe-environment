@@ -96,7 +96,7 @@ The pinned Codex CLI is a new container dependency and requires owner approval b
 ### Phase 1: Codex Home and Personal-Skills Resolution
 
 Purpose: Resolve and validate the two host user-state sources as pure launcher logic.
-Status: to be done
+Status: done
 Done when: the launcher resolves and rejects Codex-home and personal-skills sources correctly, including a
 writable-alias overlap, without starting Docker.
 

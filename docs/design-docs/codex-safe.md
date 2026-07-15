@@ -228,6 +228,12 @@ launcher canonicalizes it and mounts it read-only at the equivalent container pa
 The launcher does not mount the broader `$HOME/.agents` directory or follow skill symlinks by adding their external
 targets to the mount plan.
 
+To keep the read-only guarantee meaningful, the launcher rejects a canonical personal-skills source that overlaps any
+writable mount source: the active worktree root, a linked worktree's common Git directory, or the resolved Codex home.
+Overlap means the skills source equals, contains, or is contained by a writable source. A skills directory reachable
+through a writable alias, including through a symlink whose target resolves inside a writable mount, fails preflight
+rather than being mounted read-only while remaining writable through the other path.
+
 #### Codex executable and process
 
 The outer image contains a pinned Linux Codex CLI and its runtime dependencies. The build records the version and
