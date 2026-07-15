@@ -40,6 +40,7 @@ func TestRunDefaultsToInteractiveCodex(t *testing.T) {
 		Mounts:      []launcher.Mount{{Source: "/project", Target: "/project"}},
 	}
 	fakeDocker := &recordingDocker{}
+	var builtFor gitproject.Project
 	app := application{
 		discover: func(_ context.Context, path string) (gitproject.Project, error) {
 			if path != "." {
@@ -47,8 +48,11 @@ func TestRunDefaultsToInteractiveCodex(t *testing.T) {
 			}
 			return wantProject, nil
 		},
-		buildPlan: func(gitproject.Project) (launcher.Plan, error) { return wantPlan, nil },
-		docker:    fakeDocker,
+		buildPlan: func(project gitproject.Project) (launcher.Plan, error) {
+			builtFor = project
+			return wantPlan, nil
+		},
+		docker: fakeDocker,
 	}
 
 	exitCode := run(context.Background(), nil, new(bytes.Buffer), new(bytes.Buffer), app)
@@ -62,6 +66,14 @@ func TestRunDefaultsToInteractiveCodex(t *testing.T) {
 	}
 	if fakeDocker.image != defaultImage {
 		t.Errorf("image = %q, want %q", fakeDocker.image, defaultImage)
+	}
+	// The discovered project must reach buildPlan, and the plan it builds must be the plan handed
+	// to docker.Launch: otherwise the outer container launches with no mounts and a wrong workdir.
+	if !reflect.DeepEqual(builtFor, wantProject) {
+		t.Errorf("buildPlan project = %#v, want discovered %#v", builtFor, wantProject)
+	}
+	if !reflect.DeepEqual(fakeDocker.plan, wantPlan) {
+		t.Errorf("plan forwarded to Launch = %#v, want %#v", fakeDocker.plan, wantPlan)
 	}
 }
 
