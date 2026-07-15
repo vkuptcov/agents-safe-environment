@@ -222,10 +222,13 @@ func (docker *Docker) acquireProjectContainer(
 		return "", err
 	}
 	if found {
-		if err := docker.validateProjectContainer(inspection, plan.ProjectRoot, userState); err != nil {
+		if err := docker.validateProjectContainer(inspection, plan.ProjectRoot); err != nil {
 			return "", err
 		}
 		if inspection.State.Running {
+			if err := docker.validateRunningUserState(inspection, plan.ProjectRoot, userState); err != nil {
+				return "", err
+			}
 			return inspection.ID, nil
 		}
 		containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName, userState)
@@ -383,14 +386,10 @@ func (docker *Docker) inspectProjectContainer(
 	return inspections[0], true, nil
 }
 
-func (docker *Docker) validateProjectContainer(
-	inspection containerInspection,
-	projectRoot string,
-	userState UserState,
-) error {
-	// Ownership and protocol mismatches remain name conflicts: a different owner, project, or wire
-	// protocol occupies the deterministic name and the launcher refuses to reuse it. Order matters,
-	// so these are checked before the user-state labels.
+// validateProjectContainer checks the ownership and protocol labels that identify the deterministic
+// name's owner. A mismatch is a name conflict regardless of container state: a different owner,
+// project, or wire protocol occupies the name and the launcher refuses to reuse it.
+func (docker *Docker) validateProjectContainer(inspection containerInspection, projectRoot string) error {
 	ownership := []struct{ name, want string }{
 		{managedLabel, managedLabelValue},
 		{projectPathLabel, projectRoot},
@@ -408,10 +407,19 @@ func (docker *Docker) validateProjectContainer(
 			)
 		}
 	}
+	return nil
+}
 
-	// User-state mismatches are different: the same owner and project are running, but with a Codex
-	// home or personal-skills source fixed at creation that this launch cannot change through exec.
-	// The launcher neither reuses stale user state nor terminates the live session.
+// validateRunningUserState checks the creation-time user-state labels of a running container. The
+// Codex-home and personal-skills mounts are fixed at creation and a docker exec cannot change them,
+// so a running session with a different source is not reused and the caller must finish it first. A
+// stopped container is never eligible for reuse, so this check is scoped to running containers: a
+// stopped user-state mismatch is waited out and replaced, not reported as an active session.
+func (docker *Docker) validateRunningUserState(
+	inspection containerInspection,
+	projectRoot string,
+	userState UserState,
+) error {
 	userStateLabels := []struct{ name, want string }{
 		{codexHomeLabel, userState.CodexHome},
 		{personalSkillsLabel, userState.personalSkillsLabel()},
@@ -468,10 +476,13 @@ func (docker *Docker) waitForReusableOrReleased(
 		if !found {
 			return "", nil
 		}
-		if err := docker.validateProjectContainer(inspection, projectRoot, userState); err != nil {
+		if err := docker.validateProjectContainer(inspection, projectRoot); err != nil {
 			return "", err
 		}
 		if inspection.State.Running {
+			if err := docker.validateRunningUserState(inspection, projectRoot, userState); err != nil {
+				return "", err
+			}
 			return inspection.ID, nil
 		}
 		select {
@@ -500,10 +511,13 @@ func (docker *Docker) containerStoppedAfterExec(
 	if !found {
 		return true, nil
 	}
-	if err := docker.validateProjectContainer(inspection, plan.ProjectRoot, userState); err != nil {
+	if err := docker.validateProjectContainer(inspection, plan.ProjectRoot); err != nil {
 		return false, err
 	}
 	if inspection.State.Running {
+		if err := docker.validateRunningUserState(inspection, plan.ProjectRoot, userState); err != nil {
+			return false, err
+		}
 		return false, nil
 	}
 	containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName, userState)

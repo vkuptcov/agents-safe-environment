@@ -24,7 +24,7 @@ The target:
 1. builds `bin/codex-safe`, `bin/codex-safe-session`, and the smoke-tagged `bin/codex-safe-probe`;
 2. builds the `codex-safe-mvp:local` image;
 3. enables the opt-in smoke test with `CODEX_SAFE_RUN_SYSBOX_SMOKE=1`;
-4. runs `TestSysboxLinkedWorktreeGo` without the Go test cache.
+4. runs every `TestSysbox` scenario (linked worktree and Codex product launch) without the Go test cache.
 
 The test requires:
 

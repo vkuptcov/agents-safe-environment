@@ -324,6 +324,43 @@ func TestDockerLaunchRejectsUserStateMismatchWithActiveSessionDiagnostic(t *test
 	}
 }
 
+func TestDockerLaunchWaitsOutStoppedUserStateMismatch(t *testing.T) {
+	t.Parallel()
+	// A stopped container with matching ownership but a different Codex home is not an active
+	// session: the launcher must wait for the deterministic name to release and create a fresh
+	// container with the new user state, never report the finish-active-session diagnostic.
+	oldID := strings.Repeat("8", 64)
+	newID := strings.Repeat("9", 64)
+	stopped := matchingLabels("/project", 1000)
+	stopped[codexHomeLabel] = "/home/developer/other-codex"
+	runner := &fakeCommandRunner{
+		outputs: []commandResult{
+			{output: inspectionJSON(t, oldID, false, "exited", stopped)},
+			containerNotFound(),
+			{output: []byte(`{"sysbox-runc":{}}`)},
+			{output: []byte(`[]`)},
+			{output: []byte(newID)},
+		},
+	}
+	if err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}); err != nil {
+		t.Fatalf("Launch() error = %v, want a fresh container for the stopped mismatch", err)
+	}
+	assertWrappedRun(t, runner.runCalls, newID, []string{"true"})
+}
+
+func TestWritableMountSourcesExcludesReadOnly(t *testing.T) {
+	t.Parallel()
+	got := writableMountSources([]Mount{
+		{Source: "/sources/primary", Target: "/sources/primary", ReadOnly: true},
+		{Source: "/sources/primary/.git", Target: "/sources/primary/.git"},
+		{Source: "/sources/feature worktree", Target: "/sources/feature worktree"},
+	})
+	want := []string{"/sources/primary/.git", "/sources/feature worktree"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("writableMountSources() = %#v, want the read-write sources only %#v", got, want)
+	}
+}
+
 func TestBuildDockerRunArgsRecordsUserStateLabels(t *testing.T) {
 	t.Parallel()
 	userState := UserState{CodexHome: "/host/custom codex", PersonalSkills: "/host/skills"}

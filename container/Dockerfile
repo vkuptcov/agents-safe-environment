@@ -99,7 +99,7 @@ RUN /usr/local/bin/crun --version \
     && /usr/local/bin/codex-safe-session --help \
     && /usr/local/bin/codex --version | grep -q 'codex-cli 0.144.4'
 
-# Both the probe and nested containers use only the daemon socket created inside the outer
+# Both Codex and nested containers use only the daemon socket created inside the outer
 # container. This path is not a bind mount of /var/run/docker.sock from the host.
 ENV DOCKER_HOST=unix:///var/run/docker.sock
 

@@ -233,6 +233,25 @@ func TestResolveUserStateRejectsSkillsOverlappingViaSymlink(t *testing.T) {
 	}
 }
 
+func TestResolveUserStateRejectsWritableSourceNestedUnderSkills(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mkdir(t, filepath.Join(home, ".codex"))
+	skills := mkdir(t, filepath.Join(home, ".agents", "skills"))
+	// A writable mount source nested under the skills directory: overlap must be caught in the
+	// reverse containment direction (the read-only skills source contains a writable source).
+	nestedWritable := evalPath(t, mkdir(t, filepath.Join(skills, "nested-writable")))
+
+	_, err := ResolveUserState(UserStateInputs{
+		LookupEnv:       envLookup(nil),
+		HomeDir:         evalPath(t, home),
+		WritableSources: []string{nestedWritable},
+	})
+	if err == nil || !strings.Contains(err.Error(), "overlaps writable mount") {
+		t.Fatalf("ResolveUserState() error = %v, want reverse-containment overlap rejection", err)
+	}
+}
+
 func TestResolveUserStateRejectsSkillsOverlappingCodexHome(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()

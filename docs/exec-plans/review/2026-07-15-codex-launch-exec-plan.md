@@ -301,3 +301,10 @@ Commit: `docs: document codex product launcher`
     that owns the lifecycle contract. Tracked in `docs/reviews/tech-debt-tracker.md`.
   - The opt-in credentialed acceptance test (`TestSysboxCodexCredentialedAcceptance`) is intentionally deferred to a
     run with a dedicated test account; no real credentials are committed.
+- 2026-07-15: Adversarial multi-lens review of the implementation (report in
+  `docs/reviews/feature-review/2026-07-15-codex-launch-implementation-review.md`) found and fixed a contract bug:
+  the user-state mismatch diagnostic was applied to stopped containers, whereas `go-session-manager.md` §1 scopes it
+  to running sessions. `validateProjectContainer` now checks ownership only; a new `validateRunningUserState` gates
+  the user-state labels on `State.Running`, so a stopped mismatch is waited out and replaced rather than reported as
+  active. Also closed two coverage gaps (writable-source glue, reverse-containment overlap) and two stale doc
+  comments. All gates re-run green including `make test-smoke-go`.
