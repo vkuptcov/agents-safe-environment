@@ -139,7 +139,7 @@ Commit: `feat: install pinned codex cli in image`
 ### Phase 3: Test-Only Smoke Transport
 
 Purpose: Preserve real-host lifecycle coverage before the product CLI stops accepting arbitrary commands.
-Status: to be done
+Status: done
 Done when: every current smoke probe reaches the command-agnostic session wrapper through a test-only transport that
 is absent from the product binary.
 

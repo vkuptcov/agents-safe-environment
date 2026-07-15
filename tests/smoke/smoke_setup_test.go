@@ -114,9 +114,9 @@ func newLauncherHarness(t *testing.T, hostHome string) *launcherHarness {
 	t.Helper()
 	workingDirectory, err := os.Getwd()
 	require.NoError(t, err, "smoke working directory must be available")
-	binary := filepath.Join(workingDirectory, "..", "..", "bin", "codex-safe")
+	binary := filepath.Join(workingDirectory, "..", "..", "bin", "codex-safe-probe")
 	if _, err := os.Stat(binary); err != nil {
-		t.Skip("bin/codex-safe is missing; run make build first")
+		t.Skip("bin/codex-safe-probe is missing; run make build-smoke-probe first")
 	}
 	return &launcherHarness{t: t, binary: binary, hostHome: hostHome}
 }
