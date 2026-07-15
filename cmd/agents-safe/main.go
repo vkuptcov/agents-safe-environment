@@ -26,7 +26,7 @@ type application struct {
 }
 
 func main() {
-	docker, err := launcher.NewDocker()
+	docker, err := launcher.NewDocker(launcher.CodexHomeOptional)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agents-safe: initialize Docker launcher: %v\n", err)
 		os.Exit(1)

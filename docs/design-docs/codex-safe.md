@@ -205,7 +205,8 @@ silently broadens read-write access.
 
 Every regular-checkout and linked-worktree launch receives the same user-state mounts:
 
-- The resolved host Codex home is mounted read-write as the container's Codex home.
+- The resolved host Codex home, when present, is mounted read-write as the container's Codex home. An `agents-safe`
+  launch that resolves no host Codex home receives no Codex mount (see [Codex home resolution](#codex-home-resolution)).
 - When host `$HOME/.agents/skills` exists, that exact directory is mounted read-only at the equivalent path for the
   container user.
 
@@ -229,16 +230,23 @@ Every regular-checkout and linked-worktree launch receives the same user-state m
 
 The launcher resolves exactly one host Codex-home source before it creates or reuses a container:
 
-1. When host `CODEX_HOME` is set and non-empty, its value is the requested source.
+1. When host `CODEX_HOME` is set and non-empty, its trimmed value is the requested source.
 2. Otherwise, the source is `.codex` below the operating-system-resolved host home.
-3. The source must be an existing, accessible directory. A missing path, relative `CODEX_HOME`, filesystem root,
-   unsupported path, or non-directory fails preflight without creating it or falling back to another location.
-4. The source is canonicalized before the mount plan is built. A symlink used as the source may resolve to another
-   directory, but symlinks inside it do not authorize additional host mounts.
+3. A relative `CODEX_HOME`, the filesystem root, an unsupported path, or a non-directory always fails preflight
+   without creating it or falling back to another location. How a source that does not yet exist is handled depends
+   on the command's Codex-home policy:
+   - `codex-safe` requires a Codex home. When `CODEX_HOME` is unset and the default `.codex` home is missing, the
+     launcher offers to create the default home and creates it only after the user agrees on an interactive terminal.
+     A non-interactive session, a declined prompt, or a missing explicitly requested `CODEX_HOME` fails preflight.
+   - `agents-safe` treats Codex state as optional. A missing source is recorded as absent: the launch mounts no Codex
+     home and sets no `CODEX_HOME` for the command, because an arbitrary command needs no Codex state.
+4. An existing source is canonicalized before the mount plan is built. A symlink used as the source may resolve to
+   another directory, but symlinks inside it do not authorize additional host mounts.
 
-The canonical host source is bind-mounted read-write at `$HOME/.codex` inside the outer container. The managed command
-always receives `CODEX_HOME=<container-home>/.codex`, even when the host selected a custom source. This separates
-host-native path syntax from the Linux container path and gives Codex one stable container-local location.
+When a Codex home is resolved, the canonical host source is bind-mounted read-write at `$HOME/.codex` inside the outer
+container and the managed command receives `CODEX_HOME=<container-home>/.codex`, even when the host selected a custom
+source. This separates host-native path syntax from the Linux container path and gives Codex one stable container-local
+location. A launch with no Codex home sets no `CODEX_HOME` and mounts nothing at `$HOME/.codex`.
 
 For example, the default source may be `/home/alex/.codex` on Linux, `/Users/alex/.codex` on macOS, or
 `C:\Users\alex\.codex` on Windows. The first release still launches only on Linux because the Sysbox runtime and
@@ -276,8 +284,9 @@ The process uses the invoking host UID and GID, the selected project directory a
 container-local `HOME` and `CODEX_HOME`, and the launcher's terminal streams. Arguments stay separate argv elements;
 the launcher does not invoke a shell. Start failures and Codex exit status propagate through the wrapper and launcher.
 
-`agents-safe` uses the same identity, working directory, user-state mounts, terminal streams, and wrapper, but replaces
-the Codex argv with the required command argv. Its command exit status propagates through `agents-safe`.
+`agents-safe` uses the same identity, working directory, terminal streams, and wrapper, but replaces the Codex argv
+with the required command argv and treats the Codex home as optional: it mounts one and sets `CODEX_HOME` only when a
+host Codex home already exists. Its command exit status propagates through `agents-safe`.
 
 #### Persistent state, configuration, and skills
 
@@ -422,7 +431,8 @@ Codex-home content. Domain allowlists, enforced proxies, and fully offline opera
 A new outer container has a deterministic name derived from the canonical worktree root and invoking host UID. The
 launcher inspects that exact name, then validates `codex-safe.managed`, `codex-safe.project-path`,
 `codex-safe.host-uid`, `codex-safe.manager-protocol`, `codex-safe.codex-home`, and
-`codex-safe.personal-skills`. The last label contains the canonical personal-skills source or the literal `absent`.
+`codex-safe.personal-skills`. The `codex-safe.codex-home` and `codex-safe.personal-skills` labels each contain the
+canonical resolved source or the literal `absent`, so reuse validation matches an absent Codex home or absent skills.
 A compatible running container receives the new command through `docker exec`; an absent name is created with detached
 `docker run --rm`. Different worktrees continue to use distinct Docker daemons and writable layers.
 
@@ -502,8 +512,9 @@ Before creating a container, the launcher verifies:
 2. The `docker` command exists and a local Docker daemon responds.
 3. The Docker Engine has `sysbox-runc` registered.
 4. The project is a Git working tree and all computed mount sources exist.
-5. The resolved Codex home exists, is a directory, is accessible read-write, and can be represented safely as a bind
-   source.
+5. The resolved Codex home, when required (`codex-safe`) or already present (`agents-safe`), is a directory, is
+   accessible read-write, and can be represented safely as a bind source. An `agents-safe` launch with no host Codex
+   home skips this mount.
 6. The optional personal-skills source is absent or is an accessible directory representable as a read-only bind.
 7. The image resolves to the pinned digest or was explicitly supplied by the user and contains the expected Codex CLI.
 8. The mount plan contains no conflicts or paths outside the allowed set.

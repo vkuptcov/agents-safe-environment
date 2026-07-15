@@ -142,11 +142,47 @@ func TestBuildDockerRunArgsRejectsMissingCodexHome(t *testing.T) {
 	}
 }
 
+func TestBuildDockerRunArgsOmitsAbsentCodexHome(t *testing.T) {
+	t.Parallel()
+	// agents-safe with no host Codex home: the container is created with no Codex mount and the
+	// codex-home label records the absent marker so reuse still matches.
+	userState := UserState{CodexHome: CodexHomeAbsent, PersonalSkills: PersonalSkillsAbsent}
+	args, err := BuildDockerRunArgs(
+		testPlan(), "image", "codex-safe-test", 1000, 1000,
+		"developer", "developers", "/home/developer profile", "",
+		userState,
+	)
+	if err != nil {
+		t.Fatalf("BuildDockerRunArgs() error = %v", err)
+	}
+	assertLabel(t, args, codexHomeLabel, CodexHomeAbsent)
+	for index, argument := range args {
+		if argument == "--mount" && strings.Contains(args[index+1], "/.codex") {
+			t.Errorf("run args mount a Codex home when absent: %q", args[index+1])
+		}
+	}
+}
+
+func TestBuildDockerExecArgsOmitsCodexHomeWhenAbsent(t *testing.T) {
+	t.Parallel()
+	args, err := BuildDockerExecArgs(
+		testPlan(), []string{"bash"}, strings.Repeat("a", 64), 1000, 1001, "/home/developer profile", false, false,
+	)
+	if err != nil {
+		t.Fatalf("BuildDockerExecArgs() error = %v", err)
+	}
+	for _, argument := range args {
+		if strings.HasPrefix(argument, "CODEX_HOME=") {
+			t.Errorf("exec args set CODEX_HOME when no Codex home is mounted: %#v", args)
+		}
+	}
+}
+
 func TestBuildDockerExecArgsWrapsCommandAndPreservesTerminalContract(t *testing.T) {
 	t.Parallel()
 	containerID := strings.Repeat("a", 64)
 	command := []string{"printf", "%s\\n", "value with spaces; $(not-a-shell)", ""}
-	args, err := BuildDockerExecArgs(testPlan(), command, containerID, 1000, 1001, "/home/developer profile", true)
+	args, err := BuildDockerExecArgs(testPlan(), command, containerID, 1000, 1001, "/home/developer profile", true, true)
 	if err != nil {
 		t.Fatalf("BuildDockerExecArgs() error = %v", err)
 	}

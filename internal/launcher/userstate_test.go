@@ -110,6 +110,94 @@ func TestResolveUserStateTrimsCodexHomeWhitespace(t *testing.T) {
 	}
 }
 
+func TestResolveUserStateOptionalCodexHomeAbsent(t *testing.T) {
+	t.Parallel()
+	home := evalPath(t, t.TempDir()) // no .codex created
+
+	state, err := ResolveUserState(UserStateInputs{
+		LookupEnv:       envLookup(nil),
+		HomeDir:         home,
+		CodexHomePolicy: CodexHomeOptional,
+	})
+	if err != nil {
+		t.Fatalf("ResolveUserState() error = %v", err)
+	}
+	if state.CodexHome != CodexHomeAbsent {
+		t.Errorf("CodexHome = %q, want %q", state.CodexHome, CodexHomeAbsent)
+	}
+	if state.CodexHomePresent() {
+		t.Error("CodexHomePresent() = true, want false for an optional missing home")
+	}
+}
+
+func TestResolveUserStateRequiredCreatesDefaultOnConfirm(t *testing.T) {
+	t.Parallel()
+	home := evalPath(t, t.TempDir())
+	wantHome := filepath.Join(home, ".codex")
+	called := false
+
+	state, err := ResolveUserState(UserStateInputs{
+		LookupEnv:       envLookup(nil),
+		HomeDir:         home,
+		CodexHomePolicy: CodexHomeRequired,
+		ConfirmCreateCodexHome: func(path string) (bool, error) {
+			called = true
+			if path != wantHome {
+				t.Errorf("confirm path = %q, want default %q", path, wantHome)
+			}
+			return true, os.MkdirAll(path, 0o700)
+		},
+	})
+	if err != nil {
+		t.Fatalf("ResolveUserState() error = %v", err)
+	}
+	if !called {
+		t.Error("ConfirmCreateCodexHome was not called for a missing default home")
+	}
+	if state.CodexHome != evalPath(t, wantHome) {
+		t.Errorf("CodexHome = %q, want created %q", state.CodexHome, evalPath(t, wantHome))
+	}
+	if !state.CodexHomePresent() {
+		t.Error("CodexHomePresent() = false, want true after creation")
+	}
+}
+
+func TestResolveUserStateRequiredMissingDefaultDeclinedErrors(t *testing.T) {
+	t.Parallel()
+	home := evalPath(t, t.TempDir())
+
+	_, err := ResolveUserState(UserStateInputs{
+		LookupEnv:              envLookup(nil),
+		HomeDir:                home,
+		CodexHomePolicy:        CodexHomeRequired,
+		ConfirmCreateCodexHome: func(string) (bool, error) { return false, nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("ResolveUserState() error = %v, want declined-create rejection", err)
+	}
+}
+
+func TestResolveUserStateRequiredExplicitMissingIsNotOffered(t *testing.T) {
+	t.Parallel()
+	home := evalPath(t, t.TempDir())
+	mkdir(t, filepath.Join(home, ".codex")) // default exists; the explicit source does not
+	missing := filepath.Join(t.TempDir(), "missing codex")
+	confirmCalled := false
+
+	_, err := ResolveUserState(UserStateInputs{
+		LookupEnv:              envLookup(map[string]string{codexHomeEnv: missing}),
+		HomeDir:                home,
+		CodexHomePolicy:        CodexHomeRequired,
+		ConfirmCreateCodexHome: func(string) (bool, error) { confirmCalled = true; return true, nil },
+	})
+	if err == nil {
+		t.Fatal("ResolveUserState() error = nil, want rejection of a missing explicit CODEX_HOME")
+	}
+	if confirmCalled {
+		t.Error("ConfirmCreateCodexHome must not be offered for an explicit CODEX_HOME")
+	}
+}
+
 func TestResolveUserStateCanonicalizesSymlinkedCodexHome(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()

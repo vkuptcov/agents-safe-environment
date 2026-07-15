@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"bufio"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -74,13 +75,18 @@ type Docker struct {
 	// LookupEnv reads host environment variables during user-state resolution. It is os.LookupEnv
 	// in production and a stub in focused tests.
 	LookupEnv func(string) (string, bool)
+	// CodexHomePolicy controls how a missing Codex home is handled. codex-safe requires one (and
+	// offers to create the default); agents-safe mounts it only when it already exists.
+	CodexHomePolicy CodexHomePolicy
 	// resolveUserState resolves one launch's Codex home and personal skills from the plan. It is the
 	// filesystem-backed resolver in production and is overridden in focused tests that use fake paths.
 	resolveUserState func(Plan) (UserState, error)
 }
 
-// NewDocker creates a launcher backed by os/exec and the current process streams.
-func NewDocker() (*Docker, error) {
+// NewDocker creates a launcher backed by os/exec and the current process streams. codexHomePolicy
+// selects whether a missing Codex home fails closed with an offer to create it (codex-safe) or is
+// treated as absent (agents-safe).
+func NewDocker(codexHomePolicy CodexHomePolicy) (*Docker, error) {
 	hostUID := os.Getuid()
 	hostGID := os.Getgid()
 	hostUser, err := user.LookupId(strconv.Itoa(hostUID))
@@ -108,20 +114,21 @@ func NewDocker() (*Docker, error) {
 	}
 
 	docker := &Docker{
-		Binary:        "docker",
-		GOOS:          runtime.GOOS,
-		Runner:        execCommandRunner{},
-		Stdin:         os.Stdin,
-		Stdout:        os.Stdout,
-		Stderr:        os.Stderr,
-		HostUID:       hostUID,
-		HostGID:       hostGID,
-		HostUser:      hostUser.Username,
-		HostGroup:     hostGroup.Name,
-		HostHome:      hostHome,
-		HostGitConfig: hostGitConfig,
-		TTY:           terminal.IsReader(os.Stdin) && terminal.IsReader(os.Stdout),
-		LookupEnv:     os.LookupEnv,
+		Binary:          "docker",
+		GOOS:            runtime.GOOS,
+		Runner:          execCommandRunner{},
+		Stdin:           os.Stdin,
+		Stdout:          os.Stdout,
+		Stderr:          os.Stderr,
+		HostUID:         hostUID,
+		HostGID:         hostGID,
+		HostUser:        hostUser.Username,
+		HostGroup:       hostGroup.Name,
+		HostHome:        hostHome,
+		HostGitConfig:   hostGitConfig,
+		TTY:             terminal.IsReader(os.Stdin) && terminal.IsReader(os.Stdout),
+		LookupEnv:       os.LookupEnv,
+		CodexHomePolicy: codexHomePolicy,
 	}
 	docker.resolveUserState = docker.defaultResolveUserState
 	return docker, nil
@@ -134,10 +141,37 @@ func (docker *Docker) defaultResolveUserState(plan Plan) (UserState, error) {
 		lookup = os.LookupEnv
 	}
 	return ResolveUserState(UserStateInputs{
-		LookupEnv:       lookup,
-		HomeDir:         docker.HostHome,
-		WritableSources: writableMountSources(plan.Mounts),
+		LookupEnv:              lookup,
+		HomeDir:                docker.HostHome,
+		WritableSources:        writableMountSources(plan.Mounts),
+		CodexHomePolicy:        docker.CodexHomePolicy,
+		ConfirmCreateCodexHome: docker.confirmCreateCodexHome,
 	})
+}
+
+// confirmCreateCodexHome offers to create a missing default Codex home for a CodexHomeRequired
+// launch. It creates the directory and returns true only after the user agrees on an interactive
+// terminal; a non-interactive session declines so preflight fails with the standard missing-home
+// diagnostic instead of silently materializing state.
+func (docker *Docker) confirmCreateCodexHome(path string) (bool, error) {
+	if !docker.TTY {
+		return false, nil
+	}
+	fmt.Fprintf(docker.Stderr, "Codex home %q does not exist. Create it now? [Y/n] ", path)
+	line, err := bufio.NewReader(docker.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read Codex-home confirmation: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "", "y", "yes":
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return false, fmt.Errorf("create Codex home %q: %w", path, err)
+		}
+		fmt.Fprintf(docker.Stderr, "Created Codex home %q\n", path)
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 // writableMountSources returns the canonical read-write bind sources in the plan. They are the
@@ -185,7 +219,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, comma
 		return err
 	}
 
-	execErr := docker.execProjectCommand(ctx, plan, command, containerID)
+	execErr := docker.execProjectCommand(ctx, plan, command, containerID, userState.CodexHomePresent())
 	if execErr == nil {
 		return nil
 	}
@@ -204,7 +238,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, comma
 	if err != nil {
 		return errors.Join(execErr, err)
 	}
-	if err := docker.execProjectCommand(ctx, plan, command, containerID); err != nil {
+	if err := docker.execProjectCommand(ctx, plan, command, containerID, userState.CodexHomePresent()); err != nil {
 		return fmt.Errorf("exec in replacement Sysbox container: %w", err)
 	}
 	return nil
@@ -317,6 +351,7 @@ func (docker *Docker) execProjectCommand(
 	plan Plan,
 	command []string,
 	containerID string,
+	codexHomePresent bool,
 ) error {
 	arguments, err := BuildDockerExecArgs(
 		plan,
@@ -326,6 +361,7 @@ func (docker *Docker) execProjectCommand(
 		docker.HostGID,
 		docker.HostHome,
 		docker.TTY,
+		codexHomePresent,
 	)
 	if err != nil {
 		return err
@@ -421,7 +457,7 @@ func (docker *Docker) validateRunningUserState(
 	userState UserState,
 ) error {
 	userStateLabels := []struct{ name, want string }{
-		{codexHomeLabel, userState.CodexHome},
+		{codexHomeLabel, userState.codexHomeLabel()},
 		{personalSkillsLabel, userState.personalSkillsLabel()},
 	}
 	for _, label := range userStateLabels {
@@ -661,7 +697,7 @@ func BuildDockerRunArgs(
 		"--label",
 		managerProtocolLabel+"="+session.ProtocolVersion,
 		"--label",
-		codexHomeLabel+"="+userState.CodexHome,
+		codexHomeLabel+"="+userState.codexHomeLabel(),
 		"--label",
 		personalSkillsLabel+"="+userState.personalSkillsLabel(),
 		"--env",
@@ -696,14 +732,15 @@ func BuildDockerRunArgs(
 	return args, nil
 }
 
-// userStateMounts returns the shared user-state mounts every launch receives. The container-local
-// home shares the host home's absolute path, so the Codex home is mounted read-write at
+// userStateMounts returns the shared user-state mounts for a launch. The container-local home
+// shares the host home's absolute path, so the Codex home, when present, is mounted read-write at
 // <home>/.codex and personal skills, when present, read-only at <home>/.agents/skills. The mount
 // sources are the canonical host paths, which may differ from the targets when CODEX_HOME points
-// at a custom location.
+// at a custom location. A launch that resolved no Codex home receives neither mount.
 func userStateMounts(hostHome string, userState UserState) []Mount {
-	mounts := []Mount{
-		{Source: userState.CodexHome, Target: filepath.Join(hostHome, ".codex")},
+	mounts := make([]Mount, 0, 2)
+	if userState.CodexHomePresent() {
+		mounts = append(mounts, Mount{Source: userState.CodexHome, Target: filepath.Join(hostHome, ".codex")})
 	}
 	if userState.SkillsPresent() {
 		mounts = append(mounts, Mount{
@@ -724,6 +761,7 @@ func BuildDockerExecArgs(
 	hostGID int,
 	hostHome string,
 	tty bool,
+	codexHomePresent bool,
 ) ([]string, error) {
 	if len(command) == 0 {
 		return nil, errors.New("command is required")
@@ -756,8 +794,13 @@ func BuildDockerExecArgs(
 		strconv.Itoa(hostUID)+":"+strconv.Itoa(hostGID),
 		"--env",
 		"HOME="+hostHome,
-		"--env",
-		"CODEX_HOME="+filepath.Join(hostHome, ".codex"),
+	)
+	// CODEX_HOME points at the mounted Codex home. A launch that mounted none (agents-safe without a
+	// host Codex home) must not set it to a path that does not exist in the container.
+	if codexHomePresent {
+		args = append(args, "--env", "CODEX_HOME="+filepath.Join(hostHome, ".codex"))
+	}
+	args = append(args,
 		"--workdir",
 		plan.WorkingDir,
 		containerID,
