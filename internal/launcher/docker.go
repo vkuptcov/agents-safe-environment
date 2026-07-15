@@ -449,7 +449,7 @@ type userStateMismatchError struct {
 
 func (err *userStateMismatchError) Error() string {
 	return fmt.Sprintf(
-		"a codex-safe session for worktree %q is already running with %s=%q, but this launch resolved "+
+		"a managed session for worktree %q is already running with %s=%q, but this launch resolved "+
 			"%q; finish the active session before retrying, then relaunch",
 		err.projectRoot,
 		err.label,
