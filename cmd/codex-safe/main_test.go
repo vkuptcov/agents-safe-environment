@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/cli"
+	"github.com/vkuptcov/agents-safe-environment/internal/cli/clitest"
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
 )
@@ -16,7 +17,7 @@ func TestConfigHelp(t *testing.T) {
 	t.Parallel()
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	exitCode := cli.Run(context.Background(), config(), []string{"--help"}, stdout, stderr, panicApp())
+	exitCode := cli.Run(context.Background(), config(), []string{"--help"}, stdout, stderr, clitest.PanicApp())
 	if exitCode != 0 {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
@@ -36,7 +37,7 @@ func TestConfigDefaultsToInteractiveCodex(t *testing.T) {
 		WorkingDir:  "/project",
 		Mounts:      []launcher.Mount{{Source: "/project", Target: "/project"}},
 	}
-	fakeDocker := &recordingDocker{}
+	fakeDocker := &clitest.RecordingDocker{}
 	var builtFor gitproject.Project
 	app := cli.App{
 		Discover: func(_ context.Context, path string) (gitproject.Project, error) {
@@ -58,23 +59,23 @@ func TestConfigDefaultsToInteractiveCodex(t *testing.T) {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
 	wantCommand := []string{launcher.CodexBinaryPath}
-	if !reflect.DeepEqual(fakeDocker.command, wantCommand) {
-		t.Errorf("command = %#v, want interactive Codex %#v", fakeDocker.command, wantCommand)
+	if !reflect.DeepEqual(fakeDocker.Command, wantCommand) {
+		t.Errorf("command = %#v, want interactive Codex %#v", fakeDocker.Command, wantCommand)
 	}
-	if fakeDocker.image != defaultImage {
-		t.Errorf("image = %q, want %q", fakeDocker.image, defaultImage)
+	if fakeDocker.Image != defaultImage {
+		t.Errorf("image = %q, want %q", fakeDocker.Image, defaultImage)
 	}
 	if !reflect.DeepEqual(builtFor, wantProject) {
 		t.Errorf("buildPlan project = %#v, want discovered %#v", builtFor, wantProject)
 	}
-	if !reflect.DeepEqual(fakeDocker.plan, wantPlan) {
-		t.Errorf("plan forwarded to Launch = %#v, want %#v", fakeDocker.plan, wantPlan)
+	if !reflect.DeepEqual(fakeDocker.Plan, wantPlan) {
+		t.Errorf("plan forwarded to Launch = %#v, want %#v", fakeDocker.Plan, wantPlan)
 	}
 }
 
 func TestConfigForwardsCodexArguments(t *testing.T) {
 	t.Parallel()
-	fakeDocker := &recordingDocker{}
+	fakeDocker := &clitest.RecordingDocker{}
 	app := cli.App{
 		Discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
 		BuildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
@@ -89,12 +90,12 @@ func TestConfigForwardsCodexArguments(t *testing.T) {
 	if exitCode != 0 {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
-	if fakeDocker.image != "test:image" {
-		t.Errorf("image = %q, want test:image", fakeDocker.image)
+	if fakeDocker.Image != "test:image" {
+		t.Errorf("image = %q, want test:image", fakeDocker.Image)
 	}
 	wantCommand := []string{launcher.CodexBinaryPath, "exec", "--model", "gpt-5"}
-	if !reflect.DeepEqual(fakeDocker.command, wantCommand) {
-		t.Errorf("command = %#v, want %#v", fakeDocker.command, wantCommand)
+	if !reflect.DeepEqual(fakeDocker.Command, wantCommand) {
+		t.Errorf("command = %#v, want %#v", fakeDocker.Command, wantCommand)
 	}
 }
 
@@ -102,7 +103,7 @@ func TestConfigForwardsCodexArguments(t *testing.T) {
 // argument. The image-owned Codex path is always command[0]; the launcher never runs another program.
 func TestConfigNeverRunsArbitraryExecutable(t *testing.T) {
 	t.Parallel()
-	fakeDocker := &recordingDocker{}
+	fakeDocker := &clitest.RecordingDocker{}
 	app := cli.App{
 		Discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
 		BuildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
@@ -118,33 +119,7 @@ func TestConfigNeverRunsArbitraryExecutable(t *testing.T) {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
 	wantCommand := []string{launcher.CodexBinaryPath, "/bin/sh", "-c", "rm -rf /; $(malicious)"}
-	if !reflect.DeepEqual(fakeDocker.command, wantCommand) {
-		t.Errorf("command = %#v, want the executable forwarded as a Codex argument %#v", fakeDocker.command, wantCommand)
+	if !reflect.DeepEqual(fakeDocker.Command, wantCommand) {
+		t.Errorf("command = %#v, want the executable forwarded as a Codex argument %#v", fakeDocker.Command, wantCommand)
 	}
-}
-
-func panicApp() cli.App {
-	return cli.App{
-		Discover:  func(context.Context, string) (gitproject.Project, error) { panic("discover should not be called") },
-		BuildPlan: func(gitproject.Project) (launcher.Plan, error) { panic("buildPlan should not be called") },
-		Docker:    &recordingDocker{panicOnLaunch: true},
-	}
-}
-
-type recordingDocker struct {
-	plan          launcher.Plan
-	image         string
-	command       []string
-	err           error
-	panicOnLaunch bool
-}
-
-func (docker *recordingDocker) Launch(_ context.Context, plan launcher.Plan, image string, command []string) error {
-	if docker.panicOnLaunch {
-		panic("Launch should not be called")
-	}
-	docker.plan = plan
-	docker.image = image
-	docker.command = append([]string(nil), command...)
-	return docker.err
 }
