@@ -40,57 +40,71 @@ func TestSysboxLinkedWorktreeGo(t *testing.T) {
 	fixture := newSmokeFixture(t)
 	fixture.startHostSentinel()
 
-	first := fixture.startProbe()
-	fixture.waitForFile(fixture.ready, first)
-	fixture.assertProbeResult()
+	environment := fixture.startEnvironmentProbe()
+	fixture.waitForFile(fixture.environmentReady, environment)
+	fixture.assertEnvironment()
+
+	worktree := fixture.startWorktreeProbe()
+	worktree.requireExit(t, "worktree probe")
+	fixture.assertWorktree()
+
+	nestedDocker := fixture.startNestedDockerProbe()
+	fixture.waitForFile(fixture.nestedReady, nestedDocker)
+	fixture.assertNestedDocker()
 	fixture.assertOuterContainer()
 
 	second := fixture.startReuseCommand()
 	fixture.waitForFile(fixture.reuseReport, second)
 	fixture.assertReuse()
 
-	fixture.release(fixture.releaseFirst, first, "first command")
+	fixture.release(fixture.environmentRelease, environment, "environment command")
 	require.True(t, second.running(), "second wrapped command must survive first command exit")
+	require.True(t, nestedDocker.running(), "nested Docker command must survive environment command exit")
 	require.True(t, fixture.inspectOuter().State.Running, "outer session must remain running after first command exit")
 
+	fixture.release(fixture.nestedRelease, nestedDocker, "nested Docker command")
+	require.True(t, second.running(), "reused command must survive nested Docker command exit")
 	fixture.release(fixture.releaseSecond, second, "second command")
 	require.True(t, fixture.inspectOuter().State.Running, "idle grace period must retain the outer session")
 	fixture.waitForOuterRemoval()
-	fixture.assertAfterProbeCleanup()
+	fixture.assertAfterNestedDockerCleanup()
 
 	fixture.assertConcurrentCreation()
 }
 
 type smokeFixture struct {
-	t             *testing.T
-	ctx           context.Context
-	cancel        context.CancelFunc
-	docker        *client.Client
-	binary        string
-	root          string
-	primary       string
-	project       string
-	nested        string
-	hostHome      string
-	hostGit       string
-	hostUser      string
-	hostGroup     string
-	hostDaemonID  string
-	container     string
-	sentinel      string
-	nestedName    string
-	composeName   string
-	composeFile   string
-	composeProj   string
-	gitMarker     string
-	report        string
-	ready         string
-	releaseFirst  string
-	reuseReport   string
-	releaseSecond string
-	nestedMarker  string
-	staged        string
-	cyrillic      string
+	t                  *testing.T
+	ctx                context.Context
+	cancel             context.CancelFunc
+	docker             *client.Client
+	binary             string
+	root               string
+	primary            string
+	project            string
+	nested             string
+	hostHome           string
+	hostGit            string
+	hostUser           string
+	hostGroup          string
+	hostDaemonID       string
+	container          string
+	sentinel           string
+	nestedName         string
+	composeName        string
+	composeFile        string
+	composeProj        string
+	gitMarker          string
+	environmentReport  string
+	environmentReady   string
+	environmentRelease string
+	nestedReport       string
+	nestedReady        string
+	nestedRelease      string
+	reuseReport        string
+	releaseSecond      string
+	nestedMarker       string
+	staged             string
+	cyrillic           string
 }
 
 func newSmokeFixture(t *testing.T) *smokeFixture {
@@ -130,35 +144,38 @@ func newSmokeFixture(t *testing.T) *smokeFixture {
 	require.NoError(t, err, "deterministic project container name must be derivable")
 
 	fixture := &smokeFixture{
-		t:             t,
-		ctx:           ctx,
-		cancel:        cancel,
-		docker:        dockerClient,
-		binary:        binary,
-		root:          root,
-		primary:       primary,
-		project:       project,
-		nested:        nested,
-		hostHome:      hostHome,
-		hostGit:       hostGit,
-		hostUser:      currentUser.Username,
-		hostGroup:     group.Name,
-		hostDaemonID:  info.ID,
-		container:     containerName,
-		sentinel:      "codex-safe-host-sentinel-" + filepath.Base(root),
-		nestedName:    "codex-safe-nested-" + filepath.Base(root),
-		composeName:   "codex-safe-compose-" + filepath.Base(root),
-		composeFile:   filepath.Join(project, ".codex-safe-compose.yaml"),
-		composeProj:   "codex-safe-" + filepath.Base(root),
-		gitMarker:     gitMarker,
-		report:        filepath.Join(project, "probe.report"),
-		ready:         filepath.Join(project, "probe.ready"),
-		releaseFirst:  filepath.Join(project, "probe.release"),
-		reuseReport:   filepath.Join(project, "reuse.report"),
-		releaseSecond: filepath.Join(project, "reuse.release"),
-		nestedMarker:  filepath.Join(project, "nested.marker"),
-		staged:        filepath.Join(project, "staged-by-probe.txt"),
-		cyrillic:      filepath.Join(project, "cyrillic.txt"),
+		t:                  t,
+		ctx:                ctx,
+		cancel:             cancel,
+		docker:             dockerClient,
+		binary:             binary,
+		root:               root,
+		primary:            primary,
+		project:            project,
+		nested:             nested,
+		hostHome:           hostHome,
+		hostGit:            hostGit,
+		hostUser:           currentUser.Username,
+		hostGroup:          group.Name,
+		hostDaemonID:       info.ID,
+		container:          containerName,
+		sentinel:           "codex-safe-host-sentinel-" + filepath.Base(root),
+		nestedName:         "codex-safe-nested-" + filepath.Base(root),
+		composeName:        "codex-safe-compose-" + filepath.Base(root),
+		composeFile:        filepath.Join(project, ".codex-safe-compose.yaml"),
+		composeProj:        "codex-safe-" + filepath.Base(root),
+		gitMarker:          gitMarker,
+		environmentReport:  filepath.Join(project, "environment.report"),
+		environmentReady:   filepath.Join(project, "environment.ready"),
+		environmentRelease: filepath.Join(project, "environment.release"),
+		nestedReport:       filepath.Join(project, "nested-docker.report"),
+		nestedReady:        filepath.Join(project, "nested-docker.ready"),
+		nestedRelease:      filepath.Join(project, "nested-docker.release"),
+		reuseReport:        filepath.Join(project, "reuse.report"),
+		releaseSecond:      filepath.Join(project, "reuse.release"),
+		nestedMarker:       filepath.Join(project, "nested.marker"),
+		staged:             filepath.Join(project, "staged-by-probe.txt"),
+		cyrillic:           filepath.Join(project, "cyrillic.txt"),
 	}
 	t.Cleanup(fixture.cleanup)
 	return fixture
@@ -185,13 +202,25 @@ func (fixture *smokeFixture) startHostSentinel() {
 	require.NoError(fixture.t, fixture.docker.ContainerStart(fixture.ctx, created.ID, container.StartOptions{}), "host sentinel container must start")
 }
 
-func (fixture *smokeFixture) startProbe() *launcherProcess {
+func (fixture *smokeFixture) startEnvironmentProbe() *launcherProcess {
 	fixture.t.Helper()
-	return fixture.start(fixture.nested, "bash", "-c", probeScript, "bash",
-		fixture.report, fixture.ready, fixture.releaseFirst, fixture.project, fixture.primary,
-		fixture.nestedMarker, fixture.hostUser, fixture.hostGroup, fixture.gitMarker, fixture.hostHome,
-		fixture.sentinel, fixture.nestedName, fixture.composeFile, fixture.composeProj, fixture.composeName,
-		fixture.staged, fixture.cyrillic, nestedImage)
+	return fixture.start(fixture.nested, "bash", "-c", environmentProbeScript, "bash",
+		fixture.environmentReport, fixture.environmentReady, fixture.environmentRelease,
+		fixture.hostUser, fixture.hostGroup, fixture.gitMarker, fixture.hostHome)
+}
+
+func (fixture *smokeFixture) startWorktreeProbe() *launcherProcess {
+	fixture.t.Helper()
+	return fixture.start(fixture.project, "bash", "-c", worktreeProbeScript, "bash",
+		fixture.project, fixture.primary, fixture.staged, fixture.cyrillic)
+}
+
+func (fixture *smokeFixture) startNestedDockerProbe() *launcherProcess {
+	fixture.t.Helper()
+	return fixture.start(fixture.project, "bash", "-c", nestedDockerProbeScript, "bash",
+		fixture.nestedReport, fixture.nestedReady, fixture.nestedRelease, fixture.project,
+		fixture.nestedMarker, fixture.sentinel, fixture.nestedName, fixture.composeFile,
+		fixture.composeProj, fixture.composeName, nestedImage)
 }
 
 func (fixture *smokeFixture) startReuseCommand() *launcherProcess {
@@ -241,9 +270,9 @@ func (fixture *smokeFixture) waitForFile(path string, process *launcherProcess) 
 	}
 }
 
-func (fixture *smokeFixture) assertProbeResult() {
+func (fixture *smokeFixture) assertEnvironment() {
 	fixture.t.Helper()
-	report := parseReport(fixture.t, fixture.report)
+	report := parseReport(fixture.t, fixture.environmentReport)
 	require.Equal(fixture.t, fixture.hostUser, report["user"], "container user name must match the host")
 	require.Equal(fixture.t, fixture.hostGroup, report["group"], "container primary group must match the host")
 	require.Equal(fixture.t, fixture.hostHome, report["home"], "container home must preserve the host path")
@@ -260,18 +289,26 @@ func (fixture *smokeFixture) assertProbeResult() {
 	require.Equal(fixture.t, "true", report["color_prompt"], "interactive Bash prompt must use colors")
 	require.Equal(fixture.t, "true", report["color_ls"], "interactive Bash must configure color-aware ls")
 	require.Equal(fixture.t, "true", report["tools"], "less, make, rg, Docker Compose, and Make completion must be available")
+}
+
+func (fixture *smokeFixture) assertWorktree() {
+	fixture.t.Helper()
+	require.Equal(fixture.t, "Привет из codex-safe\n", readFile(fixture.t, fixture.cyrillic), "Cyrillic project data must round-trip")
+	require.Equal(fixture.t, "staged by Sysbox probe\n", readFile(fixture.t, fixture.staged), "probe must stage a linked-worktree file")
+	require.Equal(fixture.t, "primary baseline\n", readFile(fixture.t, filepath.Join(fixture.primary, "baseline.txt")), "primary checkout must remain read-only")
+	requireHostOwnership(fixture.t, fixture.project, fixture.primary)
+}
+
+func (fixture *smokeFixture) assertNestedDocker() {
+	fixture.t.Helper()
+	report := parseReport(fixture.t, fixture.nestedReport)
 	require.NotEmpty(fixture.t, report["nested_daemon"], "nested Docker daemon ID must be present")
 	require.NotEqual(fixture.t, fixture.hostDaemonID, report["nested_daemon"], "nested Docker daemon must differ from host Docker")
 	require.Equal(fixture.t, "crun", report["nested_runtime"], "nested Docker default runtime must be crun")
 	require.Equal(fixture.t, "false", report["sentinel_visible"], "nested Docker must not see a host container")
 	require.Equal(fixture.t, "true", report["nested_running"], "nested Docker container must be running")
 	require.Equal(fixture.t, "true", report["compose_running"], "nested Compose service must be running")
-
 	require.Equal(fixture.t, "nested marker\n", readFile(fixture.t, fixture.nestedMarker), "nested Docker bind mount must write the project")
-	require.Equal(fixture.t, "Привет из codex-safe\n", readFile(fixture.t, fixture.cyrillic), "Cyrillic project data must round-trip")
-	require.Equal(fixture.t, "staged by Sysbox probe\n", readFile(fixture.t, fixture.staged), "probe must stage a linked-worktree file")
-	require.Equal(fixture.t, "primary baseline\n", readFile(fixture.t, filepath.Join(fixture.primary, "baseline.txt")), "primary checkout must remain read-only")
-	requireHostOwnership(fixture.t, fixture.project, fixture.primary)
 }
 
 func (fixture *smokeFixture) assertOuterContainer() {
@@ -305,11 +342,11 @@ func (fixture *smokeFixture) assertReuse() {
 	require.Equal(fixture.t, fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), report["identity"], "reused command must retain host identity")
 	require.Equal(fixture.t, fixture.project, report["pwd"], "reused command must preserve its requested working directory")
 	require.NotEmpty(fixture.t, report["nested_daemon"], "reused command must access nested Docker")
-	require.Equal(fixture.t, parseReport(fixture.t, fixture.report)["nested_daemon"], report["nested_daemon"], "reused command must retain nested Docker daemon")
+	require.Equal(fixture.t, parseReport(fixture.t, fixture.nestedReport)["nested_daemon"], report["nested_daemon"], "reused command must retain nested Docker daemon")
 	require.Len(fixture.t, fixture.managedContainers(), 1, "reuse must not create a second outer container")
 }
 
-func (fixture *smokeFixture) assertAfterProbeCleanup() {
+func (fixture *smokeFixture) assertAfterNestedDockerCleanup() {
 	fixture.t.Helper()
 	require.Empty(fixture.t, fixture.containersNamed(fixture.nestedName), "nested container must never appear in host Docker")
 	require.Empty(fixture.t, fixture.containersNamed(fixture.composeName), "Compose container must never appear in host Docker")
@@ -499,5 +536,11 @@ while [[ ! -e "$release" ]]; do sleep 1; done`
 
 const waitScript = `while [[ ! -e "$1" ]]; do sleep 1; done`
 
-//go:embed testdata/sysbox-probe.sh
-var probeScript string
+//go:embed testdata/environment-probe.sh
+var environmentProbeScript string
+
+//go:embed testdata/worktree-probe.sh
+var worktreeProbeScript string
+
+//go:embed testdata/nested-docker-probe.sh
+var nestedDockerProbeScript string

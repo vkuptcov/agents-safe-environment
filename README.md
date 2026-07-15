@@ -139,8 +139,8 @@ bash tests/smoke/sysbox-linked-worktree.sh
 ```
 
 The full Sysbox smoke scenario is also available as an opt-in Go test. It uses the Docker Engine client for host-side
-container creation and inspection, while a small embedded workload checks commands executed through `codex-safe` inside
-the isolated container:
+container creation and inspection, while focused embedded workloads check the environment, linked worktree, and nested
+Docker commands executed through `codex-safe` inside the isolated container:
 
 ```bash
 make test-smoke-go
