@@ -1,11 +1,10 @@
 # Sysbox smoke tests
 
-This directory contains the real-host integration test for `codex-safe`. The test launches `codex-safe-probe`, a
-test-only transport compiled only under the `smoke` build tag, which drives the same launcher create, reuse, and
-exec path with an arbitrary command. The product `codex-safe` binary runs only Codex and carries no
-arbitrary-command surface, so the probe preserves lifecycle coverage without reintroducing one. The test creates
-an outer container with the `sysbox-runc` runtime, starts a private Docker daemon inside that container, and
-exercises a linked Git worktree through multiple concurrent client commands.
+This directory contains the real-host integration test for `codex-safe` and `agents-safe`. The lifecycle probes run
+arbitrary bash through the public `agents-safe` command, and the Codex-specific assertions run `codex-safe`
+directly, so the suite drives the same launcher create, reuse, and exec path a user runs. The test creates an outer
+container with the `sysbox-runc` runtime, starts a private Docker daemon inside that container, and exercises a
+linked Git worktree through multiple concurrent client commands.
 
 The smoke test checks the boundaries between the host, the managed Sysbox container, and containers started by
 the nested Docker daemon. It complements unit tests; it is not a replacement for them or a general proof that
@@ -21,8 +20,7 @@ make test-smoke-go
 
 The target:
 
-1. builds `bin/codex-safe`, `bin/agents-safe`, `bin/codex-safe-session`, and the smoke-tagged
-   `bin/codex-safe-probe`;
+1. builds `bin/codex-safe`, `bin/agents-safe`, and `bin/codex-safe-session`;
 2. builds the `codex-safe-mvp:local` image;
 3. enables the opt-in smoke test with `CODEX_SAFE_RUN_SYSBOX_SMOKE=1`;
 4. runs every `TestSysbox` scenario (linked worktree, Codex product launch, and `agents-safe bash`) without the Go
@@ -45,7 +43,7 @@ docker info --format '{{json .Runtimes}}'
 For a direct invocation, build the prerequisites first and run the test from its own Go module:
 
 ```bash
-make build build-smoke-probe docker-build
+make build docker-build
 CODEX_SAFE_RUN_SYSBOX_SMOKE=1 \
     go -C tests/smoke test . -run TestSysboxLinkedWorktreeGo -count=1 -v
 ```
@@ -66,12 +64,12 @@ observed inside the managed environment.
 
 ```text
 Host Go test
-├── launcherHarness ── starts bin/codex-safe-probe and bin/agents-safe as real host processes
+├── launcherHarness ── starts bin/agents-safe and bin/codex-safe as real host processes
 ├── dockerHarness ──── inspects the host daemon through the Moby client
 ├── temporary Git primary checkout + linked worktree
 └── host sentinel container
              │
-             │ codex-safe-probe --project <linked worktree> -- <command>
+             │ agents-safe --project <linked worktree> -- <command>
              ▼
 Managed outer container (sysbox-runc, not privileged)
 ├── codex-safe-session manager

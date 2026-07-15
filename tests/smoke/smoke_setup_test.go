@@ -41,9 +41,9 @@ func newProjectLayout(t *testing.T) projectLayout {
 	runInDir(t, layout.primary, "git", "worktree", "add", "-b", "smoke/feature", layout.worktree)
 	require.NoError(t, os.MkdirAll(layout.nested, 0o755), "nested project directory must be created")
 	require.NoError(t, os.MkdirAll(layout.hostHome, 0o755), "temporary host home must be created")
-	// The product resolves and mounts $HOME/.codex read-write; the launcher fails closed without it,
-	// so every launch through the probe transport needs a resolvable Codex home. Phase 6 enriches
-	// this directory with sentinel configuration and dedicated Codex assertions.
+	// codex-safe mounts $HOME/.codex read-write and the codex smoke assertions read CODEX_HOME, so
+	// every launch in this suite needs a resolvable Codex home. Phase 6 enriches this directory with
+	// sentinel configuration and dedicated Codex assertions.
 	require.NoError(t, os.MkdirAll(layout.codexHome, 0o755), "temporary Codex home must be created")
 	return layout
 }
@@ -112,7 +112,6 @@ func newSmokeArtifacts(project projectLayout) smokeArtifacts {
 
 type launcherHarness struct {
 	t             *testing.T
-	binary        string
 	productBinary string
 	agentsBinary  string
 	hostHome      string
@@ -122,13 +121,12 @@ func newLauncherHarness(t *testing.T, hostHome string) *launcherHarness {
 	t.Helper()
 	workingDirectory, err := os.Getwd()
 	require.NoError(t, err, "smoke working directory must be available")
-	binary := filepath.Join(workingDirectory, "..", "..", "bin", "codex-safe-probe")
-	if _, err := os.Stat(binary); err != nil {
-		t.Skip("bin/codex-safe-probe is missing; run make build-smoke-probe first")
+	agents := filepath.Join(workingDirectory, "..", "..", "bin", "agents-safe")
+	if _, err := os.Stat(agents); err != nil {
+		t.Skip("bin/agents-safe is missing; run make build first")
 	}
 	product := filepath.Join(workingDirectory, "..", "..", "bin", "codex-safe")
-	agents := filepath.Join(workingDirectory, "..", "..", "bin", "agents-safe")
-	return &launcherHarness{t: t, binary: binary, productBinary: product, agentsBinary: agents, hostHome: hostHome}
+	return &launcherHarness{t: t, productBinary: product, agentsBinary: agents, hostHome: hostHome}
 }
 
 // launcherEnv builds the launcher process environment. It removes any ambient HOME and CODEX_HOME
@@ -168,7 +166,7 @@ func (launcher *launcherHarness) startBinary(binary string, project string, sepa
 
 func (launcher *launcherHarness) start(project string, command ...string) *launcherProcess {
 	launcher.t.Helper()
-	return launcher.startBinary(launcher.binary, project, true, nil, command...)
+	return launcher.startBinary(launcher.agentsBinary, project, true, nil, command...)
 }
 
 // startAgents invokes the public generic launcher without a separator, exercising the documented

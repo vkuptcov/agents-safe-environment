@@ -38,7 +38,6 @@ both the module paths and document links.
 | --- | --- | --- |
 | `cmd/codex-safe/` | Host CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `cmd/agents-safe/` | Host CLI for arbitrary container commands. | [Safe environment](docs/design-docs/codex-safe.md) |
-| `cmd/codex-safe-probe/` | Test-only smoke transport. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/gitproject/` | Git discovery. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/launcher/` | Mount and Docker planning. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `cmd/codex-safe-session/` | Container CLI. | [Session manager](docs/design-docs/go-session-manager.md) |

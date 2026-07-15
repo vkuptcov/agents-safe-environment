@@ -168,9 +168,8 @@ make test-smoke-go
 ```
 
 It is intentionally separate from `make test`: the Go test requires a real Sysbox host and a Docker image build. The
-lifecycle probes run through a test-only `codex-safe-probe` transport compiled under the `smoke` build tag; the
-`codex-safe` product binary carries no arbitrary-command surface. The suite separately launches `agents-safe bash`
-through its public command path.
+lifecycle probes run arbitrary bash through the public `agents-safe` command, and the Codex-specific assertions run
+`codex-safe` directly, so the suite exercises the same product binaries a user runs.
 
 The harness builds the binaries and image, creates a temporary primary repository and linked worktree, starts a host
 sentinel container, and performs live assertions against the outer and nested containers. It verifies account names,
