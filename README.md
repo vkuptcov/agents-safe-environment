@@ -151,6 +151,9 @@ sentinel container, and performs live assertions against the outer and nested co
 global Git config, UTF-8 text, mount modes, Git writes, daemon separation, overlapping command lifetime, deterministic
 container reuse, idle removal, concurrent first callers, nested project access, file ownership, and cleanup.
 
+See [the smoke-test README](tests/smoke/README.md) for the architecture, synchronization protocol, complete assertion
+catalog, cleanup behavior, and extension guidelines.
+
 The smoke test was run successfully on 2026-07-13 with Docker Engine 28.3.3, Sysbox CE 0.7.0, cgroup v2, and the
 `overlay2` storage driver. Other kernel, filesystem, and Sysbox combinations must pass the same test before use.
 
