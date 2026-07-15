@@ -103,9 +103,18 @@ func resolveCodexHome(lookupEnv func(string) (string, bool), homeDir string) (st
 
 func resolvePersonalSkills(homeDir string, writableSources []string) (string, error) {
 	source := filepath.Join(homeDir, ".agents", "skills")
-	if _, err := os.Stat(source); err != nil {
+	if _, err := os.Lstat(source); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return PersonalSkillsAbsent, nil
+		}
+		return "", fmt.Errorf("inspect personal skills %q: %w", source, err)
+	}
+	// The entry exists (Lstat), but a following Stat that reports it missing means the target of a
+	// symlink is gone. That is a broken configuration, not an absent skills directory: surface it
+	// instead of silently launching without the user's authored skills.
+	if _, err := os.Stat(source); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("personal-skills source %q is a broken symlink", source)
 		}
 		return "", fmt.Errorf("inspect personal skills %q: %w", source, err)
 	}

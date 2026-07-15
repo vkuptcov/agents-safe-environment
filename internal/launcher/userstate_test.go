@@ -214,6 +214,25 @@ func TestResolveUserStateResolvesPresentSkills(t *testing.T) {
 	}
 }
 
+func TestResolveUserStateRejectsDanglingSkillsSymlink(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mkdir(t, filepath.Join(home, ".codex"))
+	skillsLink := filepath.Join(home, ".agents", "skills")
+	mkdir(t, filepath.Dir(skillsLink))
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing target"), skillsLink); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	_, err := ResolveUserState(UserStateInputs{
+		LookupEnv: envLookup(nil),
+		HomeDir:   evalPath(t, home),
+	})
+	if err == nil || !strings.Contains(err.Error(), "broken symlink") {
+		t.Fatalf("ResolveUserState() error = %v, want broken-symlink rejection", err)
+	}
+}
+
 func TestResolveUserStateRejectsSkillsOverlappingWritableSource(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
