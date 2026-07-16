@@ -27,9 +27,9 @@ type CodexHomePolicy int
 
 const (
 	// CodexHomeRequired requires a Codex home. When CODEX_HOME is unset and the default home is
-	// missing, the launcher offers to create the default (through ConfirmCreateCodexHome); an
-	// explicitly requested CODEX_HOME that is missing is always an error. This is the zero value so
-	// existing callers keep the fail-closed behavior. Used by codex-safe.
+	// missing, the launcher may offer to create the default; an explicitly requested CODEX_HOME
+	// that is missing is always an error. This is the zero value so existing callers keep the
+	// fail-closed behavior. Used by codex-safe.
 	CodexHomeRequired CodexHomePolicy = iota
 	// CodexHomeOptional mounts the Codex home only when it already exists. A missing home is treated
 	// as absent: no Codex mount and no CODEX_HOME in the command environment. Used by agents-safe,
@@ -96,47 +96,11 @@ type UserStateInputs struct {
 	// CodexHomePolicy controls how a missing Codex home is handled. The zero value is
 	// CodexHomeRequired.
 	CodexHomePolicy CodexHomePolicy
-	// ConfirmCreateCodexHome, when non-nil, is called with the default Codex-home path for a
-	// CodexHomeRequired launch whose default home is missing. It returns true only after creating
-	// the directory. A nil callback (or a false return) leaves the missing home to fail preflight.
-	ConfirmCreateCodexHome func(path string) (bool, error)
 }
 
 type userStateResolution struct {
 	state            UserState
 	missingCodexHome string
-}
-
-// ResolveUserState resolves the Codex home and optional personal skills for one launch. A required
-// implicit default may be created only through ConfirmCreateCodexHome; every other missing source
-// is rejected or recorded as absent according to CodexHomePolicy. Resolution never falls back to
-// another location.
-func ResolveUserState(inputs UserStateInputs) (UserState, error) {
-	resolution, err := inspectUserState(inputs)
-	if err != nil {
-		return UserState{}, err
-	}
-	if resolution.missingCodexHome == "" {
-		return resolution.state, nil
-	}
-	if inputs.ConfirmCreateCodexHome == nil {
-		return UserState{}, fmt.Errorf("Codex home %q does not exist", resolution.missingCodexHome)
-	}
-	created, err := inputs.ConfirmCreateCodexHome(resolution.missingCodexHome)
-	if err != nil {
-		return UserState{}, err
-	}
-	if !created {
-		return UserState{}, fmt.Errorf("Codex home %q does not exist", resolution.missingCodexHome)
-	}
-	resolution, err = inspectUserState(inputs)
-	if err != nil {
-		return UserState{}, err
-	}
-	if resolution.missingCodexHome != "" {
-		return UserState{}, fmt.Errorf("Codex home %q does not exist", resolution.missingCodexHome)
-	}
-	return resolution.state, nil
 }
 
 // inspectUserState resolves existing sources without prompting or creating host state. A missing
