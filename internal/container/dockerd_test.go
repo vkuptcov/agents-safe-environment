@@ -24,7 +24,7 @@ func TestStartDockerDaemonUsesFixedArgvAndSocketOwnership(t *testing.T) {
 	config.HostUID = os.Getuid()
 	config.HostGID = os.Getgid()
 	config.DockerReadyTimeout = time.Second
-	process := newFakeProcess()
+	process := newFakeDaemonProcess()
 	starter := &fakeDaemonProcessStarter{process: process}
 	pingCalls := 0
 	ping := func(_ context.Context, socketPath string) error {
@@ -52,8 +52,8 @@ func TestStartDockerDaemonUsesFixedArgvAndSocketOwnership(t *testing.T) {
 		"--default-runtime=crun",
 		"--host=unix://" + paths.dockerSocket,
 	}
-	if starter.name != paths.dockerdBinary || !reflect.DeepEqual(starter.arguments, wantArguments) {
-		t.Fatalf("start = %q %#v, want %q %#v", starter.name, starter.arguments, paths.dockerdBinary, wantArguments)
+	if starter.name != paths.dockerdCommand || !reflect.DeepEqual(starter.arguments, wantArguments) {
+		t.Fatalf("start = %q %#v, want %q %#v", starter.name, starter.arguments, paths.dockerdCommand, wantArguments)
 	}
 	info, err := os.Stat(paths.dockerSocket)
 	if err != nil {
@@ -73,7 +73,7 @@ func TestStartDockerDaemonReportsEarlyExitAndDiagnostics(t *testing.T) {
 	paths := testContainerPaths(root)
 	config := testConfig(t)
 	config.DockerReadyTimeout = time.Second
-	process := newFakeProcess()
+	process := newFakeDaemonProcess()
 	starter := &fakeDaemonProcessStarter{process: process, logContents: "dockerd exploded\n"}
 	process.finish(errors.New("exit status 1"))
 
@@ -91,7 +91,7 @@ func TestStartDockerDaemonReportsEarlyExitAndDiagnostics(t *testing.T) {
 }
 
 func TestDockerDaemonStopSendsTermAndWaits(t *testing.T) {
-	process := newFakeProcess()
+	process := newFakeDaemonProcess()
 	process.finishOnSignal = true
 	daemon := newDockerDaemon(process)
 	if err := daemon.Stop(time.Second); err != nil {
@@ -152,7 +152,7 @@ type fakeDaemonProcess struct {
 	finishOnSignal bool
 }
 
-func newFakeProcess() *fakeDaemonProcess {
+func newFakeDaemonProcess() *fakeDaemonProcess {
 	return &fakeDaemonProcess{done: make(chan struct{})}
 }
 
@@ -201,7 +201,7 @@ func testContainerPaths(root string) containerPaths {
 	paths.dockerSocket = filepath.Join(root, "docker.sock")
 	paths.dockerdLog = filepath.Join(root, "dockerd.log")
 	paths.crunBinary = filepath.Join(root, "crun")
-	paths.dockerdBinary = filepath.Join(root, "dockerd")
+	paths.dockerdCommand = filepath.Join(root, "dockerd")
 	paths.sessionSocket = filepath.Join(root, "run", "codex-safe", "session.sock")
 	return paths
 }

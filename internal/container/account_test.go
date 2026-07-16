@@ -10,7 +10,7 @@ import (
 
 func TestReconcileContainerAccountReusesMatchingAccount(t *testing.T) {
 	config := testConfig(t)
-	commands := &fakeCommandRunner{responses: map[string]commandResponse{
+	commands := &fakeSystemCommandRunner{responses: map[string]commandResponse{
 		commandKey("getent", "group", "1001"):       {output: "developers:x:1001:\n"},
 		commandKey("getent", "group", "developers"): {output: "developers:x:1001:\n"},
 		commandKey("getent", "passwd", "1000"): {
@@ -29,7 +29,7 @@ func TestReconcileContainerAccountReusesMatchingAccount(t *testing.T) {
 
 func TestReconcileContainerAccountCreatesMissingEntries(t *testing.T) {
 	config := testConfig(t)
-	commands := &fakeCommandRunner{responses: map[string]commandResponse{
+	commands := &fakeSystemCommandRunner{responses: map[string]commandResponse{
 		commandKey("getent", "group", "1001"):                 {err: fakeCommandError{code: 2}},
 		commandKey("getent", "group", "developers"):           {err: fakeCommandError{code: 2}},
 		commandKey("groupadd", "--gid", "1001", "developers"): {},
@@ -53,7 +53,7 @@ func TestReconcileContainerAccountCreatesMissingEntries(t *testing.T) {
 
 func TestReconcileContainerAccountRenamesImageEntries(t *testing.T) {
 	config := testConfig(t)
-	commands := &fakeCommandRunner{responses: map[string]commandResponse{
+	commands := &fakeSystemCommandRunner{responses: map[string]commandResponse{
 		commandKey("getent", "group", "1001"):                        {output: "ubuntu:x:1001:\n"},
 		commandKey("getent", "group", "developers"):                  {err: fakeCommandError{code: 2}},
 		commandKey("groupmod", "--new-name", "developers", "ubuntu"): {},
@@ -97,7 +97,7 @@ func TestReconcileContainerAccountRejectsNameConflicts(t *testing.T) {
 			err := reconcileContainerAccount(
 				context.Background(),
 				testConfig(t),
-				&fakeCommandRunner{responses: test.responses},
+				&fakeSystemCommandRunner{responses: test.responses},
 			)
 			require.Error(t, err, "conflicting account must be rejected")
 		})
@@ -109,12 +109,12 @@ type commandResponse struct {
 	err    error
 }
 
-type fakeCommandRunner struct {
+type fakeSystemCommandRunner struct {
 	responses map[string]commandResponse
 	calls     []string
 }
 
-func (runner *fakeCommandRunner) CombinedOutput(
+func (runner *fakeSystemCommandRunner) CombinedOutput(
 	_ context.Context,
 	name string,
 	arguments ...string,

@@ -14,7 +14,6 @@ type systemCommandRunner interface {
 	CombinedOutput(context.Context, string, ...string) ([]byte, error)
 }
 
-// execSystemCommandRunner is the production systemCommandRunner backed by os/exec.
 type execSystemCommandRunner struct{}
 
 func (execSystemCommandRunner) CombinedOutput(ctx context.Context, name string, arguments ...string) ([]byte, error) {

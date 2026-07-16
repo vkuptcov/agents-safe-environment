@@ -33,7 +33,6 @@ type daemonProcessStarter interface {
 	Start(string, []string, io.Writer, io.Writer) (daemonProcess, error)
 }
 
-// execDaemonProcessStarter is the production daemonProcessStarter backed by os/exec.
 type execDaemonProcessStarter struct{}
 
 func (execDaemonProcessStarter) Start(
@@ -110,7 +109,7 @@ func startDockerDaemon(
 	}
 
 	arguments := dockerDaemonArguments(paths)
-	process, startErr := starter.Start(paths.dockerdBinary, arguments, logFile, logFile)
+	process, startErr := starter.Start(paths.dockerdCommand, arguments, logFile, logFile)
 	closeErr := logFile.Close()
 	if startErr != nil {
 		return nil, fmt.Errorf("start dockerd: %w", startErr)

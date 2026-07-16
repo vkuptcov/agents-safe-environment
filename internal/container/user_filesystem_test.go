@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestPrepareUserFilesystem(t *testing.T) {
+func TestPrepareContainerUserFilesystem(t *testing.T) {
 	root := t.TempDir()
 	config := testConfig(t)
 	config.HostUID = os.Getuid()
@@ -49,7 +49,7 @@ func TestPrepareUserFilesystem(t *testing.T) {
 	}
 }
 
-func TestPrepareUserFilesystemDoesNotInstallInvalidSudoers(t *testing.T) {
+func TestPrepareContainerUserFilesystemDoesNotInstallInvalidSudoers(t *testing.T) {
 	root := t.TempDir()
 	config := testConfig(t)
 	config.HostUID = os.Getuid()

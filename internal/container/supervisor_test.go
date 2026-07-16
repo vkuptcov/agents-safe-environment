@@ -123,7 +123,7 @@ func newSupervisorHarness(t *testing.T, manager sessionManager) *supervisorHarne
 		t.Fatalf("create sudoers directory: %v", err)
 	}
 
-	process := newFakeProcess()
+	process := newFakeDaemonProcess()
 	harness := &supervisorHarness{supervisor: supervisor, process: process}
 	supervisor.paths = paths
 	supervisor.commands = bootstrapCommandRunner{config: config}
