@@ -56,9 +56,9 @@ func TestRunCLIForwardsRunConfiguration(t *testing.T) {
 	stdin := strings.NewReader("input")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	var captured session.RunnerConfig
+	var captured session.CommandConfig
 	app := unusedApplication()
-	app.run = func(_ context.Context, config session.RunnerConfig) error {
+	app.run = func(_ context.Context, config session.CommandConfig) error {
 		captured = config
 		return nil
 	}
@@ -87,7 +87,7 @@ func TestRunCLIForwardsRunConfiguration(t *testing.T) {
 
 func TestRunCLIReturnsChildExitCodeWithoutDiagnostic(t *testing.T) {
 	app := unusedApplication()
-	app.run = func(context.Context, session.RunnerConfig) error {
+	app.run = func(context.Context, session.CommandConfig) error {
 		return fakeExitError{code: 37}
 	}
 	var stderr bytes.Buffer
@@ -108,7 +108,7 @@ func TestRunCLIReturnsChildExitCodeWithoutDiagnostic(t *testing.T) {
 
 func TestRunCLIReportsCommandStartFailure(t *testing.T) {
 	app := unusedApplication()
-	app.run = func(context.Context, session.RunnerConfig) error {
+	app.run = func(context.Context, session.CommandConfig) error {
 		return reportingExitError{code: 127}
 	}
 	var stderr bytes.Buffer
@@ -139,7 +139,7 @@ func TestRunCLIServeTreatsSignalCancellationAsCleanExit(t *testing.T) {
 
 func TestRunCLIReportsInfrastructureFailure(t *testing.T) {
 	app := unusedApplication()
-	app.run = func(context.Context, session.RunnerConfig) error {
+	app.run = func(context.Context, session.CommandConfig) error {
 		return errors.New("socket unavailable")
 	}
 	var stderr bytes.Buffer
@@ -191,7 +191,7 @@ func unusedApplication() application {
 		serve: func(context.Context, *log.Logger) error {
 			return errors.New("unexpected serve")
 		},
-		run: func(context.Context, session.RunnerConfig) error {
+		run: func(context.Context, session.CommandConfig) error {
 			return errors.New("unexpected run")
 		},
 	}

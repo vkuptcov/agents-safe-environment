@@ -1,6 +1,7 @@
 GO := go
 DOCKER := docker
-BINARY := bin/codex-safe
+CODEX_BINARY := bin/codex-safe
+AGENTS_BINARY := bin/agents-safe
 SESSION_BINARY := bin/codex-safe-session
 IMAGE := codex-safe-mvp:local
 SMOKE_DIR := tests/smoke
@@ -8,8 +9,9 @@ SMOKE_DIR := tests/smoke
 .PHONY: build docker-build test test-smoke-go check-docs check-doc-links check-mermaid
 
 build:
-	mkdir -p $(dir $(BINARY))
-	$(GO) build -o $(BINARY) ./cmd/codex-safe
+	mkdir -p $(dir $(CODEX_BINARY))
+	$(GO) build -o $(CODEX_BINARY) ./cmd/codex-safe
+	$(GO) build -o $(AGENTS_BINARY) ./cmd/agents-safe
 	$(GO) build -o $(SESSION_BINARY) ./cmd/codex-safe-session
 
 docker-build:
@@ -23,7 +25,7 @@ test:
 	bash -n container/bashrc
 
 test-smoke-go: build docker-build
-	CODEX_SAFE_RUN_SYSBOX_SMOKE=1 $(GO) -C $(SMOKE_DIR) test . -run TestSysboxLinkedWorktreeGo -count=1 -v
+	CODEX_SAFE_RUN_SYSBOX_SMOKE=1 $(GO) -C $(SMOKE_DIR) test . -run TestSysbox -count=1 -v
 
 check-docs: check-mermaid check-doc-links
 

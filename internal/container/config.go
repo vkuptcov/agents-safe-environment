@@ -1,4 +1,4 @@
-// Package container implements the privileged lifecycle of one outer
+// Package container implements the privileged bootstrap and lifecycle that run inside the
 // codex-safe Sysbox container.
 package container
 

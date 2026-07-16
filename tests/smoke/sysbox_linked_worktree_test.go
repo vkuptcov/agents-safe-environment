@@ -40,13 +40,13 @@ func TestSysboxLinkedWorktreeGo(t *testing.T) {
 	fixture.release(fixture.files.environment.release, environment, "environment command")
 	require.True(t, reused.running(), "reused command must survive environment command exit")
 	require.True(t, nestedDocker.running(), "nested Docker command must survive environment command exit")
-	require.True(t, fixture.docker.inspectOuter().State.Running, "outer session must remain running after one command exits")
+	require.True(t, fixture.docker.inspectContainer().State.Running, "container session must remain running after one command exits")
 
 	fixture.release(fixture.files.nestedDocker.release, nestedDocker, "nested Docker command")
 	require.True(t, reused.running(), "reused command must survive nested Docker command exit")
 	fixture.release(fixture.files.reuse.release, reused, "reused command")
-	require.True(t, fixture.docker.inspectOuter().State.Running, "idle grace period must retain the outer session")
-	fixture.docker.waitForOuterRemoval()
+	require.True(t, fixture.docker.inspectContainer().State.Running, "idle grace period must retain the container session")
+	fixture.docker.waitForContainerRemoval()
 	fixture.assertAfterNestedDockerCleanup()
 
 	fixture.assertConcurrentCreation()
@@ -99,15 +99,15 @@ func (fixture *smokeFixture) assertNestedDocker() {
 
 func (fixture *smokeFixture) assertOuterContainer() {
 	fixture.t.Helper()
-	inspection := fixture.docker.inspectOuter()
-	require.True(fixture.t, inspection.State.Running, "outer container must run while probe command is active")
+	inspection := fixture.docker.inspectContainer()
+	require.True(fixture.t, inspection.State.Running, "container must run while probe command is active")
 	require.Equal(fixture.t, "true", inspection.Config.Labels["codex-safe.managed"], "managed label must identify the session")
 	require.Equal(fixture.t, fixture.project.worktree, inspection.Config.Labels["codex-safe.project-path"], "project label must name the linked worktree")
 	require.Equal(fixture.t, strconv.Itoa(os.Getuid()), inspection.Config.Labels["codex-safe.host-uid"], "host UID label must be present")
 	require.Equal(fixture.t, "1", inspection.Config.Labels["codex-safe.manager-protocol"], "manager protocol label must be present")
-	require.Equal(fixture.t, fixture.project.nested, inspection.Config.WorkingDir, "outer working directory must preserve nested invocation path")
-	require.Equal(fixture.t, "sysbox-runc", inspection.HostConfig.Runtime, "outer container must use Sysbox runtime")
-	require.False(fixture.t, inspection.HostConfig.Privileged, "outer container must not be privileged")
+	require.Equal(fixture.t, fixture.project.nested, inspection.Config.WorkingDir, "container working directory must preserve nested invocation path")
+	require.Equal(fixture.t, "sysbox-runc", inspection.HostConfig.Runtime, "container must use Sysbox runtime")
+	require.False(fixture.t, inspection.HostConfig.Privileged, "container must not be privileged")
 	requireMount(fixture.t, inspection, fixture.project.primary, fixture.project.primary, false)
 	requireMount(fixture.t, inspection, filepath.Join(fixture.project.primary, ".git"), filepath.Join(fixture.project.primary, ".git"), true)
 	requireMount(fixture.t, inspection, fixture.project.worktree, fixture.project.worktree, true)
@@ -116,19 +116,19 @@ func (fixture *smokeFixture) assertOuterContainer() {
 		require.NotEqual(fixture.t, "/var/run/docker.sock", mount.Source, "host Docker socket must not be mounted")
 		require.NotEqual(fixture.t, "/var/run/docker.sock", mount.Destination, "container Docker socket must not be mounted")
 	}
-	require.Len(fixture.t, fixture.docker.managedContainers(), 1, "there must be exactly one active managed outer container")
+	require.Len(fixture.t, fixture.docker.managedContainers(), 1, "there must be exactly one active managed container")
 }
 
 func (fixture *smokeFixture) assertReuse() {
 	fixture.t.Helper()
 	report := parseReport(fixture.t, fixture.files.reuse.report)
-	inspection := fixture.docker.inspectOuter()
-	require.Equal(fixture.t, inspection.Config.Hostname, report["hostname"], "reused command must run in the same outer container")
+	inspection := fixture.docker.inspectContainer()
+	require.Equal(fixture.t, inspection.Config.Hostname, report["hostname"], "reused command must run in the same container")
 	require.Equal(fixture.t, fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), report["identity"], "reused command must retain host identity")
 	require.Equal(fixture.t, fixture.project.worktree, report["pwd"], "reused command must preserve its requested working directory")
 	require.NotEmpty(fixture.t, report["nested_daemon"], "reused command must access nested Docker")
 	require.Equal(fixture.t, parseReport(fixture.t, fixture.files.nestedDocker.report)["nested_daemon"], report["nested_daemon"], "reused command must retain nested Docker daemon")
-	require.Len(fixture.t, fixture.docker.managedContainers(), 1, "reuse must not create a second outer container")
+	require.Len(fixture.t, fixture.docker.managedContainers(), 1, "reuse must not create a second container")
 }
 
 func (fixture *smokeFixture) assertAfterNestedDockerCleanup() {
@@ -151,9 +151,9 @@ func (fixture *smokeFixture) assertConcurrentCreation() {
 	marker := filepath.Join(fixture.project.worktree, "concurrent.release")
 	first := fixture.launcher.start(fixture.project.worktree, "bash", "-c", waitScript, "bash", marker)
 	second := fixture.launcher.start(fixture.project.worktree, "bash", "-c", waitScript, "bash", marker)
-	fixture.docker.waitForOuter()
-	require.Len(fixture.t, fixture.docker.managedContainers(), 1, "concurrent first callers must create only one outer container")
+	fixture.docker.waitForContainer()
+	require.Len(fixture.t, fixture.docker.managedContainers(), 1, "concurrent first callers must create only one container")
 	fixture.release(marker, first, "first concurrent caller")
 	second.requireExit(fixture.t, "second concurrent caller")
-	fixture.docker.waitForOuterRemoval()
+	fixture.docker.waitForContainerRemoval()
 }

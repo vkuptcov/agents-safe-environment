@@ -16,7 +16,7 @@ import (
 
 type application struct {
 	serve func(context.Context, *log.Logger) error
-	run   func(context.Context, session.RunnerConfig) error
+	run   func(context.Context, session.CommandConfig) error
 }
 
 func main() {
@@ -69,7 +69,7 @@ func runCLI(
 			fmt.Fprintln(stderr, "codex-safe-session: run requires -- COMMAND [ARG...]")
 			return 2
 		}
-		err := app.run(ctx, session.RunnerConfig{
+		err := app.run(ctx, session.CommandConfig{
 			SocketPath:     session.DefaultSocketPath,
 			StartupTimeout: session.DefaultStartupTimeout,
 			Command:        args[2:],

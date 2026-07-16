@@ -12,7 +12,7 @@ const (
 	// argument, or exposes it to nested containers.
 	DefaultSocketPath = "/run/codex-safe/session.sock"
 
-	// ProtocolVersion is recorded in the outer container labels. The wire
+	// ProtocolVersion is recorded in the managed container labels. The wire
 	// protocol deliberately consists only of one acknowledgement byte.
 	ProtocolVersion = "1"
 

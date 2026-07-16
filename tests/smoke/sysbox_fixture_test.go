@@ -30,7 +30,12 @@ type smokeFixture struct {
 
 func newSmokeFixture(t *testing.T) *smokeFixture {
 	t.Helper()
-	project := newProjectLayout(t)
+	return newSmokeFixtureWithCodexHome(t, true)
+}
+
+func newSmokeFixtureWithCodexHome(t *testing.T, createCodexHome bool) *smokeFixture {
+	t.Helper()
+	project := newProjectLayout(t, createCodexHome)
 	host := newHostIdentity(t, project)
 	fixture := &smokeFixture{
 		t:        t,

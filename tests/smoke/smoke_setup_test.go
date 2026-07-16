@@ -15,15 +15,16 @@ import (
 )
 
 type projectLayout struct {
-	root     string
-	primary  string
-	worktree string
-	nested   string
-	hostHome string
-	hostGit  string
+	root      string
+	primary   string
+	worktree  string
+	nested    string
+	hostHome  string
+	hostGit   string
+	codexHome string
 }
 
-func newProjectLayout(t *testing.T) projectLayout {
+func newProjectLayout(t *testing.T, createCodexHome bool) projectLayout {
 	t.Helper()
 	root := t.TempDir()
 	layout := projectLayout{
@@ -34,11 +35,15 @@ func newProjectLayout(t *testing.T) projectLayout {
 	}
 	layout.nested = filepath.Join(layout.worktree, "nested directory")
 	layout.hostGit = filepath.Join(layout.hostHome, ".gitconfig")
+	layout.codexHome = filepath.Join(layout.hostHome, ".codex")
 
 	initGitProject(t, layout.primary)
 	runInDir(t, layout.primary, "git", "worktree", "add", "-b", "smoke/feature", layout.worktree)
 	require.NoError(t, os.MkdirAll(layout.nested, 0o755), "nested project directory must be created")
 	require.NoError(t, os.MkdirAll(layout.hostHome, 0o755), "temporary host home must be created")
+	if createCodexHome {
+		require.NoError(t, os.MkdirAll(layout.codexHome, 0o755), "temporary Codex home must be created")
+	}
 	return layout
 }
 
@@ -105,36 +110,69 @@ func newSmokeArtifacts(project projectLayout) smokeArtifacts {
 }
 
 type launcherHarness struct {
-	t        *testing.T
-	binary   string
-	hostHome string
+	t             *testing.T
+	productBinary string
+	agentsBinary  string
+	hostHome      string
 }
 
 func newLauncherHarness(t *testing.T, hostHome string) *launcherHarness {
 	t.Helper()
 	workingDirectory, err := os.Getwd()
 	require.NoError(t, err, "smoke working directory must be available")
-	binary := filepath.Join(workingDirectory, "..", "..", "bin", "codex-safe")
-	if _, err := os.Stat(binary); err != nil {
-		t.Skip("bin/codex-safe is missing; run make build first")
+	agents := filepath.Join(workingDirectory, "..", "..", "bin", "agents-safe")
+	if _, err := os.Stat(agents); err != nil {
+		t.Skip("bin/agents-safe is missing; run make build first")
 	}
-	return &launcherHarness{t: t, binary: binary, hostHome: hostHome}
+	product := filepath.Join(workingDirectory, "..", "..", "bin", "codex-safe")
+	return &launcherHarness{t: t, productBinary: product, agentsBinary: agents, hostHome: hostHome}
 }
 
-func (launcher *launcherHarness) start(project string, command ...string) *launcherProcess {
+// launcherEnv builds the launcher process environment. It removes any ambient HOME and CODEX_HOME
+// so Codex-home resolution is deterministic, sets HOME to the synthetic host home, then applies the
+// caller's overrides (for example an explicit CODEX_HOME for the reuse-mismatch scenario).
+func (launcher *launcherHarness) launcherEnv(extra []string) []string {
+	environment := make([]string, 0, len(os.Environ())+1+len(extra))
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "HOME=") || strings.HasPrefix(entry, "CODEX_HOME=") {
+			continue
+		}
+		environment = append(environment, entry)
+	}
+	environment = append(environment, "HOME="+launcher.hostHome)
+	return append(environment, extra...)
+}
+
+func (launcher *launcherHarness) startBinary(binary string, project string, separator bool, hostEnv []string, command ...string) *launcherProcess {
 	launcher.t.Helper()
-	arguments := append([]string{"--project", project, "--image", goSmokeImage, "--"}, command...)
-	process := exec.Command(launcher.binary, arguments...)
-	process.Env = append(os.Environ(), "HOME="+launcher.hostHome)
+	arguments := []string{"--project", project, "--image", goSmokeImage}
+	if separator {
+		arguments = append(arguments, "--")
+	}
+	arguments = append(arguments, command...)
+	process := exec.Command(binary, arguments...)
+	process.Env = launcher.launcherEnv(hostEnv)
 	running := &launcherProcess{command: process, done: make(chan struct{})}
 	process.Stdout = &running.stdout
 	process.Stderr = &running.stderr
-	require.NoError(launcher.t, process.Start(), "codex-safe command must start: %s", strings.Join(arguments, " "))
+	require.NoError(launcher.t, process.Start(), "%s command must start: %s", filepath.Base(binary), strings.Join(arguments, " "))
 	go func() {
 		running.err = process.Wait()
 		close(running.done)
 	}()
 	return running
+}
+
+func (launcher *launcherHarness) start(project string, command ...string) *launcherProcess {
+	launcher.t.Helper()
+	return launcher.startBinary(launcher.agentsBinary, project, true, nil, command...)
+}
+
+// startAgents invokes the public generic launcher without a separator, exercising the documented
+// `agents-safe bash` argument form.
+func (launcher *launcherHarness) startAgents(project string, command ...string) *launcherProcess {
+	launcher.t.Helper()
+	return launcher.startBinary(launcher.agentsBinary, project, false, nil, command...)
 }
 
 func (launcher *launcherHarness) startWithEnvironment(project string, environment []string, command ...string) *launcherProcess {

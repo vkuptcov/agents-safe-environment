@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestPrepareUserFilesystem(t *testing.T) {
+func TestPrepareContainerUserFilesystem(t *testing.T) {
 	root := t.TempDir()
 	config := testConfig(t)
 	config.HostUID = os.Getuid()
@@ -26,13 +26,13 @@ func TestPrepareUserFilesystem(t *testing.T) {
 	if err := os.Mkdir(sudoersDirectory, 0o755); err != nil {
 		t.Fatalf("create sudoers directory: %v", err)
 	}
-	paths := defaultRuntimePaths()
+	paths := defaultContainerPaths()
 	paths.bashRCSource = bashRCSource
 	paths.sudoersFile = filepath.Join(sudoersDirectory, "codex-safe-host")
 	commands := &recordingSuccessRunner{}
 
-	if err := prepareUserFilesystem(context.Background(), config, paths, commands); err != nil {
-		t.Fatalf("prepareUserFilesystem() error = %v", err)
+	if err := prepareContainerUserFilesystem(context.Background(), config, paths, commands); err != nil {
+		t.Fatalf("prepareContainerUserFilesystem() error = %v", err)
 	}
 	assertFile(t, config.HostHome, homeMode, config.HostUID, config.HostGID, "")
 	assertFile(
@@ -49,7 +49,7 @@ func TestPrepareUserFilesystem(t *testing.T) {
 	}
 }
 
-func TestPrepareUserFilesystemDoesNotInstallInvalidSudoers(t *testing.T) {
+func TestPrepareContainerUserFilesystemDoesNotInstallInvalidSudoers(t *testing.T) {
 	root := t.TempDir()
 	config := testConfig(t)
 	config.HostUID = os.Getuid()
@@ -59,13 +59,13 @@ func TestPrepareUserFilesystemDoesNotInstallInvalidSudoers(t *testing.T) {
 	if err := os.WriteFile(bashRCSource, nil, 0o644); err != nil {
 		t.Fatalf("write Bash source: %v", err)
 	}
-	paths := defaultRuntimePaths()
+	paths := defaultContainerPaths()
 	paths.bashRCSource = bashRCSource
 	paths.sudoersFile = filepath.Join(root, "sudoers")
 
-	err := prepareUserFilesystem(context.Background(), config, paths, failingCommandRunner{})
+	err := prepareContainerUserFilesystem(context.Background(), config, paths, failingCommandRunner{})
 	if err == nil {
-		t.Fatal("prepareUserFilesystem() accepted failed visudo validation")
+		t.Fatal("prepareContainerUserFilesystem() accepted failed visudo validation")
 	}
 	if _, statErr := os.Stat(paths.sudoersFile); !os.IsNotExist(statErr) {
 		t.Fatalf("sudoers target exists after validation failure: %v", statErr)

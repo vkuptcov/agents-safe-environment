@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConfigureHostAccountReusesMatchingAccount(t *testing.T) {
+func TestReconcileContainerAccountReusesMatchingAccount(t *testing.T) {
 	config := testConfig(t)
-	commands := &fakeCommandRunner{responses: map[string]commandResponse{
+	commands := &fakeSystemCommandRunner{responses: map[string]commandResponse{
 		commandKey("getent", "group", "1001"):       {output: "developers:x:1001:\n"},
 		commandKey("getent", "group", "developers"): {output: "developers:x:1001:\n"},
 		commandKey("getent", "passwd", "1000"): {
@@ -22,14 +22,14 @@ func TestConfigureHostAccountReusesMatchingAccount(t *testing.T) {
 		commandKey("usermod", "--gid", "1001", "--home", "/home/alex", "alex"): {},
 	}}
 	require.NoError(t,
-		configureHostAccount(context.Background(), config, commands),
+		reconcileContainerAccount(context.Background(), config, commands),
 		"matching host account must be reusable",
 	)
 }
 
-func TestConfigureHostAccountCreatesMissingEntries(t *testing.T) {
+func TestReconcileContainerAccountCreatesMissingEntries(t *testing.T) {
 	config := testConfig(t)
-	commands := &fakeCommandRunner{responses: map[string]commandResponse{
+	commands := &fakeSystemCommandRunner{responses: map[string]commandResponse{
 		commandKey("getent", "group", "1001"):                 {err: fakeCommandError{code: 2}},
 		commandKey("getent", "group", "developers"):           {err: fakeCommandError{code: 2}},
 		commandKey("groupadd", "--gid", "1001", "developers"): {},
@@ -46,14 +46,14 @@ func TestConfigureHostAccountCreatesMissingEntries(t *testing.T) {
 		): {},
 	}}
 	require.NoError(t,
-		configureHostAccount(context.Background(), config, commands),
+		reconcileContainerAccount(context.Background(), config, commands),
 		"missing host account must be created",
 	)
 }
 
-func TestConfigureHostAccountRenamesImageEntries(t *testing.T) {
+func TestReconcileContainerAccountRenamesImageEntries(t *testing.T) {
 	config := testConfig(t)
-	commands := &fakeCommandRunner{responses: map[string]commandResponse{
+	commands := &fakeSystemCommandRunner{responses: map[string]commandResponse{
 		commandKey("getent", "group", "1001"):                        {output: "ubuntu:x:1001:\n"},
 		commandKey("getent", "group", "developers"):                  {err: fakeCommandError{code: 2}},
 		commandKey("groupmod", "--new-name", "developers", "ubuntu"): {},
@@ -65,12 +65,12 @@ func TestConfigureHostAccountRenamesImageEntries(t *testing.T) {
 		commandKey("usermod", "--gid", "1001", "--home", "/home/alex", "alex"): {},
 	}}
 	require.NoError(t,
-		configureHostAccount(context.Background(), config, commands),
+		reconcileContainerAccount(context.Background(), config, commands),
 		"image account must be renamed safely",
 	)
 }
 
-func TestConfigureHostAccountRejectsNameConflicts(t *testing.T) {
+func TestReconcileContainerAccountRejectsNameConflicts(t *testing.T) {
 	tests := []struct {
 		name      string
 		responses map[string]commandResponse
@@ -94,10 +94,10 @@ func TestConfigureHostAccountRejectsNameConflicts(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := configureHostAccount(
+			err := reconcileContainerAccount(
 				context.Background(),
 				testConfig(t),
-				&fakeCommandRunner{responses: test.responses},
+				&fakeSystemCommandRunner{responses: test.responses},
 			)
 			require.Error(t, err, "conflicting account must be rejected")
 		})
@@ -109,12 +109,12 @@ type commandResponse struct {
 	err    error
 }
 
-type fakeCommandRunner struct {
+type fakeSystemCommandRunner struct {
 	responses map[string]commandResponse
 	calls     []string
 }
 
-func (runner *fakeCommandRunner) CombinedOutput(
+func (runner *fakeSystemCommandRunner) CombinedOutput(
 	_ context.Context,
 	name string,
 	arguments ...string,

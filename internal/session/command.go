@@ -21,8 +21,8 @@ const (
 	commandExitWait         = 5 * time.Second
 )
 
-// RunnerConfig describes one foreground command registered with the manager.
-type RunnerConfig struct {
+// CommandConfig contains the process, streams, and manager connection settings for one managed command.
+type CommandConfig struct {
 	// SocketPath is the container-local manager socket.
 	SocketPath string
 	// StartupTimeout bounds socket discovery and manager acknowledgement.
@@ -71,7 +71,7 @@ func (err *CommandExitError) WrapperDiagnostic() bool {
 
 // RunCommand registers and runs one direct child. The manager connection stays
 // open until the child has been waited for on every successful start path.
-func RunCommand(ctx context.Context, config RunnerConfig) error {
+func RunCommand(ctx context.Context, config CommandConfig) error {
 	if len(config.Command) == 0 {
 		return errors.New("session command is required")
 	}
@@ -112,7 +112,7 @@ func RunCommand(ctx context.Context, config RunnerConfig) error {
 	}
 
 	childDone := make(chan struct{})
-	go forwardSignals(command.Process, signals, childDone, !terminal.IsReader(config.Stdin))
+	go forwardSignals(command.Process, signals, childDone, !terminal.IsTerminal(config.Stdin))
 
 	waitErr := command.Wait()
 	close(childDone)

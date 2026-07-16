@@ -9,27 +9,30 @@ import (
 	"strings"
 )
 
-type commandRunner interface {
+// systemCommandRunner executes container-local account and policy administration commands.
+type systemCommandRunner interface {
 	CombinedOutput(context.Context, string, ...string) ([]byte, error)
 }
 
-type execCommandRunner struct{}
+type execSystemCommandRunner struct{}
 
-func (execCommandRunner) CombinedOutput(ctx context.Context, name string, arguments ...string) ([]byte, error) {
+func (execSystemCommandRunner) CombinedOutput(ctx context.Context, name string, arguments ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, arguments...).CombinedOutput()
 }
 
-func configureHostAccount(ctx context.Context, config Config, commands commandRunner) error {
-	if err := configureHostGroup(ctx, config, commands); err != nil {
+// reconcileContainerAccount makes the container-local passwd and group entries match the invoking host identity.
+func reconcileContainerAccount(ctx context.Context, config Config, commands systemCommandRunner) error {
+	if err := reconcileContainerGroup(ctx, config, commands); err != nil {
 		return err
 	}
-	if err := configureHostUser(ctx, config, commands); err != nil {
+	if err := reconcileContainerUser(ctx, config, commands); err != nil {
 		return err
 	}
 	return nil
 }
 
-func configureHostGroup(ctx context.Context, config Config, commands commandRunner) error {
+// reconcileContainerGroup creates or renames the container-local group that owns HostGID.
+func reconcileContainerGroup(ctx context.Context, config Config, commands systemCommandRunner) error {
 	groupByID, err := lookupDatabaseEntry(ctx, commands, "group", strconv.Itoa(config.HostGID))
 	if err != nil {
 		return fmt.Errorf("look up container group by GID: %w", err)
@@ -67,7 +70,8 @@ func configureHostGroup(ctx context.Context, config Config, commands commandRunn
 	return runAccountCommand(ctx, commands, "groupmod", "--new-name", config.HostGroup, idName)
 }
 
-func configureHostUser(ctx context.Context, config Config, commands commandRunner) error {
+// reconcileContainerUser creates or updates the container-local user that owns HostUID.
+func reconcileContainerUser(ctx context.Context, config Config, commands systemCommandRunner) error {
 	userByID, err := lookupDatabaseEntry(ctx, commands, "passwd", strconv.Itoa(config.HostUID))
 	if err != nil {
 		return fmt.Errorf("look up container user by UID: %w", err)
@@ -127,7 +131,7 @@ func configureHostUser(ctx context.Context, config Config, commands commandRunne
 
 func lookupDatabaseEntry(
 	ctx context.Context,
-	commands commandRunner,
+	commands systemCommandRunner,
 	database string,
 	key string,
 ) (string, error) {
@@ -170,7 +174,7 @@ func parsePasswdEntry(entry string) (string, int, error) {
 	return fields[0], uid, nil
 }
 
-func runAccountCommand(ctx context.Context, commands commandRunner, name string, arguments ...string) error {
+func runAccountCommand(ctx context.Context, commands systemCommandRunner, name string, arguments ...string) error {
 	output, err := commands.CombinedOutput(ctx, name, arguments...)
 	if err != nil {
 		return commandOutputError(name, arguments, output, err)

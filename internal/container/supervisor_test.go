@@ -96,7 +96,7 @@ func TestSupervisorRequiresRoot(t *testing.T) {
 
 type supervisorHarness struct {
 	supervisor    *Supervisor
-	process       *fakeProcess
+	process       *fakeDaemonProcess
 	managerConfig session.ManagerConfig
 }
 
@@ -113,7 +113,7 @@ func newSupervisorHarness(t *testing.T, manager sessionManager) *supervisorHarne
 	if err != nil {
 		t.Fatalf("NewSupervisor() error = %v", err)
 	}
-	paths := testRuntimePaths(root)
+	paths := testContainerPaths(root)
 	paths.bashRCSource = filepath.Join(root, "image-bashrc")
 	paths.sudoersFile = filepath.Join(root, "sudoers.d", "codex-safe-host")
 	if err := os.WriteFile(paths.bashRCSource, []byte("# test\n"), 0o644); err != nil {
@@ -123,11 +123,11 @@ func newSupervisorHarness(t *testing.T, manager sessionManager) *supervisorHarne
 		t.Fatalf("create sudoers directory: %v", err)
 	}
 
-	process := newFakeProcess()
+	process := newFakeDaemonProcess()
 	harness := &supervisorHarness{supervisor: supervisor, process: process}
 	supervisor.paths = paths
 	supervisor.commands = bootstrapCommandRunner{config: config}
-	supervisor.processes = &fakeProcessStarter{process: process}
+	supervisor.processes = &fakeDaemonProcessStarter{process: process}
 	supervisor.ping = func(_ context.Context, socketPath string) error {
 		return os.WriteFile(socketPath, nil, 0o600)
 	}
