@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/cli"
-	"github.com/vkuptcov/agents-safe-environment/internal/cli/clitest"
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
+	"github.com/vkuptcov/agents-safe-environment/internal/testutil/clitest"
 )
 
 func testConfig() cli.Config {
