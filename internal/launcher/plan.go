@@ -19,14 +19,18 @@ type Mount struct {
 	ReadOnly bool
 }
 
-// Plan contains the filesystem portion of an outer-container launch.
+// Plan is the filesystem contract from Git-project discovery to the Docker
+// launcher. It identifies the managed worktree, preserves the caller's working
+// directory, and restricts the host paths bind-mounted into the outer container.
 type Plan struct {
-	// ProjectRoot is the canonical host path of the selected checkout or linked worktree.
-	// It is the stable project identity used to find an already-running outer container.
+	// ProjectRoot is the canonical root of the selected Git worktree. The launcher uses it as the
+	// stable identity when it creates or reuses that worktree's managed outer container.
 	ProjectRoot string
-	// WorkingDir is the selected project directory used as the container working directory.
+	// WorkingDir is the canonical caller directory within ProjectRoot. The launcher passes it to
+	// Docker as the outer container's working directory.
 	WorkingDir string
-	// Mounts is the ordered, normalized set of bind mounts required by the selected checkout.
+	// Mounts is the ordered, normalized set of host bind mounts for the outer container. Ordering
+	// preserves the linked-worktree policy: a narrow writable Git mount follows its read-only parent.
 	Mounts []Mount
 }
 
