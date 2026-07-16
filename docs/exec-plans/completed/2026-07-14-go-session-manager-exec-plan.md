@@ -1,6 +1,6 @@
 # Exec Plan: Go Session Manager
 
-- Status: active
+- Status: completed
 - Created: 2026-07-14
 - Design: [`docs/design-docs/go-session-manager.md`](../../design-docs/go-session-manager.md)
 - Scope:
@@ -166,15 +166,16 @@ Commit: `test: prove shared session lifecycle`
 ### Phase 6: Documentation and Review Handoff
 
 Purpose: Make the implemented lifecycle understandable, reproducible, and ready for owner review.
-Status: to be done
-Done when: user documentation matches verified behavior, all validation gates pass, and this plan is moved to review.
+Status: done
+Done when: user documentation matches verified behavior, all validation gates pass, and the plan is ready for owner
+acceptance.
 
 1. Update `README.md` with the deterministic name, labels, wrapper semantics, idle timeout, and diagnostic commands.
 2. Document that Bash is active until it exits and detached background work does not independently retain the session.
 3. Update design docs only for implementation deviations discovered during validation.
 4. Add comments to non-obvious Go fields, timer transitions, Docker conflict handling, and Go supervision behavior.
 5. Run every validation gate below and record dated results in `Progress Notes`.
-6. Set all completed phase statuses to `done`, set plan status to `in review`, and move this file to `review/`.
+6. Set all completed phase statuses to `done` and archive the accepted plan in `completed/`.
 
 Commit: `docs: document managed project sessions`
 
@@ -236,5 +237,5 @@ Commit: `docs: document managed project sessions`
   `go test -race ./internal/session` pass with an external `GOROOT` unset and a writable Go build cache.
 - 2026-07-14: revised before implementation so the Go manager is the image entrypoint and owns privileged bootstrap
   and dockerd supervision; the obsolete shell entrypoint will be deleted during the atomic cutover.
-- Add dated notes before moving the plan to `completed/`, including validation results, phase commits, deviations,
-  and any intentionally deferred work.
+- 2026-07-16: Owner confirmed the Go session manager implementation is complete and accepted. Closed the stale
+  documentation phase and archived the plan in `completed/`.

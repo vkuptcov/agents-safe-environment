@@ -1,6 +1,6 @@
 # Exec Plan: Run Codex Inside the Container
 
-- Status: in review
+- Status: completed
 - Created: 2026-07-15
 - Design: [`docs/design-docs/codex-safe.md`](../../design-docs/codex-safe.md)
 - Scope:

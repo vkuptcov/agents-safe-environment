@@ -30,7 +30,7 @@ creating another nested Docker environment.
 - Concurrent commands for one worktree execute in its already-running container and share its nested daemon.
 
 See the [design document](docs/design-docs/codex-safe.md) for the full product and security model. The
-[Codex launch execution plan](docs/exec-plans/review/2026-07-15-codex-launch-exec-plan.md) records the implementation
+[Codex launch execution plan](docs/exec-plans/completed/2026-07-15-codex-launch-exec-plan.md) records the implementation
 scope and validation gates.
 
 ## Prerequisites

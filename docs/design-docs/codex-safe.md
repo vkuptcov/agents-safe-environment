@@ -683,14 +683,14 @@ Before the first release, inspect the actual container configuration through `do
 ## Implementation Plan
 
 The minimal infrastructure proof is tracked in
-[`2026-07-13-codex-safe-mvp-exec-plan.md`](../exec-plans/review/2026-07-13-codex-safe-mvp-exec-plan.md).
+[`2026-07-13-codex-safe-mvp-exec-plan.md`](../exec-plans/completed/2026-07-13-codex-safe-mvp-exec-plan.md).
 
 The shared project-container lifecycle is tracked in
-[`2026-07-14-go-session-manager-exec-plan.md`](../exec-plans/active/2026-07-14-go-session-manager-exec-plan.md).
+[`2026-07-14-go-session-manager-exec-plan.md`](../exec-plans/completed/2026-07-14-go-session-manager-exec-plan.md).
 
 Running Codex inside the container — Codex-home resolution, personal skills, the product command, and user-mount
 reuse labels — is tracked in
-[`2026-07-15-codex-launch-exec-plan.md`](../exec-plans/review/2026-07-15-codex-launch-exec-plan.md).
+[`2026-07-15-codex-launch-exec-plan.md`](../exec-plans/completed/2026-07-15-codex-launch-exec-plan.md).
 
 ## References
 

@@ -1,6 +1,6 @@
 # Exec Plan: Docker CLI Transport Rollback
 
-- Status: in review
+- Status: completed
 - Created: 2026-07-16
 - Design: [`codex-safe.md`](../../design-docs/codex-safe.md)
 - Scope:

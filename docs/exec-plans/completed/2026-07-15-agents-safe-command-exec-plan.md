@@ -1,6 +1,6 @@
 # Exec Plan: Generic agents-safe Command Launcher
 
-- Status: in review
+- Status: completed
 - Created: 2026-07-15
 - Design: [Safe Environment for Running Codex Agents](../../design-docs/codex-safe.md)
 - Scope:

@@ -506,7 +506,7 @@ The broader mounting, identity, nested-Docker, and security contract remains in
 ## Implementation Plan
 
 Implementation is tracked in
-[`2026-07-14-go-session-manager-exec-plan.md`](../exec-plans/active/2026-07-14-go-session-manager-exec-plan.md).
+[`2026-07-14-go-session-manager-exec-plan.md`](../exec-plans/completed/2026-07-14-go-session-manager-exec-plan.md).
 
 ## References
 

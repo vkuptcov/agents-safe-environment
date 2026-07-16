@@ -110,3 +110,4 @@ Done when: obsolete CLI helpers are gone, documentation is current, and all requ
 - 2026-07-16: Owner cancelled the migration after review. The launcher returned to the host Docker CLI so attach,
   terminal, stream, and exit-status behavior remain owned by the Docker CLI rather than project code.
 - 2026-07-16: The complete real Sysbox smoke suite passed after the CLI transport was restored.
+- 2026-07-16: Owner accepted the terminal cancelled state and archived the plan.

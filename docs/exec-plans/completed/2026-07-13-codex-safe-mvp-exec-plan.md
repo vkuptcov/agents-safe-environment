@@ -1,6 +1,6 @@
 # Exec Plan: Codex Safe Infrastructure MVP
 
-- Status: in review
+- Status: completed
 - Created: 2026-07-13
 - Design: [`docs/design-docs/codex-safe.md`](../../design-docs/codex-safe.md)
 - Scope:
