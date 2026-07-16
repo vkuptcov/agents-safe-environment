@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
-	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
@@ -26,31 +25,22 @@ const (
 	containerCreateAttempts = 5
 )
 
-func (docker *DockerLauncher) acquireProjectContainer(
+func (attempt *launchAttempt) acquireContainer(
 	ctx context.Context,
-	cli *dockercli.Client,
-	plan launchplan.Plan,
-	image string,
-	containerName string,
 	resolution userMountResolution,
 ) (string, UserMounts, error) {
-	inspection, found, err := docker.inspectProjectContainer(ctx, cli, containerName)
+	inspection, found, err := attempt.inspectOwnedContainer(ctx)
 	if err != nil {
 		return "", UserMounts{}, err
 	}
 	if found {
-		if err := docker.validateProjectContainer(inspection, plan.ProjectRoot); err != nil {
-			return "", UserMounts{}, err
-		}
 		if inspection.State.Running {
-			if err := docker.validateResolvedRunningUserMounts(inspection, plan.ProjectRoot, resolution); err != nil {
+			if err := attempt.validateResolvedRunningUserMounts(inspection, resolution); err != nil {
 				return "", UserMounts{}, err
 			}
 			return inspection.ID, resolution.mounts, nil
 		}
-		containerID, err := docker.waitForReusableOrReleased(
-			ctx, cli, plan.ProjectRoot, containerName, resolution,
-		)
+		containerID, err := attempt.waitForReusableOrReleased(ctx, resolution)
 		if err != nil {
 			return "", UserMounts{}, err
 		}
@@ -59,30 +49,22 @@ func (docker *DockerLauncher) acquireProjectContainer(
 		}
 	}
 
-	if err := docker.preflight(ctx, cli, image); err != nil {
+	if err := attempt.cli.Preflight(ctx, sysboxRuntime, attempt.image); err != nil {
 		return "", UserMounts{}, err
 	}
-	userMounts, err := docker.materializeUserMounts(plan, resolution)
+	userMounts, err := attempt.docker.materializeUserMounts(attempt.plan, resolution)
 	if err != nil {
 		return "", UserMounts{}, err
 	}
-	for attempt := 0; attempt < containerCreateAttempts; attempt++ {
-		containerID, conflict, err := docker.createProjectContainer(
-			ctx, cli, plan, image, containerName, userMounts,
-		)
+	for count := 0; count < containerCreateAttempts; count++ {
+		containerID, conflict, err := attempt.createContainer(ctx, userMounts)
 		if err != nil {
 			return "", UserMounts{}, err
 		}
 		if !conflict {
 			return containerID, userMounts, nil
 		}
-		containerID, err = docker.waitForReusableOrReleased(
-			ctx,
-			cli,
-			plan.ProjectRoot,
-			containerName,
-			userMountResolution{mounts: userMounts},
-		)
+		containerID, err = attempt.waitForReusableOrReleased(ctx, userMountResolution{mounts: userMounts})
 		if err != nil {
 			return "", UserMounts{}, err
 		}
@@ -93,7 +75,9 @@ func (docker *DockerLauncher) acquireProjectContainer(
 			return "", UserMounts{}, err
 		}
 	}
-	return "", UserMounts{}, fmt.Errorf("container name %q was not released after a concurrent create", containerName)
+	return "", UserMounts{}, fmt.Errorf(
+		"container name %q was not released after a concurrent create", attempt.containerName,
+	)
 }
 
 func waitForContainerPoll(ctx context.Context) error {
@@ -107,49 +91,40 @@ func waitForContainerPoll(ctx context.Context) error {
 	}
 }
 
-func (docker *DockerLauncher) createProjectContainer(
+func (attempt *launchAttempt) createContainer(
 	ctx context.Context,
-	cli *dockercli.Client,
-	plan launchplan.Plan,
-	image string,
-	containerName string,
 	userMounts UserMounts,
 ) (string, bool, error) {
-	request, err := buildDockerCreateRequest(
-		plan,
-		image,
-		containerName,
-		docker.HostUID,
-		docker.HostGID,
-		docker.HostUser,
-		docker.HostGroup,
-		docker.HostHome,
-		docker.HostGitConfig,
-		userMounts,
+	request, err := attempt.docker.buildCreateRequest(
+		attempt.plan, attempt.image, attempt.containerName, userMounts,
 	)
 	if err != nil {
 		return "", false, err
 	}
-	return cli.Create(ctx, request)
+	return attempt.cli.Create(ctx, request)
 }
 
-func (docker *DockerLauncher) inspectProjectContainer(
+// inspectOwnedContainer inspects the deterministic container name and reports a container only once
+// its labels prove this launch owns it, so no caller can act on a container it does not own.
+func (attempt *launchAttempt) inspectOwnedContainer(
 	ctx context.Context,
-	cli *dockercli.Client,
-	containerName string,
 ) (dockercli.ContainerInspection, bool, error) {
-	return cli.Inspect(ctx, containerName)
+	inspection, found, err := attempt.cli.Inspect(ctx, attempt.containerName)
+	if err != nil || !found {
+		return dockercli.ContainerInspection{}, false, err
+	}
+	if err := attempt.validateOwnership(inspection); err != nil {
+		return dockercli.ContainerInspection{}, false, err
+	}
+	return inspection, true, nil
 }
 
-// validateProjectContainer checks labels that identify the deterministic container name's owner.
-func (docker *DockerLauncher) validateProjectContainer(
-	inspection dockercli.ContainerInspection,
-	projectRoot string,
-) error {
+// validateOwnership checks labels that identify the deterministic container name's owner.
+func (attempt *launchAttempt) validateOwnership(inspection dockercli.ContainerInspection) error {
 	ownership := []struct{ name, want string }{
 		{managedLabel, managedLabelValue},
-		{projectPathLabel, projectRoot},
-		{hostUIDLabel, strconv.Itoa(docker.HostUID)},
+		{projectPathLabel, attempt.plan.ProjectRoot},
+		{hostUIDLabel, strconv.Itoa(attempt.docker.HostUID)},
 		{managerProtocolLabel, session.ProtocolVersion},
 	}
 	for _, label := range ownership {
@@ -167,9 +142,8 @@ func (docker *DockerLauncher) validateProjectContainer(
 }
 
 // validateRunningUserMounts verifies immutable user-mount labels before reusing a running container.
-func (docker *DockerLauncher) validateRunningUserMounts(
+func (attempt *launchAttempt) validateRunningUserMounts(
 	inspection dockercli.ContainerInspection,
-	projectRoot string,
 	userMounts UserMounts,
 ) error {
 	userMountLabels := []struct{ name, want string }{
@@ -179,7 +153,7 @@ func (docker *DockerLauncher) validateRunningUserMounts(
 	for _, label := range userMountLabels {
 		if got := inspection.Config.Labels[label.name]; got != label.want {
 			return &userMountMismatchError{
-				projectRoot: projectRoot,
+				projectRoot: attempt.plan.ProjectRoot,
 				label:       label.name,
 				running:     got,
 				requested:   label.want,
@@ -189,20 +163,19 @@ func (docker *DockerLauncher) validateRunningUserMounts(
 	return nil
 }
 
-func (docker *DockerLauncher) validateResolvedRunningUserMounts(
+func (attempt *launchAttempt) validateResolvedRunningUserMounts(
 	inspection dockercli.ContainerInspection,
-	projectRoot string,
 	resolution userMountResolution,
 ) error {
 	if resolution.missingCodexHome != "" {
 		return fmt.Errorf(
 			"a managed session for worktree %q is already running without a usable host Codex home; "+
 				"finish the active session before creating and mounting %q",
-			projectRoot,
+			attempt.plan.ProjectRoot,
 			resolution.missingCodexHome,
 		)
 	}
-	return docker.validateRunningUserMounts(inspection, projectRoot, resolution.mounts)
+	return attempt.validateRunningUserMounts(inspection, resolution.mounts)
 }
 
 // userMountMismatchError reports immutable user mounts that differ from an active container.
@@ -224,11 +197,8 @@ func (err *userMountMismatchError) Error() string {
 	)
 }
 
-func (docker *DockerLauncher) waitForReusableOrReleased(
+func (attempt *launchAttempt) waitForReusableOrReleased(
 	ctx context.Context,
-	cli *dockercli.Client,
-	projectRoot string,
-	containerName string,
 	resolution userMountResolution,
 ) (string, error) {
 	waitContext, cancel := context.WithTimeout(ctx, containerStateTimeout)
@@ -236,18 +206,15 @@ func (docker *DockerLauncher) waitForReusableOrReleased(
 	ticker := time.NewTicker(containerPollInterval)
 	defer ticker.Stop()
 	for {
-		inspection, found, err := docker.inspectProjectContainer(waitContext, cli, containerName)
+		inspection, found, err := attempt.inspectOwnedContainer(waitContext)
 		if err != nil {
 			return "", err
 		}
 		if !found {
 			return "", nil
 		}
-		if err := docker.validateProjectContainer(inspection, projectRoot); err != nil {
-			return "", err
-		}
 		if inspection.State.Running {
-			if err := docker.validateResolvedRunningUserMounts(inspection, projectRoot, resolution); err != nil {
+			if err := attempt.validateResolvedRunningUserMounts(inspection, resolution); err != nil {
 				return "", err
 			}
 			return inspection.ID, nil
@@ -256,7 +223,7 @@ func (docker *DockerLauncher) waitForReusableOrReleased(
 		case <-waitContext.Done():
 			return "", fmt.Errorf(
 				"wait for managed container %q state %q: %w",
-				containerName,
+				attempt.containerName,
 				inspection.State.Status,
 				waitContext.Err(),
 			)
@@ -265,39 +232,23 @@ func (docker *DockerLauncher) waitForReusableOrReleased(
 	}
 }
 
-func (docker *DockerLauncher) containerStoppedAfterExec(
+func (attempt *launchAttempt) containerStoppedAfterExec(
 	ctx context.Context,
-	cli *dockercli.Client,
-	plan launchplan.Plan,
-	containerName string,
 	userMounts UserMounts,
 ) (bool, error) {
-	inspection, found, err := docker.inspectProjectContainer(ctx, cli, containerName)
+	inspection, found, err := attempt.inspectOwnedContainer(ctx)
 	if err != nil {
 		return false, err
 	}
 	if !found {
 		return true, nil
 	}
-	if err := docker.validateProjectContainer(inspection, plan.ProjectRoot); err != nil {
-		return false, err
-	}
 	if inspection.State.Running {
-		if err := docker.validateRunningUserMounts(inspection, plan.ProjectRoot, userMounts); err != nil {
+		if err := attempt.validateRunningUserMounts(inspection, userMounts); err != nil {
 			return false, err
 		}
 		return false, nil
 	}
-	containerID, err := docker.waitForReusableOrReleased(
-		ctx,
-		cli,
-		plan.ProjectRoot,
-		containerName,
-		userMountResolution{mounts: userMounts},
-	)
+	containerID, err := attempt.waitForReusableOrReleased(ctx, userMountResolution{mounts: userMounts})
 	return containerID == "" && err == nil, err
-}
-
-func (docker *DockerLauncher) preflight(ctx context.Context, cli *dockercli.Client, image string) error {
-	return cli.Preflight(ctx, sysboxRuntime, image)
 }

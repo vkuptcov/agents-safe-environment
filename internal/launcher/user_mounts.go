@@ -14,15 +14,18 @@ import (
 // codexHomeEnv is the host environment variable that overrides the default Codex home.
 const codexHomeEnv = "CODEX_HOME"
 
+// mountAbsent marks a user mount the launch resolved nothing for. It is recorded both as the mount
+// source and as the mount's reuse label, so reuse can prove a running container was created with
+// the same (absent) user state. The exported aliases below name it per mount for callers.
+const mountAbsent = "absent"
+
 // PersonalSkillsAbsent is recorded as the personal-skills source when the host has no
-// $HOME/.agents/skills directory. It is also the codex-safe.personal-skills label value in that
-// case, so reuse can prove a running container was created with the same user mounts.
-const PersonalSkillsAbsent = "absent"
+// $HOME/.agents/skills directory.
+const PersonalSkillsAbsent = mountAbsent
 
 // CodexHomeAbsent is recorded as the Codex-home source when a CodexHomeOptional launch finds no
-// Codex home to mount. It is also the codex-safe.codex-home label value in that case, so reuse can
-// prove a running container was created with the same (absent) Codex state.
-const CodexHomeAbsent = "absent"
+// Codex home to mount.
+const CodexHomeAbsent = mountAbsent
 
 // CodexHomePolicy controls how a missing Codex home is handled while resolving user mounts.
 type CodexHomePolicy int
@@ -56,32 +59,39 @@ type UserMounts struct {
 	PersonalSkills string
 }
 
+// mountPresent reports whether a resolved user-mount source names a directory to mount, as opposed
+// to being unset or the absent marker.
+func mountPresent(source string) bool {
+	return source != "" && source != mountAbsent
+}
+
+// mountLabel returns the reuse label for a resolved user-mount source: the canonical source, or the
+// absent marker when nothing was resolved.
+func mountLabel(source string) string {
+	if !mountPresent(source) {
+		return mountAbsent
+	}
+	return source
+}
+
 // SkillsPresent reports whether a personal-skills directory was resolved for this launch.
 func (mounts UserMounts) SkillsPresent() bool {
-	return mounts.PersonalSkills != "" && mounts.PersonalSkills != PersonalSkillsAbsent
+	return mountPresent(mounts.PersonalSkills)
 }
 
 // CodexHomePresent reports whether a Codex home was resolved and should be mounted for this launch.
 func (mounts UserMounts) CodexHomePresent() bool {
-	return mounts.CodexHome != "" && mounts.CodexHome != CodexHomeAbsent
+	return mountPresent(mounts.CodexHome)
 }
 
-// codexHomeLabel returns the codex-safe.codex-home label value: the canonical source, or the absent
-// marker when the launch resolved no Codex home.
+// codexHomeLabel returns the codex-safe.codex-home label value.
 func (mounts UserMounts) codexHomeLabel() string {
-	if !mounts.CodexHomePresent() {
-		return CodexHomeAbsent
-	}
-	return mounts.CodexHome
+	return mountLabel(mounts.CodexHome)
 }
 
-// personalSkillsLabel returns the codex-safe.personal-skills label value: the canonical source, or
-// the literal absent marker when no personal-skills directory was resolved.
+// personalSkillsLabel returns the codex-safe.personal-skills label value.
 func (mounts UserMounts) personalSkillsLabel() string {
-	if mounts.PersonalSkills == "" {
-		return PersonalSkillsAbsent
-	}
-	return mounts.PersonalSkills
+	return mountLabel(mounts.PersonalSkills)
 }
 
 // UserMountInputs carries the host inputs needed to resolve user-specific bind mounts.
@@ -153,23 +163,23 @@ func inspectCodexHome(inputs UserMountInputs) (string, string, error) {
 		}
 	}
 
-	info, lstatErr := os.Lstat(source)
-	if lstatErr == nil {
-		if _, err := os.Stat(source); err != nil {
-			if errors.Is(err, os.ErrNotExist) && info.Mode()&os.ModeSymlink != 0 {
-				return "", "", fmt.Errorf("Codex home %q is a broken symlink", source)
-			}
-			return "", "", fmt.Errorf("inspect Codex home %q: %w", source, err)
-		}
+	existence, err := probePath("Codex home", source)
+	if err != nil {
+		return "", "", err
+	}
+	switch existence {
+	case pathBrokenSymlink:
+		return "", "", fmt.Errorf("Codex home %q is a broken symlink", source)
+	case pathExists:
 		canonical, err := canonicalizeExistingDir(
 			"Codex home",
 			source,
 			accessReadOK|accessWriteOK|accessExecOK,
 		)
 		return canonical, "", err
-	}
-	if !errors.Is(lstatErr, os.ErrNotExist) {
-		return "", "", fmt.Errorf("inspect Codex home %q: %w", source, lstatErr)
+	case pathMissing:
+		// Whether a missing home is an error, a creation offer, or simply absent is policy, decided
+		// below.
 	}
 
 	if explicit {
@@ -189,39 +199,21 @@ func resolvePersonalSkills(
 	codexHomePolicy CodexHomePolicy,
 ) (string, error) {
 	parent := filepath.Join(homeDir, ".agents")
-	parentInfo, err := os.Lstat(parent)
+	present, err := skillsPathPresent("personal-skills parent", "personal-skills parent", parent, codexHomePolicy)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return PersonalSkillsAbsent, nil
-		}
-		return "", fmt.Errorf("inspect personal-skills parent %q: %w", parent, err)
+		return "", err
 	}
-	if _, err := os.Stat(parent); err != nil {
-		if errors.Is(err, os.ErrNotExist) && parentInfo.Mode()&os.ModeSymlink != 0 {
-			if codexHomePolicy == CodexHomeOptional {
-				return PersonalSkillsAbsent, nil
-			}
-			return "", fmt.Errorf("personal-skills parent %q is a broken symlink", parent)
-		}
-		return "", fmt.Errorf("inspect personal-skills parent %q: %w", parent, err)
+	if !present {
+		return PersonalSkillsAbsent, nil
 	}
 
 	source := filepath.Join(parent, "skills")
-	sourceInfo, err := os.Lstat(source)
+	present, err = skillsPathPresent("personal skills", "personal-skills source", source, codexHomePolicy)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return PersonalSkillsAbsent, nil
-		}
-		return "", fmt.Errorf("inspect personal skills %q: %w", source, err)
+		return "", err
 	}
-	if _, err := os.Stat(source); err != nil {
-		if errors.Is(err, os.ErrNotExist) && sourceInfo.Mode()&os.ModeSymlink != 0 {
-			if codexHomePolicy == CodexHomeOptional {
-				return PersonalSkillsAbsent, nil
-			}
-			return "", fmt.Errorf("personal-skills source %q is a broken symlink", source)
-		}
-		return "", fmt.Errorf("inspect personal skills %q: %w", source, err)
+	if !present {
+		return PersonalSkillsAbsent, nil
 	}
 
 	canonical, err := canonicalizeExistingDir("personal skills", source, accessReadOK|accessExecOK)
@@ -240,6 +232,57 @@ func resolvePersonalSkills(
 		}
 	}
 	return canonical, nil
+}
+
+// pathExistence is what probePath learned about an optional host path.
+type pathExistence int
+
+const (
+	// pathMissing means nothing exists at the path.
+	pathMissing pathExistence = iota
+	// pathExists means the path resolves to existing state.
+	pathExists
+	// pathBrokenSymlink means a symlink exists but its target does not. Callers decide whether that
+	// is an error or, like a plain absence, just nothing to mount.
+	pathBrokenSymlink
+)
+
+// probePath reports whether path exists, distinguishing a broken symlink — which Lstat sees but
+// Stat does not — from a plain absence. inspectLabel names the path in I/O error messages.
+func probePath(inspectLabel string, path string) (pathExistence, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return pathMissing, nil
+		}
+		return pathMissing, fmt.Errorf("inspect %s %q: %w", inspectLabel, path, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) && info.Mode()&os.ModeSymlink != 0 {
+			return pathBrokenSymlink, nil
+		}
+		return pathMissing, fmt.Errorf("inspect %s %q: %w", inspectLabel, path, err)
+	}
+	return pathExists, nil
+}
+
+// skillsPathPresent probes a personal-skills path. A broken symlink is user intent that cannot be
+// honored, so it fails a launch that requires a Codex home; a policy that treats user state as
+// optional reports it as absent instead, like any other missing skills path.
+func skillsPathPresent(
+	inspectLabel string,
+	symlinkSubject string,
+	path string,
+	codexHomePolicy CodexHomePolicy,
+) (bool, error) {
+	existence, err := probePath(inspectLabel, path)
+	if err != nil {
+		return false, err
+	}
+	if existence == pathBrokenSymlink && codexHomePolicy != CodexHomeOptional {
+		return false, fmt.Errorf("%s %q is a broken symlink", symlinkSubject, path)
+	}
+	return existence == pathExists, nil
 }
 
 // canonicalizeExistingDir resolves source to an existing canonical directory that Docker can bind

@@ -6,40 +6,20 @@ import (
 	"strings"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
-	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
-func (docker *DockerLauncher) execProjectCommand(
+func (attempt *launchAttempt) execCommand(
 	ctx context.Context,
-	cli *dockercli.Client,
-	plan launchplan.Plan,
 	command []string,
 	containerID string,
-	codexHomePresent bool,
+	userMounts UserMounts,
 ) error {
-	request, err := buildDockerExecRequest(
-		plan,
-		command,
-		containerID,
-		docker.HostUID,
-		docker.HostGID,
-		docker.HostHome,
-		docker.AllocateTTY,
-		codexHomePresent,
-	)
+	docker := attempt.docker
+	request, err := docker.buildExecRequest(attempt.plan, command, containerID, userMounts)
 	if err != nil {
 		return err
 	}
-	if err := cli.Exec(
-		ctx,
-		request,
-		docker.Stdin,
-		docker.Stdout,
-		docker.Stderr,
-	); err != nil {
-		return err
-	}
-	return nil
+	return attempt.cli.Exec(ctx, request, docker.Stdin, docker.Stdout, docker.Stderr)
 }
 
 func isRetryableExecError(err error) bool {

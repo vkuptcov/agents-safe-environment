@@ -21,20 +21,15 @@ import (
 func TestBuildDockerRunArgsUsesDetachedSysboxAndIdentityLabels(t *testing.T) {
 	t.Parallel()
 	plan := testPlan()
-	args, err := buildDockerRunArgsForTest(
+	args, err := runArgsFor(
+		hostLauncher(1000, 1001, "/home/developer", ""),
 		plan,
 		"codex-safe-mvp:local",
 		"codex-safe-aba8b4ca4ff345d5d0443c0c",
-		1000,
-		1001,
-		"developer",
-		"developers",
-		"/home/developer",
-		"",
 		testUserMounts(),
 	)
 	if err != nil {
-		t.Fatalf("BuildDockerRunArgs() error = %v", err)
+		t.Fatalf("buildCreateRequest() error = %v", err)
 	}
 	wantPrefix := []string{
 		"run",
@@ -95,20 +90,15 @@ func TestBuildDockerRunArgsPreservesMountOrderAndUserMounts(t *testing.T) {
 	// A custom CODEX_HOME source differs from its container target, and skills are present, so this
 	// exercises every mount mode and the source-not-equal-target user-state mounts in one place.
 	userMounts := UserMounts{CodexHome: "/host/custom codex", PersonalSkills: "/host/skills"}
-	args, err := buildDockerRunArgsForTest(
+	args, err := runArgsFor(
+		hostLauncher(1000, 1000, "/home/developer profile", "/home/developer profile/.gitconfig"),
 		testPlan(),
 		"image",
 		"codex-safe-test",
-		1000,
-		1000,
-		"developer",
-		"developers",
-		"/home/developer profile",
-		"/home/developer profile/.gitconfig",
 		userMounts,
 	)
 	if err != nil {
-		t.Fatalf("BuildDockerRunArgs() error = %v", err)
+		t.Fatalf("buildCreateRequest() error = %v", err)
 	}
 	var mounts []string
 	for index, argument := range args {
@@ -135,13 +125,13 @@ func TestBuildDockerRunArgsPreservesMountOrderAndUserMounts(t *testing.T) {
 
 func TestBuildDockerRunArgsRejectsMissingCodexHome(t *testing.T) {
 	t.Parallel()
-	_, err := buildDockerRunArgsForTest(
-		testPlan(), "image", "codex-safe-test", 1000, 1000,
-		"developer", "developers", "/home/developer", "",
+	_, err := runArgsFor(
+		hostLauncher(1000, 1000, "/home/developer", ""),
+		testPlan(), "image", "codex-safe-test",
 		UserMounts{PersonalSkills: PersonalSkillsAbsent},
 	)
 	if err == nil || !strings.Contains(err.Error(), "resolved Codex home is required") {
-		t.Fatalf("BuildDockerRunArgs() error = %v, want missing Codex home", err)
+		t.Fatalf("buildCreateRequest() error = %v, want missing Codex home", err)
 	}
 }
 
@@ -150,13 +140,13 @@ func TestBuildDockerRunArgsOmitsAbsentCodexHome(t *testing.T) {
 	// agents-safe with no host Codex home: the container is created with no Codex mount and the
 	// codex-home label records the absent marker so reuse still matches.
 	userMounts := UserMounts{CodexHome: CodexHomeAbsent, PersonalSkills: PersonalSkillsAbsent}
-	args, err := buildDockerRunArgsForTest(
-		testPlan(), "image", "codex-safe-test", 1000, 1000,
-		"developer", "developers", "/home/developer profile", "",
+	args, err := runArgsFor(
+		hostLauncher(1000, 1000, "/home/developer profile", ""),
+		testPlan(), "image", "codex-safe-test",
 		userMounts,
 	)
 	if err != nil {
-		t.Fatalf("BuildDockerRunArgs() error = %v", err)
+		t.Fatalf("buildCreateRequest() error = %v", err)
 	}
 	assertLabel(t, args, codexHomeLabel, CodexHomeAbsent)
 	for index, argument := range args {
@@ -168,11 +158,13 @@ func TestBuildDockerRunArgsOmitsAbsentCodexHome(t *testing.T) {
 
 func TestBuildDockerExecArgsOmitsCodexHomeWhenAbsent(t *testing.T) {
 	t.Parallel()
-	args, err := buildDockerExecArgsForTest(
-		testPlan(), []string{"bash"}, strings.Repeat("a", 64), 1000, 1001, "/home/developer profile", false, false,
+	args, err := execArgsFor(
+		hostLauncher(1000, 1001, "/home/developer profile", ""),
+		testPlan(), []string{"bash"}, strings.Repeat("a", 64),
+		UserMounts{CodexHome: CodexHomeAbsent, PersonalSkills: PersonalSkillsAbsent},
 	)
 	if err != nil {
-		t.Fatalf("BuildDockerExecArgs() error = %v", err)
+		t.Fatalf("buildExecRequest() error = %v", err)
 	}
 	for _, argument := range args {
 		if strings.HasPrefix(argument, "CODEX_HOME=") {
@@ -185,18 +177,17 @@ func TestBuildDockerExecArgsWrapsCommandAndPreservesTerminalContract(t *testing.
 	t.Parallel()
 	containerID := strings.Repeat("a", 64)
 	command := []string{"printf", "%s\\n", "value with spaces; $(not-a-shell)", ""}
-	args, err := buildDockerExecArgsForTest(
+	docker := hostLauncher(1000, 1001, "/home/developer profile", "")
+	docker.AllocateTTY = true
+	args, err := execArgsFor(
+		docker,
 		testPlan(),
 		command,
 		containerID,
-		1000,
-		1001,
-		"/home/developer profile",
-		true,
-		true,
+		UserMounts{CodexHome: "/host/codex", PersonalSkills: PersonalSkillsAbsent},
 	)
 	if err != nil {
-		t.Fatalf("BuildDockerExecArgs() error = %v", err)
+		t.Fatalf("buildExecRequest() error = %v", err)
 	}
 	want := []string{
 		"exec",
@@ -224,7 +215,9 @@ func TestBuildDockerExecArgsWrapsCommandAndPreservesTerminalContract(t *testing.
 	}
 }
 
-func TestBuildDockerRunArgsRejectsInvalidIdentityInputs(t *testing.T) {
+// Host identity is validated once, before a launch builds any Docker request, so these inputs are
+// rejected by validateConfiguration rather than by the request builders.
+func TestValidateConfigurationRejectsInvalidIdentityInputs(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
@@ -255,12 +248,19 @@ func TestBuildDockerRunArgsRejectsInvalidIdentityInputs(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := buildDockerRunArgsForTest(
-				testPlan(), "image", "codex-safe-test", 1000, 1000,
-				test.hostUser, test.hostGroup, test.hostHome, test.gitConfig, testUserMounts(),
-			)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("BuildDockerRunArgs() error = %v, want %q", err, test.want)
+			docker := &DockerLauncher{
+				DockerBinary:  "docker",
+				CommandRunner: &fakeCommandRunner{},
+				HostOS:        "linux",
+				HostUID:       1000,
+				HostGID:       1000,
+				HostUser:      test.hostUser,
+				HostGroup:     test.hostGroup,
+				HostHome:      test.hostHome,
+				HostGitConfig: test.gitConfig,
+			}
+			if err := docker.validateConfiguration(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validateConfiguration() error = %v, want %q", err, test.want)
 			}
 		})
 	}
@@ -412,12 +412,12 @@ func TestWritableMountSourcesExcludesReadOnly(t *testing.T) {
 func TestBuildDockerRunArgsRecordsUserMountsLabels(t *testing.T) {
 	t.Parallel()
 	userMounts := UserMounts{CodexHome: "/host/custom codex", PersonalSkills: "/host/skills"}
-	args, err := buildDockerRunArgsForTest(
-		testPlan(), "image", "codex-safe-test", 1000, 1000,
-		"developer", "developers", "/home/developer", "", userMounts,
+	args, err := runArgsFor(
+		hostLauncher(1000, 1000, "/home/developer", ""),
+		testPlan(), "image", "codex-safe-test", userMounts,
 	)
 	if err != nil {
-		t.Fatalf("BuildDockerRunArgs() error = %v", err)
+		t.Fatalf("buildCreateRequest() error = %v", err)
 	}
 	assertLabel(t, args, codexHomeLabel, "/host/custom codex")
 	assertLabel(t, args, personalSkillsLabel, "/host/skills")
@@ -826,12 +826,26 @@ func filesystemDocker(
 		LookupEnv:       envLookup(nil),
 		CodexHomePolicy: CodexHomeRequired,
 	}
-	docker.resolveUserMounts = docker.defaultResolveUserMounts
+	// resolveUserMounts stays nil so resolution goes to the real filesystem under the test home.
 	return docker
 }
 
 func testUserMounts() UserMounts {
 	return UserMounts{CodexHome: "/home/developer/.codex", PersonalSkills: PersonalSkillsAbsent}
+}
+
+// hostLauncher builds a launcher carrying only the host identity the request builders read. Host
+// identity itself is validated by validateConfiguration before a launch reaches those builders, so
+// these values are always ones it would have accepted.
+func hostLauncher(hostUID int, hostGID int, hostHome string, hostGitConfig string) *DockerLauncher {
+	return &DockerLauncher{
+		HostUID:       hostUID,
+		HostGID:       hostGID,
+		HostUser:      "developer",
+		HostGroup:     "developers",
+		HostHome:      hostHome,
+		HostGitConfig: hostGitConfig,
+	}
 }
 
 func mustContainerName(t *testing.T, hostUID int, projectRoot string) string {

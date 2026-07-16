@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"errors"
-	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,16 +11,13 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
-func buildDockerCreateRequest(
+// Host identity is validated once by validateConfiguration before a launch starts, so the request
+// builders below assume it and check only what is specific to the request they encode.
+
+func (docker *DockerLauncher) buildCreateRequest(
 	plan launchplan.Plan,
 	image string,
 	containerName string,
-	hostUID int,
-	hostGID int,
-	hostUser string,
-	hostGroup string,
-	hostHome string,
-	hostGitConfig string,
 	userMounts UserMounts,
 ) (dockercli.CreateRequest, error) {
 	if strings.TrimSpace(image) == "" {
@@ -30,34 +26,22 @@ func buildDockerCreateRequest(
 	if err := validateSessionName(containerName); err != nil {
 		return dockercli.CreateRequest{}, err
 	}
-	if hostUID < 0 || hostGID < 0 {
-		return dockercli.CreateRequest{}, fmt.Errorf("invalid host identity %d:%d", hostUID, hostGID)
-	}
-	if err := validateAccountName("host user", hostUser); err != nil {
-		return dockercli.CreateRequest{}, err
-	}
-	if err := validateAccountName("host group", hostGroup); err != nil {
-		return dockercli.CreateRequest{}, err
-	}
-	if hostHome == "/" {
-		return dockercli.CreateRequest{}, errors.New("host home directory cannot be the filesystem root")
-	}
 	if userMounts.CodexHome == "" {
 		return dockercli.CreateRequest{}, errors.New("resolved Codex home is required")
 	}
 
 	mounts := make([]dockercli.Mount, 0, len(plan.Mounts)+3)
-	if hostGitConfig != "" {
+	if docker.HostGitConfig != "" {
 		mounts = append(mounts, dockercli.Mount{
-			Source:   hostGitConfig,
-			Target:   filepath.Join(hostHome, ".gitconfig"),
+			Source:   docker.HostGitConfig,
+			Target:   filepath.Join(docker.HostHome, ".gitconfig"),
 			ReadOnly: true,
 		})
 	}
 	for _, mount := range plan.Mounts {
 		mounts = append(mounts, dockercli.Mount(mount))
 	}
-	for _, mount := range userMountBindMounts(hostHome, userMounts) {
+	for _, mount := range userMountBindMounts(docker.HostHome, userMounts) {
 		mounts = append(mounts, dockercli.Mount(mount))
 	}
 	return dockercli.CreateRequest{
@@ -68,59 +52,55 @@ func buildDockerCreateRequest(
 		Labels: []dockercli.KeyValue{
 			{Key: managedLabel, Value: managedLabelValue},
 			{Key: projectPathLabel, Value: plan.ProjectRoot},
-			{Key: hostUIDLabel, Value: strconv.Itoa(hostUID)},
+			{Key: hostUIDLabel, Value: strconv.Itoa(docker.HostUID)},
 			{Key: managerProtocolLabel, Value: session.ProtocolVersion},
 			{Key: codexHomeLabel, Value: userMounts.codexHomeLabel()},
 			{Key: personalSkillsLabel, Value: userMounts.personalSkillsLabel()},
 		},
 		Environment: []dockercli.KeyValue{
-			{Key: "CODEX_SAFE_HOST_UID", Value: strconv.Itoa(hostUID)},
-			{Key: "CODEX_SAFE_HOST_GID", Value: strconv.Itoa(hostGID)},
-			{Key: "CODEX_SAFE_HOST_USER", Value: hostUser},
-			{Key: "CODEX_SAFE_HOST_GROUP", Value: hostGroup},
-			{Key: "CODEX_SAFE_HOST_HOME", Value: hostHome},
+			{Key: "CODEX_SAFE_HOST_UID", Value: strconv.Itoa(docker.HostUID)},
+			{Key: "CODEX_SAFE_HOST_GID", Value: strconv.Itoa(docker.HostGID)},
+			{Key: "CODEX_SAFE_HOST_USER", Value: docker.HostUser},
+			{Key: "CODEX_SAFE_HOST_GROUP", Value: docker.HostGroup},
+			{Key: "CODEX_SAFE_HOST_HOME", Value: docker.HostHome},
 		},
 		Mounts: mounts,
 	}, nil
 }
 
-func buildDockerExecRequest(
+func (docker *DockerLauncher) buildExecRequest(
 	plan launchplan.Plan,
 	command []string,
 	containerID string,
-	hostUID int,
-	hostGID int,
-	hostHome string,
-	tty bool,
-	codexHomePresent bool,
+	userMounts UserMounts,
 ) (dockercli.ExecRequest, error) {
 	if len(command) == 0 {
 		return dockercli.ExecRequest{}, errors.New("command is required")
 	}
-	if hostUID < 0 || hostGID < 0 {
-		return dockercli.ExecRequest{}, fmt.Errorf("invalid host identity %d:%d", hostUID, hostGID)
-	}
-	if hostHome == "/" {
-		return dockercli.ExecRequest{}, errors.New("host home directory cannot be the filesystem root")
-	}
 
-	environment := []dockercli.KeyValue{{Key: "HOME", Value: hostHome}}
-	if codexHomePresent {
+	environment := []dockercli.KeyValue{{Key: "HOME", Value: docker.HostHome}}
+	if userMounts.CodexHomePresent() {
 		environment = append(environment, dockercli.KeyValue{
 			Key:   "CODEX_HOME",
-			Value: filepath.Join(hostHome, ".codex"),
+			Value: containerCodexHome(docker.HostHome),
 		})
 	}
 	wrappedCommand := append([]string{"codex-safe-session", "run", "--"}, command...)
 	return dockercli.ExecRequest{
 		ContainerID: containerID,
-		User:        strconv.Itoa(hostUID) + ":" + strconv.Itoa(hostGID),
+		User:        strconv.Itoa(docker.HostUID) + ":" + strconv.Itoa(docker.HostGID),
 		WorkingDir:  plan.WorkingDir,
 		Environment: environment,
 		Command:     wrappedCommand,
 		Interactive: true,
-		AllocateTTY: tty,
+		AllocateTTY: docker.AllocateTTY,
 	}, nil
+}
+
+// containerCodexHome is the container-local Codex home: both the Codex-home mount target and the
+// CODEX_HOME value the wrapped command sees. One definition keeps the two from drifting.
+func containerCodexHome(hostHome string) string {
+	return filepath.Join(hostHome, ".codex")
 }
 
 // userMountBindMounts returns the shared user-specific bind mounts for a launch.
@@ -129,7 +109,7 @@ func userMountBindMounts(hostHome string, userMounts UserMounts) []launchplan.Bi
 	if userMounts.CodexHomePresent() {
 		mounts = append(mounts, launchplan.BindMount{
 			Source: userMounts.CodexHome,
-			Target: filepath.Join(hostHome, ".codex"),
+			Target: containerCodexHome(hostHome),
 		})
 	}
 	if userMounts.SkillsPresent() {

@@ -56,7 +56,20 @@ type DockerLauncher struct {
 	// CodexHomePolicy controls how a missing Codex home is handled.
 	CodexHomePolicy CodexHomePolicy
 
+	// resolveUserMounts overrides host user-mount resolution in tests. Production launchers leave it
+	// nil and resolve from the filesystem; see resolveMounts.
 	resolveUserMounts func(launchplan.Plan) (userMountResolution, error)
+}
+
+// launchAttempt carries the values that stay fixed for one Launch: the Docker client and the
+// container the lifecycle steps operate on. The steps read them from here instead of threading them
+// through every signature.
+type launchAttempt struct {
+	docker        *DockerLauncher
+	cli           *dockercli.Client
+	plan          launchplan.Plan
+	image         string
+	containerName string
 }
 
 // NewDockerLauncher creates a launcher backed by the host Docker CLI and current process streams.
@@ -105,8 +118,16 @@ func NewDockerLauncher(codexHomePolicy CodexHomePolicy) (*DockerLauncher, error)
 		LookupEnv:       os.LookupEnv,
 		CodexHomePolicy: codexHomePolicy,
 	}
-	docker.resolveUserMounts = docker.defaultResolveUserMounts
 	return docker, nil
+}
+
+// resolveMounts resolves this launch's user mounts through the test seam when one is injected, and
+// from the host filesystem otherwise.
+func (docker *DockerLauncher) resolveMounts(plan launchplan.Plan) (userMountResolution, error) {
+	if docker.resolveUserMounts != nil {
+		return docker.resolveUserMounts(plan)
+	}
+	return docker.defaultResolveUserMounts(plan)
 }
 
 func (docker *DockerLauncher) defaultResolveUserMounts(plan launchplan.Plan) (userMountResolution, error) {
@@ -181,11 +202,7 @@ func (docker *DockerLauncher) materializeUserMounts(
 	if !created {
 		return UserMounts{}, fmt.Errorf("Codex home %q does not exist", resolution.missingCodexHome)
 	}
-	resolve := docker.resolveUserMounts
-	if resolve == nil {
-		resolve = docker.defaultResolveUserMounts
-	}
-	resolved, err := resolve(plan)
+	resolved, err := docker.resolveMounts(plan)
 	if err != nil {
 		return UserMounts{}, err
 	}
@@ -221,34 +238,31 @@ func (docker *DockerLauncher) Launch(
 	if strings.TrimSpace(image) == "" {
 		return errors.New("container image is required")
 	}
-	resolve := docker.resolveUserMounts
-	if resolve == nil {
-		resolve = docker.defaultResolveUserMounts
-	}
-	resolution, err := resolve(plan)
+	resolution, err := docker.resolveMounts(plan)
 	if err != nil {
 		return err
 	}
-	cli := dockercli.New(docker.DockerBinary, docker.CommandRunner)
+	attempt := &launchAttempt{
+		docker:        docker,
+		cli:           dockercli.New(docker.DockerBinary, docker.CommandRunner),
+		plan:          plan,
+		image:         image,
+		containerName: ProjectContainerName(docker.HostUID, plan.ProjectRoot),
+	}
 
-	containerName := ProjectContainerName(docker.HostUID, plan.ProjectRoot)
-	containerID, userMounts, err := docker.acquireProjectContainer(
-		ctx, cli, plan, image, containerName, resolution,
-	)
+	containerID, userMounts, err := attempt.acquireContainer(ctx, resolution)
 	if err != nil {
 		return err
 	}
 
-	execErr := docker.execProjectCommand(
-		ctx, cli, plan, command, containerID, userMounts.CodexHomePresent(),
-	)
+	execErr := attempt.execCommand(ctx, command, containerID, userMounts)
 	if execErr == nil {
 		return nil
 	}
 	if !isRetryableExecError(execErr) {
 		return execErr
 	}
-	retry, retryErr := docker.containerStoppedAfterExec(ctx, cli, plan, containerName, userMounts)
+	retry, retryErr := attempt.containerStoppedAfterExec(ctx, userMounts)
 	if retryErr != nil {
 		return errors.Join(execErr, retryErr)
 	}
@@ -256,20 +270,12 @@ func (docker *DockerLauncher) Launch(
 		return execErr
 	}
 
-	containerID, userMounts, err = docker.acquireProjectContainer(
-		ctx,
-		cli,
-		plan,
-		image,
-		containerName,
-		userMountResolution{mounts: userMounts},
-	)
+	// The mounts are already materialized, so the replacement container reuses them as resolved.
+	containerID, userMounts, err = attempt.acquireContainer(ctx, userMountResolution{mounts: userMounts})
 	if err != nil {
 		return errors.Join(execErr, err)
 	}
-	if err := docker.execProjectCommand(
-		ctx, cli, plan, command, containerID, userMounts.CodexHomePresent(),
-	); err != nil {
+	if err := attempt.execCommand(ctx, command, containerID, userMounts); err != nil {
 		return fmt.Errorf("exec in replacement Sysbox container: %w", err)
 	}
 	return nil

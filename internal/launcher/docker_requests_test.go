@@ -7,64 +7,31 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
-func buildDockerRunArgsForTest(
+// runArgsFor encodes the docker run arguments a launcher would issue, so request-building tests can
+// assert on the wire form.
+func runArgsFor(
+	docker *DockerLauncher,
 	plan launchplan.Plan,
 	image string,
 	containerName string,
-	hostUID int,
-	hostGID int,
-	hostUser string,
-	hostGroup string,
-	hostHome string,
-	hostGitConfig string,
 	userMounts UserMounts,
 ) ([]string, error) {
-	if err := launchplan.ValidateMountPath("host home directory", hostHome); err != nil {
-		return nil, err
-	}
-	if hostGitConfig != "" {
-		if err := launchplan.ValidateMountPath("host Git config", hostGitConfig); err != nil {
-			return nil, err
-		}
-	}
-	request, err := buildDockerCreateRequest(
-		plan,
-		image,
-		containerName,
-		hostUID,
-		hostGID,
-		hostUser,
-		hostGroup,
-		hostHome,
-		hostGitConfig,
-		userMounts,
-	)
+	request, err := docker.buildCreateRequest(plan, image, containerName, userMounts)
 	if err != nil {
 		return nil, err
 	}
 	return dockercli.BuildCreateArgs(request)
 }
 
-func buildDockerExecArgsForTest(
+// execArgsFor encodes the docker exec arguments a launcher would issue.
+func execArgsFor(
+	docker *DockerLauncher,
 	plan launchplan.Plan,
 	command []string,
 	containerID string,
-	hostUID int,
-	hostGID int,
-	hostHome string,
-	tty bool,
-	codexHomePresent bool,
+	userMounts UserMounts,
 ) ([]string, error) {
-	request, err := buildDockerExecRequest(
-		plan,
-		command,
-		containerID,
-		hostUID,
-		hostGID,
-		hostHome,
-		tty,
-		codexHomePresent,
-	)
+	request, err := docker.buildExecRequest(plan, command, containerID, userMounts)
 	if err != nil {
 		return nil, err
 	}
