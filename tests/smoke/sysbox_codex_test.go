@@ -44,11 +44,11 @@ func TestSysboxCodexProductLaunch(t *testing.T) {
 	}
 	sentinel := fixture.setupCodexSentinel()
 
-	// Hold the outer container open with a registered probe command so the product launches below
+	// Hold the container open with a registered probe command so the product launches below
 	// reuse one session created with the sentinel Codex home.
 	holdRelease := filepath.Join(fixture.project.worktree, "codex-hold.release")
 	hold := fixture.launcher.start(fixture.project.worktree, "bash", "-c", waitScript, "bash", holdRelease)
-	fixture.docker.waitForOuter()
+	fixture.docker.waitForContainer()
 
 	fixture.assertCodexHomeMounts(sentinel)
 	fixture.assertCodexReadsSentinelAndWritesState()
@@ -57,7 +57,7 @@ func TestSysboxCodexProductLaunch(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(holdRelease, nil, 0o600), "hold release marker must be writable")
 	hold.requireExit(t, "codex hold command")
-	fixture.docker.waitForOuterRemoval()
+	fixture.docker.waitForContainerRemoval()
 	requireHostOwnership(t, fixture.project.codexHome, sentinel.personalSkills)
 }
 
@@ -171,11 +171,11 @@ func (fixture *smokeFixture) assertReuseMismatchDiagnostic(sentinel codexSentine
 		"doctor",
 	)
 	mismatch.waitDone(fixture.t, "codex reuse-mismatch launch")
-	require.NotZero(fixture.t, mismatch.exitCode(), "a user-state mismatch must fail the launch")
+	require.NotZero(fixture.t, mismatch.exitCode(), "a user-mount mismatch must fail the launch")
 	require.Contains(fixture.t, mismatch.stderr.String(), "finish the active session",
 		"the launcher must report the finish-active-session diagnostic\n%s", mismatch.diagnostics())
 	require.True(fixture.t, hold.running(), "the live session must not be terminated by a mismatched launch")
-	require.True(fixture.t, fixture.docker.inspectOuter().State.Running, "the outer container must remain running")
+	require.True(fixture.t, fixture.docker.inspectContainer().State.Running, "the container must remain running")
 	require.Len(fixture.t, fixture.docker.managedContainers(), 1, "a mismatch must not create a second container")
 }
 
@@ -256,7 +256,7 @@ func (process *launcherProcess) exitCode() int {
 	return -1
 }
 
-// codexInspectScript observes the container's view of the mounted user state and reports facts for
+// codexInspectScript observes the container's view of the mounted user mounts and reports facts for
 // Go assertions. It avoids set -e so individual negative probes do not abort the report.
 const codexInspectScript = `set -uo pipefail
 report=$1

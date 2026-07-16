@@ -9,10 +9,10 @@ import (
 	"unsafe"
 )
 
-// IsReader reports whether reader is attached to a terminal device. It uses
+// IsTerminal reports whether reader is attached to a terminal device. It uses
 // TCGETS instead of ModeCharDevice because devices such as /dev/null are also
 // character devices but do not deliver terminal-generated signals.
-func IsReader(reader io.Reader) bool {
+func IsTerminal(reader io.Reader) bool {
 	file, ok := reader.(*os.File)
 	if !ok {
 		return false

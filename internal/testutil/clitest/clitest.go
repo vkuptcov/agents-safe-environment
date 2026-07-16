@@ -7,12 +7,12 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/cli"
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
-	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
-// RecordingDocker records the arguments of the last Launch call and returns a fixed error.
-type RecordingDocker struct {
-	Plan          launcher.Plan
+// RecordingLauncher records the arguments of the last Launch call and returns a fixed error.
+type RecordingLauncher struct {
+	LaunchPlan    launchplan.Plan
 	Image         string
 	Command       []string
 	Err           error
@@ -21,23 +21,30 @@ type RecordingDocker struct {
 
 // Launch records its arguments, or panics when PanicOnLaunch is set for tests that must return
 // before any launch.
-func (docker *RecordingDocker) Launch(_ context.Context, plan launcher.Plan, image string, command []string) error {
-	if docker.PanicOnLaunch {
+func (recording *RecordingLauncher) Launch(
+	_ context.Context,
+	plan launchplan.Plan,
+	image string,
+	command []string,
+) error {
+	if recording.PanicOnLaunch {
 		panic("Launch should not be called")
 	}
-	docker.Plan = plan
-	docker.Image = image
-	docker.Command = append([]string(nil), command...)
-	return docker.Err
+	recording.LaunchPlan = plan
+	recording.Image = image
+	recording.Command = append([]string(nil), command...)
+	return recording.Err
 }
 
-// PanicApp returns an App whose collaborators all panic, for tests that must return before reaching
-// discovery, plan building, or launch.
-func PanicApp() cli.App {
-	return cli.App{
-		Discover:  func(context.Context, string) (gitproject.Project, error) { panic("discover should not be called") },
-		BuildPlan: func(gitproject.Project) (launcher.Plan, error) { panic("buildPlan should not be called") },
-		Docker:    &RecordingDocker{PanicOnLaunch: true},
+// PanicDependencies returns dependencies whose operations panic, for tests that must return before
+// reaching discovery, launch-plan construction, or container launch.
+func PanicDependencies() cli.Dependencies {
+	return cli.Dependencies{
+		Discover: func(context.Context, string) (gitproject.Project, error) { panic("discover should not be called") },
+		BuildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) {
+			panic("BuildLaunchPlan should not be called")
+		},
+		Launcher: &RecordingLauncher{PanicOnLaunch: true},
 	}
 }
 

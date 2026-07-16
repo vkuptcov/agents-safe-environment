@@ -10,6 +10,7 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/cli"
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 	"github.com/vkuptcov/agents-safe-environment/internal/testutil/clitest"
 )
 
@@ -17,7 +18,7 @@ func TestConfigHelp(t *testing.T) {
 	t.Parallel()
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	exitCode := cli.Run(context.Background(), config(), []string{"--help"}, stdout, stderr, clitest.PanicApp())
+	exitCode := cli.Run(context.Background(), config(), []string{"--help"}, stdout, stderr, clitest.PanicDependencies())
 	if exitCode != 0 {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
@@ -32,70 +33,70 @@ func TestConfigHelp(t *testing.T) {
 func TestConfigDefaultsToInteractiveCodex(t *testing.T) {
 	t.Parallel()
 	wantProject := gitproject.Project{RequestedDir: "/project", WorktreeRoot: "/project"}
-	wantPlan := launcher.Plan{
+	wantLaunchPlan := launchplan.Plan{
 		ProjectRoot: "/project",
 		WorkingDir:  "/project",
-		Mounts:      []launcher.Mount{{Source: "/project", Target: "/project"}},
+		Mounts:      []launchplan.BindMount{{Source: "/project", Target: "/project"}},
 	}
-	fakeDocker := &clitest.RecordingDocker{}
+	fakeLauncher := &clitest.RecordingLauncher{}
 	var builtFor gitproject.Project
-	app := cli.App{
+	dependencies := cli.Dependencies{
 		Discover: func(_ context.Context, path string) (gitproject.Project, error) {
 			if path != "." {
 				t.Errorf("discover path = %q, want default \".\"", path)
 			}
 			return wantProject, nil
 		},
-		BuildPlan: func(project gitproject.Project) (launcher.Plan, error) {
+		BuildLaunchPlan: func(project gitproject.Project) (launchplan.Plan, error) {
 			builtFor = project
-			return wantPlan, nil
+			return wantLaunchPlan, nil
 		},
-		Docker: fakeDocker,
+		Launcher: fakeLauncher,
 	}
 
-	exitCode := cli.Run(context.Background(), config(), nil, new(bytes.Buffer), new(bytes.Buffer), app)
+	exitCode := cli.Run(context.Background(), config(), nil, new(bytes.Buffer), new(bytes.Buffer), dependencies)
 
 	if exitCode != 0 {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
 	wantCommand := []string{launcher.CodexBinaryPath}
-	if !reflect.DeepEqual(fakeDocker.Command, wantCommand) {
-		t.Errorf("command = %#v, want interactive Codex %#v", fakeDocker.Command, wantCommand)
+	if !reflect.DeepEqual(fakeLauncher.Command, wantCommand) {
+		t.Errorf("command = %#v, want interactive Codex %#v", fakeLauncher.Command, wantCommand)
 	}
-	if fakeDocker.Image != defaultImage {
-		t.Errorf("image = %q, want %q", fakeDocker.Image, defaultImage)
+	if fakeLauncher.Image != defaultImage {
+		t.Errorf("image = %q, want %q", fakeLauncher.Image, defaultImage)
 	}
 	if !reflect.DeepEqual(builtFor, wantProject) {
-		t.Errorf("buildPlan project = %#v, want discovered %#v", builtFor, wantProject)
+		t.Errorf("BuildLaunchPlan project = %#v, want discovered %#v", builtFor, wantProject)
 	}
-	if !reflect.DeepEqual(fakeDocker.Plan, wantPlan) {
-		t.Errorf("plan forwarded to Launch = %#v, want %#v", fakeDocker.Plan, wantPlan)
+	if !reflect.DeepEqual(fakeLauncher.LaunchPlan, wantLaunchPlan) {
+		t.Errorf("launch plan forwarded to Launch = %#v, want %#v", fakeLauncher.LaunchPlan, wantLaunchPlan)
 	}
 }
 
 func TestConfigForwardsCodexArguments(t *testing.T) {
 	t.Parallel()
-	fakeDocker := &clitest.RecordingDocker{}
-	app := cli.App{
-		Discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		BuildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
-		Docker:    fakeDocker,
+	fakeLauncher := &clitest.RecordingLauncher{}
+	dependencies := cli.Dependencies{
+		Discover:        func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		BuildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) { return launchplan.Plan{}, nil },
+		Launcher:        fakeLauncher,
 	}
 	exitCode := cli.Run(
 		context.Background(),
 		config(),
 		[]string{"--project", "/project/nested", "--image", "test:image", "--", "exec", "--model", "gpt-5"},
-		new(bytes.Buffer), new(bytes.Buffer), app,
+		new(bytes.Buffer), new(bytes.Buffer), dependencies,
 	)
 	if exitCode != 0 {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
-	if fakeDocker.Image != "test:image" {
-		t.Errorf("image = %q, want test:image", fakeDocker.Image)
+	if fakeLauncher.Image != "test:image" {
+		t.Errorf("image = %q, want test:image", fakeLauncher.Image)
 	}
 	wantCommand := []string{launcher.CodexBinaryPath, "exec", "--model", "gpt-5"}
-	if !reflect.DeepEqual(fakeDocker.Command, wantCommand) {
-		t.Errorf("command = %#v, want %#v", fakeDocker.Command, wantCommand)
+	if !reflect.DeepEqual(fakeLauncher.Command, wantCommand) {
+		t.Errorf("command = %#v, want %#v", fakeLauncher.Command, wantCommand)
 	}
 }
 
@@ -103,23 +104,23 @@ func TestConfigForwardsCodexArguments(t *testing.T) {
 // argument. The image-owned Codex path is always command[0]; the launcher never runs another program.
 func TestConfigNeverRunsArbitraryExecutable(t *testing.T) {
 	t.Parallel()
-	fakeDocker := &clitest.RecordingDocker{}
-	app := cli.App{
-		Discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		BuildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
-		Docker:    fakeDocker,
+	fakeLauncher := &clitest.RecordingLauncher{}
+	dependencies := cli.Dependencies{
+		Discover:        func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		BuildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) { return launchplan.Plan{}, nil },
+		Launcher:        fakeLauncher,
 	}
 	exitCode := cli.Run(
 		context.Background(),
 		config(),
 		[]string{"--", "/bin/sh", "-c", "rm -rf /; $(malicious)"},
-		new(bytes.Buffer), new(bytes.Buffer), app,
+		new(bytes.Buffer), new(bytes.Buffer), dependencies,
 	)
 	if exitCode != 0 {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
 	wantCommand := []string{launcher.CodexBinaryPath, "/bin/sh", "-c", "rm -rf /; $(malicious)"}
-	if !reflect.DeepEqual(fakeDocker.Command, wantCommand) {
-		t.Errorf("command = %#v, want the executable forwarded as a Codex argument %#v", fakeDocker.Command, wantCommand)
+	if !reflect.DeepEqual(fakeLauncher.Command, wantCommand) {
+		t.Errorf("command = %#v, want the executable forwarded as a Codex argument %#v", fakeLauncher.Command, wantCommand)
 	}
 }

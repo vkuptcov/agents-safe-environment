@@ -1,4 +1,6 @@
-package launcher
+// Package launchplan builds the validated filesystem contract passed from Git discovery to host
+// container orchestration.
+package launchplan
 
 import (
 	"fmt"
@@ -8,8 +10,8 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 )
 
-// Mount describes one host bind mount in the outer container.
-type Mount struct {
+// BindMount describes one host path exposed to the Sysbox container through a Docker bind mount.
+type BindMount struct {
 	// Source is the canonical absolute path on the host.
 	Source string
 	// Target is the absolute path inside the container. It normally equals Source so Git and
@@ -19,36 +21,36 @@ type Mount struct {
 	ReadOnly bool
 }
 
-// Plan is the filesystem contract from Git-project discovery to the Docker
-// launcher. It identifies the managed worktree, preserves the caller's working
-// directory, and restricts the host paths bind-mounted into the outer container.
+// Plan is the validated filesystem contract passed from Git-project discovery to the launcher.
+// It identifies the managed worktree, preserves the caller's working directory, and restricts the host
+// paths bind-mounted into the container.
 type Plan struct {
 	// ProjectRoot is the canonical root of the selected Git worktree. The launcher uses it as the
-	// stable identity when it creates or reuses that worktree's managed outer container.
+	// stable identity when it creates or reuses that worktree's managed container.
 	ProjectRoot string
 	// WorkingDir is the canonical caller directory within ProjectRoot. The launcher passes it to
-	// Docker as the outer container's working directory.
+	// Docker as the container's working directory.
 	WorkingDir string
-	// Mounts is the ordered, normalized set of host bind mounts for the outer container. Ordering
+	// Mounts is the ordered, normalized set of host bind mounts for the container. Ordering
 	// preserves the linked-worktree policy: a narrow writable Git mount follows its read-only parent.
-	Mounts []Mount
+	Mounts []BindMount
 }
 
-// BuildPlan converts a discovered Git project into a validated mount plan.
-func BuildPlan(project gitproject.Project) (Plan, error) {
+// Build converts a discovered Git project into a validated container launch plan.
+func Build(project gitproject.Project) (Plan, error) {
 	if err := validateWorkingDirectory(project.RequestedDir, project.WorktreeRoot); err != nil {
 		return Plan{}, err
 	}
 
-	mounts := make([]Mount, 0, 3)
+	mounts := make([]BindMount, 0, 3)
 	if project.Linked {
 		mounts = append(mounts,
-			Mount{Source: project.PrimaryRoot, Target: project.PrimaryRoot, ReadOnly: true},
-			Mount{Source: project.CommonGitDir, Target: project.CommonGitDir},
-			Mount{Source: project.WorktreeRoot, Target: project.WorktreeRoot},
+			BindMount{Source: project.PrimaryRoot, Target: project.PrimaryRoot, ReadOnly: true},
+			BindMount{Source: project.CommonGitDir, Target: project.CommonGitDir},
+			BindMount{Source: project.WorktreeRoot, Target: project.WorktreeRoot},
 		)
 	} else {
-		mounts = append(mounts, Mount{Source: project.WorktreeRoot, Target: project.WorktreeRoot})
+		mounts = append(mounts, BindMount{Source: project.WorktreeRoot, Target: project.WorktreeRoot})
 	}
 
 	normalized, err := normalizeMounts(mounts)
@@ -63,19 +65,11 @@ func BuildPlan(project gitproject.Project) (Plan, error) {
 	}, nil
 }
 
-func validatePlan(plan Plan) ([]Mount, error) {
-	if err := validateWorkingDirectory(plan.WorkingDir, plan.ProjectRoot); err != nil {
-		return nil, err
-	}
-
-	return normalizeMounts(plan.Mounts)
-}
-
 func validateWorkingDirectory(workingDir string, worktreeRoot string) error {
-	if err := validateMountPath("working directory", workingDir); err != nil {
+	if err := ValidateMountPath("working directory", workingDir); err != nil {
 		return err
 	}
-	if err := validateMountPath("working-tree root", worktreeRoot); err != nil {
+	if err := ValidateMountPath("working-tree root", worktreeRoot); err != nil {
 		return err
 	}
 
@@ -89,15 +83,15 @@ func validateWorkingDirectory(workingDir string, worktreeRoot string) error {
 	return nil
 }
 
-func normalizeMounts(mounts []Mount) ([]Mount, error) {
-	normalized := make([]Mount, 0, len(mounts))
-	byTarget := make(map[string]Mount, len(mounts))
+func normalizeMounts(mounts []BindMount) ([]BindMount, error) {
+	normalized := make([]BindMount, 0, len(mounts))
+	byTarget := make(map[string]BindMount, len(mounts))
 
 	for _, mount := range mounts {
-		if err := validateMountPath("mount source", mount.Source); err != nil {
+		if err := ValidateMountPath("mount source", mount.Source); err != nil {
 			return nil, err
 		}
-		if err := validateMountPath("mount target", mount.Target); err != nil {
+		if err := ValidateMountPath("mount target", mount.Target); err != nil {
 			return nil, err
 		}
 
@@ -121,7 +115,8 @@ func normalizeMounts(mounts []Mount) ([]Mount, error) {
 	return normalized, nil
 }
 
-func validateMountPath(label string, path string) error {
+// ValidateMountPath verifies one canonical absolute host or container path used in a bind-mount contract.
+func ValidateMountPath(label string, path string) error {
 	if path == "" {
 		return fmt.Errorf("%s is empty", label)
 	}

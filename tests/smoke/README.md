@@ -2,7 +2,7 @@
 
 This directory contains the real-host integration test for `codex-safe` and `agents-safe`. The lifecycle probes run
 arbitrary bash through the public `agents-safe` command, and the Codex-specific assertions run `codex-safe`
-directly, so the suite drives the same launcher create, reuse, and exec path a user runs. The test creates an outer
+directly, so the suite drives the same launcher create, reuse, and exec path a user runs. The test creates a managed
 container with the `sysbox-runc` runtime, starts a private Docker daemon inside that container, and exercises a
 linked Git worktree through multiple concurrent client commands.
 
@@ -71,7 +71,7 @@ Host Go test
              │
              │ agents-safe --project <linked worktree> -- <command>
              ▼
-Managed outer container (sysbox-runc, not privileged)
+Managed container (sysbox-runc, not privileged)
 ├── codex-safe-session manager
 ├── recreated host user, group, and home path
 ├── mounted project, common Git directory, and read-only .gitconfig
@@ -81,8 +81,8 @@ Managed outer container (sysbox-runc, not privileged)
              └── Docker Compose service
 ```
 
-The Go test accesses the host Docker socket. The socket is deliberately not mounted into the outer container.
-Commands in the outer container talk to the private nested daemon instead.
+The Go test accesses the host Docker socket. The socket is deliberately not mounted into the container.
+Commands in the container talk to the private nested daemon instead.
 
 ## Scenario
 
@@ -92,30 +92,30 @@ Commands in the outer container talk to the private nested daemon instead.
    home. Paths contain spaces so path quoting is exercised.
 2. Create a host sentinel container. The nested daemon must never be able to see it.
 3. Start the environment probe from the nested project directory. This first client creates the deterministic
-   outer container and remains connected at a synchronization barrier.
-4. Run the worktree probe through a second client. It must reuse the outer container, modify and stage a linked
+   container and remains connected at a synchronization barrier.
+4. Run the worktree probe through a second client. It must reuse the container, modify and stage a linked
    worktree file, write the common Git directory, and fail to modify the read-only primary checkout.
 5. Start a nested-Docker probe through another client. It runs a container with a project bind mount and starts
    a Compose service on the private daemon.
-6. Inspect the live outer container from the host and validate its labels, runtime, working directory, privilege
+6. Inspect the live container from the host and validate its labels, runtime, working directory, privilege
    mode, and mounts.
-7. Start another command and prove that it sees the same outer hostname and nested daemon. Release clients one at
-   a time and prove that the remaining clients and outer container stay alive.
-8. Release the final client, observe the idle grace period, wait for automatic outer-container removal, and
+7. Start another command and prove that it sees the same container hostname and nested daemon. Release clients one at
+   a time and prove that the remaining clients and container stay alive.
+8. Release the final client, observe the idle grace period, wait for automatic container removal, and
    validate nested cleanup and host-side file ownership.
-9. Start two first callers concurrently against a fresh session and prove that exactly one deterministic outer
+9. Start two first callers concurrently against a fresh session and prove that exactly one deterministic managed
    container is created.
 
 `TestSysboxAgentsSafeBash` starts `agents-safe bash -c ...` without a separator and verifies that Bash runs in the
-selected project before the idle lifecycle removes the outer container.
+selected project before the idle lifecycle removes the container.
 
-`TestSysboxAgentsSafeWithoutCodexHome` omits the fixture `.codex` directory and verifies that the real outer container
+`TestSysboxAgentsSafeWithoutCodexHome` omits the fixture `.codex` directory and verifies that the real container
 has no Codex-home bind mount, carries the `absent` compatibility label, and does not pass `CODEX_HOME` to the command.
 
 ## Probe synchronization
 
 Long-running probes communicate through files in the temporary linked worktree. That directory is visible to both
-the host test and commands inside the outer container.
+the host test and commands inside the container.
 
 - `*.report` contains observed facts in `key=value` form.
 - `*.ready` tells the host that a probe reached its inspection barrier.
@@ -140,12 +140,12 @@ immediately and includes the command's captured stdout and stderr instead of wai
 | Worktree | Git works from a linked worktree; a file can be staged; the common Git directory is writable. |
 | Mount policy | The primary checkout is read-only; the linked worktree and common Git directory are writable. |
 | Mount isolation | Mounts use `rprivate`; no source or destination is the host Docker socket. |
-| Outer container | It uses `sysbox-runc`, is not privileged, preserves its working directory, and has exact labels. |
+| Container | It uses `sysbox-runc`, is not privileged, preserves its working directory, and has exact labels. |
 | Nested daemon | Its ID differs from the host daemon, it uses `crun`, and it cannot see the sentinel. |
 | Nested workloads | `docker run` writes through a bind mount and the Compose service reaches the running state. |
-| Session reuse | Overlapping clients share one outer hostname, one nested daemon, and one managed container. |
+| Session reuse | Overlapping clients share one container hostname, one nested daemon, and one managed container. |
 | Session lifecycle | One client can exit without stopping others; final idle removal occurs after the grace period. |
-| Creation race | Two concurrent first callers converge on exactly one deterministic outer container. |
+| Creation race | Two concurrent first callers converge on exactly one deterministic container. |
 | Cleanup | Nested objects never appear in host Docker; the sentinel survives; Sysbox writes retain host ownership. |
 | Host usability | The host can append to a file created by a nested container after cleanup. |
 
@@ -169,10 +169,10 @@ host.
 Normal cleanup happens at two levels:
 
 - probes remove their nested container and Compose service when their release marker appears;
-- `t.Cleanup` force-removes the deterministic outer container and host sentinel, closes the Moby client, and lets
+- `t.Cleanup` force-removes the deterministic container and host sentinel, closes the Moby client, and lets
   `t.TempDir` remove the Git fixture.
 
-The forced outer-container removal is also the fallback when an assertion stops the scenario before release markers
+The forced container removal is also the fallback when an assertion stops the scenario before release markers
 are written. An abrupt kill of the Go test process can bypass `t.Cleanup`; inspect possible leftovers with:
 
 ```bash
@@ -180,7 +180,7 @@ docker ps -a --filter label=codex-safe.managed=true
 docker ps -a --filter label=codex-safe.smoke=go
 ```
 
-Container names include the project key, so independent smoke runs do not share a host sentinel or managed outer
+Container names include the project key, so independent smoke runs do not share a host sentinel or managed
 container.
 
 ## Extending the scenario

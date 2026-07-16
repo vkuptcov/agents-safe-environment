@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
 // codexHomeEnv is the host environment variable that overrides the default Codex home.
@@ -14,7 +16,7 @@ const codexHomeEnv = "CODEX_HOME"
 
 // PersonalSkillsAbsent is recorded as the personal-skills source when the host has no
 // $HOME/.agents/skills directory. It is also the codex-safe.personal-skills label value in that
-// case, so reuse can prove a running container was created with the same user state.
+// case, so reuse can prove a running container was created with the same user mounts.
 const PersonalSkillsAbsent = "absent"
 
 // CodexHomeAbsent is recorded as the Codex-home source when a CodexHomeOptional launch finds no
@@ -22,7 +24,7 @@ const PersonalSkillsAbsent = "absent"
 // prove a running container was created with the same (absent) Codex state.
 const CodexHomeAbsent = "absent"
 
-// CodexHomePolicy controls how a missing Codex home is handled during user-state resolution.
+// CodexHomePolicy controls how a missing Codex home is handled while resolving user mounts.
 type CodexHomePolicy int
 
 const (
@@ -44,8 +46,8 @@ const (
 	accessReadOK  = 0x4
 )
 
-// UserState holds the resolved host sources mounted for one launch's Codex user state.
-type UserState struct {
+// UserMounts holds the resolved host directories mounted as user-specific state for one container launch.
+type UserMounts struct {
 	// CodexHome is the canonical host directory mounted read-write as the container Codex home, or
 	// CodexHomeAbsent when an optional launch resolved no Codex home.
 	CodexHome string
@@ -55,35 +57,35 @@ type UserState struct {
 }
 
 // SkillsPresent reports whether a personal-skills directory was resolved for this launch.
-func (state UserState) SkillsPresent() bool {
-	return state.PersonalSkills != "" && state.PersonalSkills != PersonalSkillsAbsent
+func (mounts UserMounts) SkillsPresent() bool {
+	return mounts.PersonalSkills != "" && mounts.PersonalSkills != PersonalSkillsAbsent
 }
 
 // CodexHomePresent reports whether a Codex home was resolved and should be mounted for this launch.
-func (state UserState) CodexHomePresent() bool {
-	return state.CodexHome != "" && state.CodexHome != CodexHomeAbsent
+func (mounts UserMounts) CodexHomePresent() bool {
+	return mounts.CodexHome != "" && mounts.CodexHome != CodexHomeAbsent
 }
 
 // codexHomeLabel returns the codex-safe.codex-home label value: the canonical source, or the absent
 // marker when the launch resolved no Codex home.
-func (state UserState) codexHomeLabel() string {
-	if !state.CodexHomePresent() {
+func (mounts UserMounts) codexHomeLabel() string {
+	if !mounts.CodexHomePresent() {
 		return CodexHomeAbsent
 	}
-	return state.CodexHome
+	return mounts.CodexHome
 }
 
 // personalSkillsLabel returns the codex-safe.personal-skills label value: the canonical source, or
 // the literal absent marker when no personal-skills directory was resolved.
-func (state UserState) personalSkillsLabel() string {
-	if state.PersonalSkills == "" {
+func (mounts UserMounts) personalSkillsLabel() string {
+	if mounts.PersonalSkills == "" {
 		return PersonalSkillsAbsent
 	}
-	return state.PersonalSkills
+	return mounts.PersonalSkills
 }
 
-// UserStateInputs carries the host inputs needed to resolve launch user state.
-type UserStateInputs struct {
+// UserMountInputs carries the host inputs needed to resolve user-specific bind mounts.
+type UserMountInputs struct {
 	// LookupEnv reads host environment variables; it is os.LookupEnv in production.
 	LookupEnv func(string) (string, bool)
 	// HomeDir is the canonical absolute host home directory.
@@ -98,44 +100,46 @@ type UserStateInputs struct {
 	CodexHomePolicy CodexHomePolicy
 }
 
-type userStateResolution struct {
-	state            UserState
+// userMountResolution separates existing mount sources from a missing implicit Codex home that may
+// be created only after Docker preflight and container-reuse checks succeed.
+type userMountResolution struct {
+	mounts           UserMounts
 	missingCodexHome string
 }
 
-// inspectUserState resolves existing sources without prompting or creating host state. A missing
+// inspectUserMounts resolves existing sources without prompting or creating host state. A missing
 // required implicit default is returned separately so the launcher can defer confirmation until
 // Docker preflight and deterministic-container reuse checks have succeeded.
-func inspectUserState(inputs UserStateInputs) (userStateResolution, error) {
+func inspectUserMounts(inputs UserMountInputs) (userMountResolution, error) {
 	if inputs.LookupEnv == nil {
-		return userStateResolution{}, errors.New("environment lookup is nil")
+		return userMountResolution{}, errors.New("environment lookup is nil")
 	}
-	if err := validateMountPath("host home directory", inputs.HomeDir); err != nil {
-		return userStateResolution{}, err
+	if err := launchplan.ValidateMountPath("host home directory", inputs.HomeDir); err != nil {
+		return userMountResolution{}, err
 	}
 
 	codexHome, missingCodexHome, err := inspectCodexHome(inputs)
 	if err != nil {
-		return userStateResolution{}, err
+		return userMountResolution{}, err
 	}
 
-	state := UserState{CodexHome: codexHome}
+	mounts := UserMounts{CodexHome: codexHome}
 	overlapSources := make([]string, 0, len(inputs.WritableSources)+1)
 	overlapSources = append(overlapSources, inputs.WritableSources...)
-	if state.CodexHomePresent() {
+	if mounts.CodexHomePresent() {
 		overlapSources = append(overlapSources, codexHome)
 	}
 
 	personalSkills, err := resolvePersonalSkills(inputs.HomeDir, overlapSources, inputs.CodexHomePolicy)
 	if err != nil {
-		return userStateResolution{}, err
+		return userMountResolution{}, err
 	}
-	state.PersonalSkills = personalSkills
+	mounts.PersonalSkills = personalSkills
 
-	return userStateResolution{state: state, missingCodexHome: missingCodexHome}, nil
+	return userMountResolution{mounts: mounts, missingCodexHome: missingCodexHome}, nil
 }
 
-func inspectCodexHome(inputs UserStateInputs) (string, string, error) {
+func inspectCodexHome(inputs UserMountInputs) (string, string, error) {
 	source := filepath.Join(inputs.HomeDir, ".codex")
 	explicit := false
 	if requested, ok := inputs.LookupEnv(codexHomeEnv); ok && strings.TrimSpace(requested) != "" {
@@ -262,7 +266,7 @@ func canonicalizeExistingDir(label string, source string, accessMode uint32) (st
 	if !info.IsDir() {
 		return "", fmt.Errorf("%s %q is not a directory", label, canonical)
 	}
-	if err := validateMountPath(label, canonical); err != nil {
+	if err := launchplan.ValidateMountPath(label, canonical); err != nil {
 		return "", err
 	}
 	if err := syscall.Access(canonical, accessMode); err != nil {

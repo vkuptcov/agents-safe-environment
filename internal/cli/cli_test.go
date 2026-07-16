@@ -10,7 +10,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/cli"
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
-	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 	"github.com/vkuptcov/agents-safe-environment/internal/testutil/clitest"
 )
 
@@ -32,7 +32,7 @@ func TestRunHelp(t *testing.T) {
 	t.Parallel()
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	exitCode := cli.Run(context.Background(), testConfig(), []string{"--help"}, stdout, stderr, clitest.PanicApp())
+	exitCode := cli.Run(context.Background(), testConfig(), []string{"--help"}, stdout, stderr, clitest.PanicDependencies())
 	if exitCode != 0 {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
@@ -47,7 +47,7 @@ func TestRunHelp(t *testing.T) {
 func TestRunReportsFlagError(t *testing.T) {
 	t.Parallel()
 	stderr := new(bytes.Buffer)
-	exitCode := cli.Run(context.Background(), testConfig(), []string{"--unknown"}, new(bytes.Buffer), stderr, clitest.PanicApp())
+	exitCode := cli.Run(context.Background(), testConfig(), []string{"--unknown"}, new(bytes.Buffer), stderr, clitest.PanicDependencies())
 	if exitCode != 2 {
 		t.Errorf("Run() = %d, want 2", exitCode)
 	}
@@ -59,7 +59,7 @@ func TestRunReportsFlagError(t *testing.T) {
 func TestRunReportsBuildCommandError(t *testing.T) {
 	t.Parallel()
 	stderr := new(bytes.Buffer)
-	exitCode := cli.Run(context.Background(), testConfig(), nil, new(bytes.Buffer), stderr, clitest.PanicApp())
+	exitCode := cli.Run(context.Background(), testConfig(), nil, new(bytes.Buffer), stderr, clitest.PanicDependencies())
 	if exitCode != 2 {
 		t.Errorf("Run() = %d, want 2", exitCode)
 	}
@@ -71,11 +71,11 @@ func TestRunReportsBuildCommandError(t *testing.T) {
 func TestRunReportsDiscoveryError(t *testing.T) {
 	t.Parallel()
 	stderr := new(bytes.Buffer)
-	app := clitest.PanicApp()
-	app.Discover = func(context.Context, string) (gitproject.Project, error) {
+	dependencies := clitest.PanicDependencies()
+	dependencies.Discover = func(context.Context, string) (gitproject.Project, error) {
 		return gitproject.Project{}, errors.New("Git unavailable")
 	}
-	exitCode := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, app)
+	exitCode := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, dependencies)
 	if exitCode != 1 {
 		t.Errorf("Run() = %d, want 1", exitCode)
 	}
@@ -87,12 +87,12 @@ func TestRunReportsDiscoveryError(t *testing.T) {
 func TestRunReportsPlanError(t *testing.T) {
 	t.Parallel()
 	stderr := new(bytes.Buffer)
-	app := clitest.PanicApp()
-	app.Discover = func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil }
-	app.BuildPlan = func(gitproject.Project) (launcher.Plan, error) {
-		return launcher.Plan{}, errors.New("mount plan invalid")
+	dependencies := clitest.PanicDependencies()
+	dependencies.Discover = func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil }
+	dependencies.BuildLaunchPlan = func(gitproject.Project) (launchplan.Plan, error) {
+		return launchplan.Plan{}, errors.New("mount plan invalid")
 	}
-	exitCode := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, app)
+	exitCode := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, dependencies)
 	if exitCode != 1 {
 		t.Errorf("Run() = %d, want 1", exitCode)
 	}
@@ -104,27 +104,27 @@ func TestRunReportsPlanError(t *testing.T) {
 func TestRunForwardsProjectPlanAndCommand(t *testing.T) {
 	t.Parallel()
 	wantProject := gitproject.Project{RequestedDir: "/project/nested", WorktreeRoot: "/project"}
-	wantPlan := launcher.Plan{ProjectRoot: "/project", WorkingDir: "/project/nested"}
-	fakeDocker := &clitest.RecordingDocker{}
+	wantLaunchPlan := launchplan.Plan{ProjectRoot: "/project", WorkingDir: "/project/nested"}
+	fakeLauncher := &clitest.RecordingLauncher{}
 	var discoverPath string
 	var builtFor gitproject.Project
-	app := cli.App{
+	dependencies := cli.Dependencies{
 		Discover: func(_ context.Context, path string) (gitproject.Project, error) {
 			discoverPath = path
 			return wantProject, nil
 		},
-		BuildPlan: func(project gitproject.Project) (launcher.Plan, error) {
+		BuildLaunchPlan: func(project gitproject.Project) (launchplan.Plan, error) {
 			builtFor = project
-			return wantPlan, nil
+			return wantLaunchPlan, nil
 		},
-		Docker: fakeDocker,
+		Launcher: fakeLauncher,
 	}
 
 	exitCode := cli.Run(
 		context.Background(),
 		testConfig(),
 		[]string{"--project", "/project/nested", "--image", "img", "cmd", "arg"},
-		new(bytes.Buffer), new(bytes.Buffer), app,
+		new(bytes.Buffer), new(bytes.Buffer), dependencies,
 	)
 
 	if exitCode != 0 {
@@ -134,27 +134,27 @@ func TestRunForwardsProjectPlanAndCommand(t *testing.T) {
 		t.Errorf("discover path = %q, want %q", discoverPath, "/project/nested")
 	}
 	if !reflect.DeepEqual(builtFor, wantProject) {
-		t.Errorf("buildPlan project = %#v, want %#v", builtFor, wantProject)
+		t.Errorf("BuildLaunchPlan project = %#v, want %#v", builtFor, wantProject)
 	}
-	if !reflect.DeepEqual(fakeDocker.Plan, wantPlan) {
-		t.Errorf("plan = %#v, want %#v", fakeDocker.Plan, wantPlan)
+	if !reflect.DeepEqual(fakeLauncher.LaunchPlan, wantLaunchPlan) {
+		t.Errorf("plan = %#v, want %#v", fakeLauncher.LaunchPlan, wantLaunchPlan)
 	}
-	if fakeDocker.Image != "img" {
-		t.Errorf("image = %q, want img", fakeDocker.Image)
+	if fakeLauncher.Image != "img" {
+		t.Errorf("image = %q, want img", fakeLauncher.Image)
 	}
-	if !reflect.DeepEqual(fakeDocker.Command, []string{"cmd", "arg"}) {
-		t.Errorf("command = %#v, want [cmd arg]", fakeDocker.Command)
+	if !reflect.DeepEqual(fakeLauncher.Command, []string{"cmd", "arg"}) {
+		t.Errorf("command = %#v, want [cmd arg]", fakeLauncher.Command)
 	}
 }
 
 func TestRunPropagatesExitCode(t *testing.T) {
 	t.Parallel()
-	app := cli.App{
-		Discover:  func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		BuildPlan: func(gitproject.Project) (launcher.Plan, error) { return launcher.Plan{}, nil },
-		Docker:    &clitest.RecordingDocker{Err: clitest.ExitError{Code: 42, Message: "command failed"}},
+	dependencies := cli.Dependencies{
+		Discover:        func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		BuildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) { return launchplan.Plan{}, nil },
+		Launcher:        &clitest.RecordingLauncher{Err: clitest.ExitError{Code: 42, Message: "command failed"}},
 	}
-	exitCode := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), new(bytes.Buffer), app)
+	exitCode := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), new(bytes.Buffer), dependencies)
 	if exitCode != 42 {
 		t.Errorf("Run() = %d, want 42", exitCode)
 	}

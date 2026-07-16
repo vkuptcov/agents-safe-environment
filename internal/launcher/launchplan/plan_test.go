@@ -1,4 +1,4 @@
-package launcher
+package launchplan
 
 import (
 	"reflect"
@@ -8,7 +8,7 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 )
 
-func TestBuildPlanRegularCheckout(t *testing.T) {
+func TestBuildRegularCheckout(t *testing.T) {
 	t.Parallel()
 
 	project := gitproject.Project{
@@ -19,9 +19,9 @@ func TestBuildPlanRegularCheckout(t *testing.T) {
 		PrimaryRoot:  "/sources/project",
 	}
 
-	plan, err := BuildPlan(project)
+	plan, err := Build(project)
 	if err != nil {
-		t.Fatalf("BuildPlan() error = %v", err)
+		t.Fatalf("Build() error = %v", err)
 	}
 
 	if plan.WorkingDir != project.RequestedDir {
@@ -30,13 +30,13 @@ func TestBuildPlanRegularCheckout(t *testing.T) {
 	if plan.ProjectRoot != project.WorktreeRoot {
 		t.Errorf("ProjectRoot = %q, want %q", plan.ProjectRoot, project.WorktreeRoot)
 	}
-	wantMounts := []Mount{{Source: "/sources/project", Target: "/sources/project"}}
+	wantMounts := []BindMount{{Source: "/sources/project", Target: "/sources/project"}}
 	if !reflect.DeepEqual(plan.Mounts, wantMounts) {
 		t.Errorf("Mounts = %#v, want %#v", plan.Mounts, wantMounts)
 	}
 }
 
-func TestBuildPlanLinkedWorktree(t *testing.T) {
+func TestBuildLinkedWorktree(t *testing.T) {
 	t.Parallel()
 
 	project := gitproject.Project{
@@ -48,15 +48,15 @@ func TestBuildPlanLinkedWorktree(t *testing.T) {
 		Linked:       true,
 	}
 
-	plan, err := BuildPlan(project)
+	plan, err := Build(project)
 	if err != nil {
-		t.Fatalf("BuildPlan() error = %v", err)
+		t.Fatalf("Build() error = %v", err)
 	}
 	if plan.ProjectRoot != project.WorktreeRoot {
 		t.Errorf("ProjectRoot = %q, want %q", plan.ProjectRoot, project.WorktreeRoot)
 	}
 
-	wantMounts := []Mount{
+	wantMounts := []BindMount{
 		{Source: "/sources/primary", Target: "/sources/primary", ReadOnly: true},
 		{Source: "/sources/primary/.git", Target: "/sources/primary/.git"},
 		{Source: "/sources/feature worktree", Target: "/sources/feature worktree"},
@@ -66,31 +66,31 @@ func TestBuildPlanLinkedWorktree(t *testing.T) {
 	}
 }
 
-func TestBuildPlanRejectsWorkingDirectoryOutsideWorktree(t *testing.T) {
+func TestBuildRejectsWorkingDirectoryOutsideWorktree(t *testing.T) {
 	t.Parallel()
 
-	_, err := BuildPlan(gitproject.Project{
+	_, err := Build(gitproject.Project{
 		RequestedDir: "/sources/other",
 		WorktreeRoot: "/sources/project",
 		PrimaryRoot:  "/sources/project",
 	})
 	if err == nil {
-		t.Fatal("BuildPlan() error = nil, want an error")
+		t.Fatal("Build() error = nil, want an error")
 	}
 	if !strings.Contains(err.Error(), "outside working-tree root") {
-		t.Fatalf("BuildPlan() error = %q, want outside working-tree root", err)
+		t.Fatalf("Build() error = %q, want outside working-tree root", err)
 	}
 }
 
 func TestNormalizeMountsRemovesExactDuplicates(t *testing.T) {
 	t.Parallel()
 
-	mount := Mount{Source: "/sources/project", Target: "/sources/project"}
-	got, err := normalizeMounts([]Mount{mount, mount})
+	mount := BindMount{Source: "/sources/project", Target: "/sources/project"}
+	got, err := normalizeMounts([]BindMount{mount, mount})
 	if err != nil {
 		t.Fatalf("normalizeMounts() error = %v", err)
 	}
-	if !reflect.DeepEqual(got, []Mount{mount}) {
+	if !reflect.DeepEqual(got, []BindMount{mount}) {
 		t.Errorf("normalizeMounts() = %#v, want one mount", got)
 	}
 }
@@ -98,7 +98,7 @@ func TestNormalizeMountsRemovesExactDuplicates(t *testing.T) {
 func TestNormalizeMountsRejectsConflictingTargets(t *testing.T) {
 	t.Parallel()
 
-	_, err := normalizeMounts([]Mount{
+	_, err := normalizeMounts([]BindMount{
 		{Source: "/sources/one", Target: "/workspace"},
 		{Source: "/sources/two", Target: "/workspace"},
 	})
@@ -110,18 +110,18 @@ func TestNormalizeMountsRejectsConflictingTargets(t *testing.T) {
 	}
 }
 
-func TestBuildPlanRejectsUnsafeMountPath(t *testing.T) {
+func TestBuildRejectsUnsafeMountPath(t *testing.T) {
 	t.Parallel()
 
-	_, err := BuildPlan(gitproject.Project{
+	_, err := Build(gitproject.Project{
 		RequestedDir: "/sources/project,unsafe",
 		WorktreeRoot: "/sources/project,unsafe",
 		PrimaryRoot:  "/sources/project,unsafe",
 	})
 	if err == nil {
-		t.Fatal("BuildPlan() error = nil, want an error")
+		t.Fatal("Build() error = nil, want an error")
 	}
 	if !strings.Contains(err.Error(), "cannot be represented safely") {
-		t.Fatalf("BuildPlan() error = %q, want unsafe --mount error", err)
+		t.Fatalf("Build() error = %q, want unsafe --mount error", err)
 	}
 }

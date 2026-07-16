@@ -15,15 +15,15 @@ func envLookup(pairs map[string]string) func(string) (string, bool) {
 	}
 }
 
-func inspectExistingUserState(inputs UserStateInputs) (UserState, error) {
-	resolution, err := inspectUserState(inputs)
+func inspectExistingUserMounts(inputs UserMountInputs) (UserMounts, error) {
+	resolution, err := inspectUserMounts(inputs)
 	if err != nil {
-		return UserState{}, err
+		return UserMounts{}, err
 	}
 	if resolution.missingCodexHome != "" {
-		return UserState{}, fmt.Errorf("Codex home %q still needs materialization", resolution.missingCodexHome)
+		return UserMounts{}, fmt.Errorf("Codex home %q still needs materialization", resolution.missingCodexHome)
 	}
-	return resolution.state, nil
+	return resolution.mounts, nil
 }
 
 func evalPath(t *testing.T, path string) string {
@@ -43,17 +43,17 @@ func mkdir(t *testing.T, path string) string {
 	return path
 }
 
-func TestInspectUserStateDefaultCodexHome(t *testing.T) {
+func TestInspectUserMountsDefaultCodexHome(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	codexHome := mkdir(t, filepath.Join(home, ".codex"))
 
-	state, err := inspectExistingUserState(UserStateInputs{
+	state, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv: envLookup(nil),
 		HomeDir:   evalPath(t, home),
 	})
 	if err != nil {
-		t.Fatalf("inspectExistingUserState() error = %v", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v", err)
 	}
 	if state.CodexHome != evalPath(t, codexHome) {
 		t.Errorf("CodexHome = %q, want %q", state.CodexHome, evalPath(t, codexHome))
@@ -66,42 +66,42 @@ func TestInspectUserStateDefaultCodexHome(t *testing.T) {
 	}
 }
 
-func TestInspectUserStateExplicitCodexHome(t *testing.T) {
+func TestInspectUserMountsExplicitCodexHome(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	mkdir(t, filepath.Join(home, ".codex"))
 	custom := mkdir(t, filepath.Join(t.TempDir(), "custom codex"))
 
-	state, err := inspectExistingUserState(UserStateInputs{
+	state, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv: envLookup(map[string]string{codexHomeEnv: custom}),
 		HomeDir:   evalPath(t, home),
 	})
 	if err != nil {
-		t.Fatalf("inspectExistingUserState() error = %v", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v", err)
 	}
 	if state.CodexHome != evalPath(t, custom) {
 		t.Errorf("CodexHome = %q, want explicit %q", state.CodexHome, evalPath(t, custom))
 	}
 }
 
-func TestInspectUserStateEmptyCodexHomeFallsBackToDefault(t *testing.T) {
+func TestInspectUserMountsEmptyCodexHomeFallsBackToDefault(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	codexHome := mkdir(t, filepath.Join(home, ".codex"))
 
-	state, err := inspectExistingUserState(UserStateInputs{
+	state, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv: envLookup(map[string]string{codexHomeEnv: "   "}),
 		HomeDir:   evalPath(t, home),
 	})
 	if err != nil {
-		t.Fatalf("inspectExistingUserState() error = %v", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v", err)
 	}
 	if state.CodexHome != evalPath(t, codexHome) {
 		t.Errorf("CodexHome = %q, want default %q", state.CodexHome, evalPath(t, codexHome))
 	}
 }
 
-func TestInspectUserStateTrimsCodexHomeWhitespace(t *testing.T) {
+func TestInspectUserMountsTrimsCodexHomeWhitespace(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	custom := mkdir(t, filepath.Join(t.TempDir(), "custom codex"))
@@ -109,12 +109,12 @@ func TestInspectUserStateTrimsCodexHomeWhitespace(t *testing.T) {
 	// A CODEX_HOME captured through command substitution often carries a trailing newline or a
 	// leading space; the launcher must resolve the real directory rather than reject it.
 	for _, raw := range []string{custom + "\n", " " + custom, "\t" + custom + " "} {
-		state, err := inspectExistingUserState(UserStateInputs{
+		state, err := inspectExistingUserMounts(UserMountInputs{
 			LookupEnv: envLookup(map[string]string{codexHomeEnv: raw}),
 			HomeDir:   evalPath(t, home),
 		})
 		if err != nil {
-			t.Fatalf("inspectExistingUserState(CODEX_HOME=%q) error = %v", raw, err)
+			t.Fatalf("inspectExistingUserMounts(CODEX_HOME=%q) error = %v", raw, err)
 		}
 		if state.CodexHome != evalPath(t, custom) {
 			t.Errorf("CodexHome = %q, want trimmed %q", state.CodexHome, evalPath(t, custom))
@@ -122,17 +122,17 @@ func TestInspectUserStateTrimsCodexHomeWhitespace(t *testing.T) {
 	}
 }
 
-func TestInspectUserStateOptionalCodexHomeAbsent(t *testing.T) {
+func TestInspectUserMountsOptionalCodexHomeAbsent(t *testing.T) {
 	t.Parallel()
 	home := evalPath(t, t.TempDir()) // no .codex created
 
-	state, err := inspectExistingUserState(UserStateInputs{
+	state, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv:       envLookup(nil),
 		HomeDir:         home,
 		CodexHomePolicy: CodexHomeOptional,
 	})
 	if err != nil {
-		t.Fatalf("inspectExistingUserState() error = %v", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v", err)
 	}
 	if state.CodexHome != CodexHomeAbsent {
 		t.Errorf("CodexHome = %q, want %q", state.CodexHome, CodexHomeAbsent)
@@ -142,59 +142,59 @@ func TestInspectUserStateOptionalCodexHomeAbsent(t *testing.T) {
 	}
 }
 
-func TestInspectUserStateOptionalExplicitMissingErrors(t *testing.T) {
+func TestInspectUserMountsOptionalExplicitMissingErrors(t *testing.T) {
 	t.Parallel()
 	home := evalPath(t, t.TempDir())
 	missing := filepath.Join(t.TempDir(), "missing codex")
 
-	_, err := inspectExistingUserState(UserStateInputs{
+	_, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv:       envLookup(map[string]string{codexHomeEnv: missing}),
 		HomeDir:         home,
 		CodexHomePolicy: CodexHomeOptional,
 	})
 	if err == nil || !strings.Contains(err.Error(), "does not exist") {
-		t.Fatalf("inspectExistingUserState() error = %v, want missing explicit CODEX_HOME rejection", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v, want missing explicit CODEX_HOME rejection", err)
 	}
 }
 
-func TestInspectUserStateRequiredMissingDefaultNeedsMaterialization(t *testing.T) {
+func TestInspectUserMountsRequiredMissingDefaultNeedsMaterialization(t *testing.T) {
 	t.Parallel()
 	home := evalPath(t, t.TempDir())
 	wantHome := filepath.Join(home, ".codex")
 
-	resolution, err := inspectUserState(UserStateInputs{
+	resolution, err := inspectUserMounts(UserMountInputs{
 		LookupEnv:       envLookup(nil),
 		HomeDir:         home,
 		CodexHomePolicy: CodexHomeRequired,
 	})
 	if err != nil {
-		t.Fatalf("inspectUserState() error = %v", err)
+		t.Fatalf("inspectUserMounts() error = %v", err)
 	}
-	if resolution.state.CodexHome != CodexHomeAbsent {
-		t.Errorf("CodexHome = %q, want %q before materialization", resolution.state.CodexHome, CodexHomeAbsent)
+	if resolution.mounts.CodexHome != CodexHomeAbsent {
+		t.Errorf("CodexHome = %q, want %q before materialization", resolution.mounts.CodexHome, CodexHomeAbsent)
 	}
 	if resolution.missingCodexHome != wantHome {
 		t.Errorf("missingCodexHome = %q, want %q", resolution.missingCodexHome, wantHome)
 	}
 }
 
-func TestInspectUserStateRequiredExplicitMissingErrors(t *testing.T) {
+func TestInspectUserMountsRequiredExplicitMissingErrors(t *testing.T) {
 	t.Parallel()
 	home := evalPath(t, t.TempDir())
 	mkdir(t, filepath.Join(home, ".codex")) // default exists; the explicit source does not
 	missing := filepath.Join(t.TempDir(), "missing codex")
 
-	_, err := inspectExistingUserState(UserStateInputs{
+	_, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv:       envLookup(map[string]string{codexHomeEnv: missing}),
 		HomeDir:         home,
 		CodexHomePolicy: CodexHomeRequired,
 	})
 	if err == nil {
-		t.Fatal("inspectExistingUserState() error = nil, want rejection of a missing explicit CODEX_HOME")
+		t.Fatal("inspectExistingUserMounts() error = nil, want rejection of a missing explicit CODEX_HOME")
 	}
 }
 
-func TestInspectUserStateCanonicalizesSymlinkedCodexHome(t *testing.T) {
+func TestInspectUserMountsCanonicalizesSymlinkedCodexHome(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	mkdir(t, filepath.Join(home, ".codex"))
@@ -204,35 +204,35 @@ func TestInspectUserStateCanonicalizesSymlinkedCodexHome(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
-	state, err := inspectExistingUserState(UserStateInputs{
+	state, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv: envLookup(map[string]string{codexHomeEnv: link}),
 		HomeDir:   evalPath(t, home),
 	})
 	if err != nil {
-		t.Fatalf("inspectExistingUserState() error = %v", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v", err)
 	}
 	if state.CodexHome != evalPath(t, real) {
 		t.Errorf("CodexHome = %q, want symlink target %q", state.CodexHome, evalPath(t, real))
 	}
 }
 
-func TestInspectUserStateRejectsDanglingDefaultCodexHomeSymlink(t *testing.T) {
+func TestInspectUserMountsRejectsDanglingDefaultCodexHomeSymlink(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	link := filepath.Join(home, ".codex")
 	if err := os.Symlink(filepath.Join(t.TempDir(), "missing target"), link); err != nil {
 		t.Fatalf("Symlink() error = %v", err)
 	}
-	_, err := inspectExistingUserState(UserStateInputs{
+	_, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv: envLookup(nil),
 		HomeDir:   evalPath(t, home),
 	})
 	if err == nil || !strings.Contains(err.Error(), "broken symlink") {
-		t.Fatalf("inspectExistingUserState() error = %v, want broken Codex-home symlink rejection", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v, want broken Codex-home symlink rejection", err)
 	}
 }
 
-func TestInspectUserStateRejectsInvalidCodexHome(t *testing.T) {
+func TestInspectUserMountsRejectsInvalidCodexHome(t *testing.T) {
 	t.Parallel()
 	home := evalPath(t, t.TempDir())
 	nonDir := filepath.Join(t.TempDir(), "codex-file")
@@ -258,18 +258,18 @@ func TestInspectUserStateRejectsInvalidCodexHome(t *testing.T) {
 			if test.useEnv {
 				pairs[codexHomeEnv] = test.codex
 			}
-			_, err := inspectExistingUserState(UserStateInputs{
+			_, err := inspectExistingUserMounts(UserMountInputs{
 				LookupEnv: envLookup(pairs),
 				HomeDir:   test.homeDir,
 			})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("inspectExistingUserState() error = %v, want %q", err, test.want)
+				t.Fatalf("inspectExistingUserMounts() error = %v, want %q", err, test.want)
 			}
 		})
 	}
 }
 
-func TestInspectUserStateRejectsUnwritableCodexHome(t *testing.T) {
+func TestInspectUserMountsRejectsUnwritableCodexHome(t *testing.T) {
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root bypasses access(2) permission bits")
@@ -281,29 +281,29 @@ func TestInspectUserStateRejectsUnwritableCodexHome(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(codexHome, 0o700) })
 
-	_, err := inspectExistingUserState(UserStateInputs{
+	_, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv: envLookup(nil),
 		HomeDir:   evalPath(t, home),
 	})
 	if err == nil || !strings.Contains(err.Error(), "not accessible") {
-		t.Fatalf("inspectExistingUserState() error = %v, want unwritable rejection", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v, want unwritable rejection", err)
 	}
 }
 
-func TestInspectUserStateResolvesPresentSkills(t *testing.T) {
+func TestInspectUserMountsResolvesPresentSkills(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	mkdir(t, filepath.Join(home, ".codex"))
 	skills := mkdir(t, filepath.Join(home, ".agents", "skills"))
 	unrelated := evalPath(t, mkdir(t, filepath.Join(t.TempDir(), "worktree")))
 
-	state, err := inspectExistingUserState(UserStateInputs{
+	state, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv:       envLookup(nil),
 		HomeDir:         evalPath(t, home),
 		WritableSources: []string{unrelated},
 	})
 	if err != nil {
-		t.Fatalf("inspectExistingUserState() error = %v", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v", err)
 	}
 	if state.PersonalSkills != evalPath(t, skills) {
 		t.Errorf("PersonalSkills = %q, want %q", state.PersonalSkills, evalPath(t, skills))
@@ -313,7 +313,7 @@ func TestInspectUserStateResolvesPresentSkills(t *testing.T) {
 	}
 }
 
-func TestInspectUserStateRejectsDanglingSkillsSymlink(t *testing.T) {
+func TestInspectUserMountsRejectsDanglingSkillsSymlink(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	mkdir(t, filepath.Join(home, ".codex"))
@@ -323,16 +323,16 @@ func TestInspectUserStateRejectsDanglingSkillsSymlink(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
-	_, err := inspectExistingUserState(UserStateInputs{
+	_, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv: envLookup(nil),
 		HomeDir:   evalPath(t, home),
 	})
 	if err == nil || !strings.Contains(err.Error(), "broken symlink") {
-		t.Fatalf("inspectExistingUserState() error = %v, want broken-symlink rejection", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v, want broken-symlink rejection", err)
 	}
 }
 
-func TestInspectUserStateOptionalIgnoresDanglingSkillsSymlink(t *testing.T) {
+func TestInspectUserMountsOptionalIgnoresDanglingSkillsSymlink(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	skillsLink := filepath.Join(home, ".agents", "skills")
@@ -341,20 +341,20 @@ func TestInspectUserStateOptionalIgnoresDanglingSkillsSymlink(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
-	state, err := inspectExistingUserState(UserStateInputs{
+	state, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv:       envLookup(nil),
 		HomeDir:         evalPath(t, home),
 		CodexHomePolicy: CodexHomeOptional,
 	})
 	if err != nil {
-		t.Fatalf("inspectExistingUserState() error = %v", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v", err)
 	}
 	if state.PersonalSkills != PersonalSkillsAbsent {
 		t.Fatalf("PersonalSkills = %q, want %q", state.PersonalSkills, PersonalSkillsAbsent)
 	}
 }
 
-func TestInspectUserStateRejectsDanglingSkillsParentSymlink(t *testing.T) {
+func TestInspectUserMountsRejectsDanglingSkillsParentSymlink(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	mkdir(t, filepath.Join(home, ".codex"))
@@ -362,37 +362,37 @@ func TestInspectUserStateRejectsDanglingSkillsParentSymlink(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
-	_, err := inspectExistingUserState(UserStateInputs{
+	_, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv: envLookup(nil),
 		HomeDir:   evalPath(t, home),
 	})
 	if err == nil || !strings.Contains(err.Error(), "personal-skills parent") ||
 		!strings.Contains(err.Error(), "broken symlink") {
-		t.Fatalf("inspectExistingUserState() error = %v, want broken parent-symlink rejection", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v, want broken parent-symlink rejection", err)
 	}
 }
 
-func TestInspectUserStateOptionalIgnoresDanglingSkillsParentSymlink(t *testing.T) {
+func TestInspectUserMountsOptionalIgnoresDanglingSkillsParentSymlink(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	if err := os.Symlink(filepath.Join(t.TempDir(), "missing target"), filepath.Join(home, ".agents")); err != nil {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
-	state, err := inspectExistingUserState(UserStateInputs{
+	state, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv:       envLookup(nil),
 		HomeDir:         evalPath(t, home),
 		CodexHomePolicy: CodexHomeOptional,
 	})
 	if err != nil {
-		t.Fatalf("inspectExistingUserState() error = %v", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v", err)
 	}
 	if state.PersonalSkills != PersonalSkillsAbsent {
 		t.Fatalf("PersonalSkills = %q, want %q", state.PersonalSkills, PersonalSkillsAbsent)
 	}
 }
 
-func TestInspectUserStateRejectsSkillsOverlappingWritableSource(t *testing.T) {
+func TestInspectUserMountsRejectsSkillsOverlappingWritableSource(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	mkdir(t, filepath.Join(home, ".codex"))
@@ -400,17 +400,17 @@ func TestInspectUserStateRejectsSkillsOverlappingWritableSource(t *testing.T) {
 	canonicalHome := evalPath(t, home)
 
 	// A literal overlap: a writable mount source is an ancestor of the skills directory.
-	_, err := inspectExistingUserState(UserStateInputs{
+	_, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv:       envLookup(nil),
 		HomeDir:         canonicalHome,
 		WritableSources: []string{canonicalHome},
 	})
 	if err == nil || !strings.Contains(err.Error(), "overlaps writable mount") {
-		t.Fatalf("inspectExistingUserState() error = %v, want overlap rejection", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v, want overlap rejection", err)
 	}
 }
 
-func TestInspectUserStateRejectsSkillsOverlappingViaSymlink(t *testing.T) {
+func TestInspectUserMountsRejectsSkillsOverlappingViaSymlink(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	mkdir(t, filepath.Join(home, ".codex"))
@@ -422,17 +422,17 @@ func TestInspectUserStateRejectsSkillsOverlappingViaSymlink(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
-	_, err := inspectExistingUserState(UserStateInputs{
+	_, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv:       envLookup(nil),
 		HomeDir:         evalPath(t, home),
 		WritableSources: []string{worktree},
 	})
 	if err == nil || !strings.Contains(err.Error(), "overlaps writable mount") {
-		t.Fatalf("inspectExistingUserState() error = %v, want symlinked overlap rejection", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v, want symlinked overlap rejection", err)
 	}
 }
 
-func TestInspectUserStateRejectsWritableSourceNestedUnderSkills(t *testing.T) {
+func TestInspectUserMountsRejectsWritableSourceNestedUnderSkills(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	mkdir(t, filepath.Join(home, ".codex"))
@@ -441,28 +441,28 @@ func TestInspectUserStateRejectsWritableSourceNestedUnderSkills(t *testing.T) {
 	// reverse containment direction (the read-only skills source contains a writable source).
 	nestedWritable := evalPath(t, mkdir(t, filepath.Join(skills, "nested-writable")))
 
-	_, err := inspectExistingUserState(UserStateInputs{
+	_, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv:       envLookup(nil),
 		HomeDir:         evalPath(t, home),
 		WritableSources: []string{nestedWritable},
 	})
 	if err == nil || !strings.Contains(err.Error(), "overlaps writable mount") {
-		t.Fatalf("inspectExistingUserState() error = %v, want reverse-containment overlap rejection", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v, want reverse-containment overlap rejection", err)
 	}
 }
 
-func TestInspectUserStateRejectsSkillsOverlappingCodexHome(t *testing.T) {
+func TestInspectUserMountsRejectsSkillsOverlappingCodexHome(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	// Point CODEX_HOME at $HOME/.agents so the skills directory nests inside the writable Codex home.
 	codexHome := mkdir(t, filepath.Join(home, ".agents"))
 	mkdir(t, filepath.Join(codexHome, "skills"))
 
-	_, err := inspectExistingUserState(UserStateInputs{
+	_, err := inspectExistingUserMounts(UserMountInputs{
 		LookupEnv: envLookup(map[string]string{codexHomeEnv: codexHome}),
 		HomeDir:   evalPath(t, home),
 	})
 	if err == nil || !strings.Contains(err.Error(), "overlaps writable mount") {
-		t.Fatalf("inspectExistingUserState() error = %v, want Codex-home overlap rejection", err)
+		t.Fatalf("inspectExistingUserMounts() error = %v, want Codex-home overlap rejection", err)
 	}
 }

@@ -20,7 +20,7 @@ const (
 )
 
 type containerNames struct {
-	outer    string
+	managed  string
 	sentinel string
 	nested   string
 	compose  string
@@ -43,7 +43,7 @@ func newDockerHarness(t *testing.T, project projectLayout) *dockerHarness {
 	require.NoError(t, err, "Moby client must initialize from the Docker environment")
 	info, err := dockerClient.Info(ctx)
 	require.NoError(t, err, "Moby client must inspect the host Docker daemon")
-	outer := launcher.ProjectContainerName(os.Getuid(), project.worktree)
+	managed := launcher.ProjectContainerName(os.Getuid(), project.worktree)
 	projectKey := launcher.ProjectKey(os.Getuid(), project.worktree)
 	return &dockerHarness{
 		t:        t,
@@ -53,7 +53,7 @@ func newDockerHarness(t *testing.T, project projectLayout) *dockerHarness {
 		project:  project.worktree,
 		daemonID: info.ID,
 		names: containerNames{
-			outer:    outer,
+			managed:  managed,
 			sentinel: "codex-safe-host-sentinel-" + projectKey,
 			nested:   "codex-safe-nested-" + projectKey,
 			compose:  "codex-safe-compose-" + projectKey,
@@ -65,7 +65,7 @@ func (docker *dockerHarness) close() {
 	docker.cancel()
 	cleanupContext, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
-	_ = docker.client.ContainerRemove(cleanupContext, docker.names.outer, container.RemoveOptions{Force: true})
+	_ = docker.client.ContainerRemove(cleanupContext, docker.names.managed, container.RemoveOptions{Force: true})
 	_ = docker.client.ContainerRemove(cleanupContext, docker.names.sentinel, container.RemoveOptions{Force: true})
 	_ = docker.client.Close()
 }
@@ -79,13 +79,17 @@ func (docker *dockerHarness) startSentinel() {
 		Labels:     map[string]string{"codex-safe.smoke": "go"},
 	}, nil, nil, nil, docker.names.sentinel)
 	require.NoError(docker.t, err, "host sentinel container must be created")
-	require.NoError(docker.t, docker.client.ContainerStart(docker.ctx, created.ID, container.StartOptions{}), "host sentinel container must start")
+	require.NoError(
+		docker.t,
+		docker.client.ContainerStart(docker.ctx, created.ID, container.StartOptions{}),
+		"host sentinel container must start",
+	)
 }
 
-func (docker *dockerHarness) inspectOuter() container.InspectResponse {
+func (docker *dockerHarness) inspectContainer() container.InspectResponse {
 	docker.t.Helper()
-	inspection, err := docker.client.ContainerInspect(docker.ctx, docker.names.outer)
-	require.NoError(docker.t, err, "Moby client must inspect deterministic container %q", docker.names.outer)
+	inspection, err := docker.client.ContainerInspect(docker.ctx, docker.names.managed)
+	require.NoError(docker.t, err, "Moby client must inspect deterministic container %q", docker.names.managed)
 	return inspection
 }
 
@@ -95,7 +99,7 @@ func (docker *dockerHarness) managedContainers() []container.Summary {
 		filters.Arg("label", "codex-safe.managed=true"),
 		filters.Arg("label", "codex-safe.project-path="+docker.project),
 		filters.Arg("label", "codex-safe.host-uid="+strconv.Itoa(os.Getuid())),
-		filters.Arg("name", "^"+docker.names.outer+"$"),
+		filters.Arg("name", "^"+docker.names.managed+"$"),
 	)})
 	require.NoError(docker.t, err, "Moby client must list active managed containers")
 	return items
@@ -111,7 +115,7 @@ func (docker *dockerHarness) containersNamed(name string) []container.Summary {
 	return items
 }
 
-func (docker *dockerHarness) waitForOuter() {
+func (docker *dockerHarness) waitForContainer() {
 	docker.t.Helper()
 	deadline := time.Now().Add(commandTimeout)
 	for time.Now().Before(deadline) {
@@ -120,19 +124,19 @@ func (docker *dockerHarness) waitForOuter() {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	docker.t.Fatal("timed out waiting for the deterministic outer container")
+	docker.t.Fatal("timed out waiting for the deterministic managed container")
 }
 
-func (docker *dockerHarness) waitForOuterRemoval() {
+func (docker *dockerHarness) waitForContainerRemoval() {
 	docker.t.Helper()
 	deadline := time.Now().Add(idleRemovalTimeout)
 	for time.Now().Before(deadline) {
-		_, err := docker.client.ContainerInspect(docker.ctx, docker.names.outer)
+		_, err := docker.client.ContainerInspect(docker.ctx, docker.names.managed)
 		if client.IsErrNotFound(err) {
 			return
 		}
 		require.NoError(docker.t, err, "Moby client must inspect the session while waiting for idle removal")
 		time.Sleep(250 * time.Millisecond)
 	}
-	docker.t.Fatal("deterministic outer container was not removed after idle timeout")
+	docker.t.Fatal("deterministic managed container was not removed after idle timeout")
 }

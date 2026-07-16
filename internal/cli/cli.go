@@ -12,27 +12,27 @@ import (
 	"io"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
-	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
-// Docker launches a plan's command in the managed project container.
-type Docker interface {
-	Launch(ctx context.Context, plan launcher.Plan, image string, command []string) error
+// Launcher runs a command in the managed container described by a launch plan.
+type Launcher interface {
+	Launch(ctx context.Context, plan launchplan.Plan, image string, command []string) error
 }
 
-// App carries the collaborators a launcher CLI needs. Production wires the real implementations;
-// tests substitute fakes.
-type App struct {
-	Discover  func(context.Context, string) (gitproject.Project, error)
-	BuildPlan func(gitproject.Project) (launcher.Plan, error)
-	Docker    Docker
+// Dependencies contains the project discovery and container-launching operations used by Run.
+// Product binaries wire production implementations; tests substitute focused doubles.
+type Dependencies struct {
+	Discover        func(context.Context, string) (gitproject.Project, error)
+	BuildLaunchPlan func(gitproject.Project) (launchplan.Plan, error)
+	Launcher        Launcher
 }
 
 // Config describes one launcher binary's identity and command policy.
 type Config struct {
 	// Name is the program name used in the flag set and diagnostics.
 	Name string
-	// DefaultImage is the outer-container image used when --image is not given.
+	// DefaultImage is the container image used when --image is not given.
 	DefaultImage string
 	// Usage is the full help block printed for --help and before usage errors.
 	Usage string
@@ -44,11 +44,11 @@ type Config struct {
 
 // Run parses args, builds the command, discovers the project, builds the plan, and launches the
 // command, returning the process exit code.
-func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Writer, app App) int {
+func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Writer, dependencies Dependencies) int {
 	flags := flag.NewFlagSet(cfg.Name, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	projectPath := flags.String("project", ".", "Git project path")
-	image := flags.String("image", cfg.DefaultImage, "outer container image")
+	image := flags.String("image", cfg.DefaultImage, "container image")
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -67,17 +67,17 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		return 2
 	}
 
-	project, err := app.Discover(ctx, *projectPath)
+	project, err := dependencies.Discover(ctx, *projectPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return 1
 	}
-	plan, err := app.BuildPlan(project)
+	plan, err := dependencies.BuildLaunchPlan(project)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return 1
 	}
-	if err := app.Docker.Launch(ctx, plan, *image, command); err != nil {
+	if err := dependencies.Launcher.Launch(ctx, plan, *image, command); err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return errorExitCode(err)
 	}

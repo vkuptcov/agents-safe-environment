@@ -27,7 +27,7 @@ func TestRunCommandPreservesArgvStreamsEnvironmentAndDirectory(t *testing.T) {
 	var output bytes.Buffer
 	var stderr bytes.Buffer
 
-	err := RunCommand(context.Background(), RunnerConfig{
+	err := RunCommand(context.Background(), CommandConfig{
 		SocketPath:     running.socketPath,
 		StartupTimeout: time.Second,
 		Command: helperCommand(
@@ -69,7 +69,7 @@ func TestRunCommandPreservesArgvStreamsEnvironmentAndDirectory(t *testing.T) {
 
 func TestRunCommandReturnsExactExitStatus(t *testing.T) {
 	running := startTestManager(t, time.Second)
-	err := RunCommand(context.Background(), RunnerConfig{
+	err := RunCommand(context.Background(), CommandConfig{
 		SocketPath:     running.socketPath,
 		StartupTimeout: time.Second,
 		Command:        helperCommand("exit", "42"),
@@ -80,7 +80,7 @@ func TestRunCommandReturnsExactExitStatus(t *testing.T) {
 
 func TestRunCommandReturnsNotFoundStatus(t *testing.T) {
 	running := startTestManager(t, time.Second)
-	err := RunCommand(context.Background(), RunnerConfig{
+	err := RunCommand(context.Background(), CommandConfig{
 		SocketPath:     running.socketPath,
 		StartupTimeout: time.Second,
 		Command:        []string{filepath.Join(t.TempDir(), "missing-command")},
@@ -90,7 +90,7 @@ func TestRunCommandReturnsNotFoundStatus(t *testing.T) {
 
 func TestRunCommandReturnsSignalDerivedStatus(t *testing.T) {
 	running := startTestManager(t, time.Second)
-	err := RunCommand(context.Background(), RunnerConfig{
+	err := RunCommand(context.Background(), CommandConfig{
 		SocketPath:     running.socketPath,
 		StartupTimeout: time.Second,
 		Command:        helperCommand("terminate-self"),
@@ -104,7 +104,7 @@ func TestRunCommandHoldsRegistrationUntilChildExit(t *testing.T) {
 	reader, writer := io.Pipe()
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- RunCommand(context.Background(), RunnerConfig{
+		runnerDone <- RunCommand(context.Background(), CommandConfig{
 			SocketPath:     running.socketPath,
 			StartupTimeout: time.Second,
 			Command:        helperCommand("read-until-eof"),
@@ -163,7 +163,7 @@ func TestRunCommandForwardsTerminationSignal(t *testing.T) {
 
 func TestRunCommandRequiresManagerAcknowledgement(t *testing.T) {
 	started := time.Now()
-	err := RunCommand(context.Background(), RunnerConfig{
+	err := RunCommand(context.Background(), CommandConfig{
 		SocketPath:     filepath.Join(t.TempDir(), "missing.sock"),
 		StartupTimeout: 60 * time.Millisecond,
 		Command:        helperCommand("exit", "0"),
@@ -184,7 +184,7 @@ func TestRunCommandRejectsCommittedManagerShutdownWithoutStartingChild(t *testin
 		t.Fatalf("create stopping marker: %v", err)
 	}
 	started := time.Now()
-	err := RunCommand(context.Background(), RunnerConfig{
+	err := RunCommand(context.Background(), CommandConfig{
 		SocketPath:     socketPath,
 		StartupTimeout: time.Second,
 		Command:        helperCommand("exit", "99"),
@@ -221,7 +221,7 @@ func TestRunCommandDoesNotWaitOnUnacknowledgedShutdownSocket(t *testing.T) {
 	}()
 
 	started := time.Now()
-	err = RunCommand(context.Background(), RunnerConfig{
+	err = RunCommand(context.Background(), CommandConfig{
 		SocketPath:     socketPath,
 		StartupTimeout: 5 * time.Second,
 		Command:        helperCommand("exit", "99"),
@@ -286,7 +286,7 @@ func TestRunnerHelperProcess(t *testing.T) {
 		if len(arguments) != 2 {
 			os.Exit(96)
 		}
-		err := RunCommand(context.Background(), RunnerConfig{
+		err := RunCommand(context.Background(), CommandConfig{
 			SocketPath:     arguments[1],
 			StartupTimeout: time.Second,
 			Command:        helperCommand("wait-signal"),

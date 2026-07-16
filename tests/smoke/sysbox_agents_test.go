@@ -35,9 +35,9 @@ while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	observed := parseReport(t, report)
 	require.Equal(t, "bash", observed["shell"], "agents-safe must execute Bash directly")
 	require.Equal(t, fixture.project.worktree, observed["project"], "Bash must start in the selected project")
-	require.True(t, fixture.docker.inspectOuter().State.Running, "Bash must keep its managed session alive")
+	require.True(t, fixture.docker.inspectContainer().State.Running, "Bash must keep its managed session alive")
 	fixture.release(release, command, "agents-safe Bash command")
-	fixture.docker.waitForOuterRemoval()
+	fixture.docker.waitForContainerRemoval()
 }
 
 // TestSysboxAgentsSafeWithoutCodexHome proves the optional policy reaches the real Docker boundary:
@@ -61,7 +61,7 @@ while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 
 	observed := parseReport(t, report)
 	require.Equal(t, "unset", observed["codex_home"], "agents-safe must omit CODEX_HOME when the host source is absent")
-	inspection := fixture.docker.inspectOuter()
+	inspection := fixture.docker.inspectContainer()
 	require.Equal(t, launcher.CodexHomeAbsent, inspection.Config.Labels["codex-safe.codex-home"])
 	for _, mount := range inspection.Mounts {
 		require.NotEqual(t, fixture.project.codexHome, mount.Destination,
@@ -71,5 +71,5 @@ while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	}
 
 	fixture.release(release, command, "agents-safe command without Codex home")
-	fixture.docker.waitForOuterRemoval()
+	fixture.docker.waitForContainerRemoval()
 }

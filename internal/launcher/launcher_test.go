@@ -13,13 +13,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 	"github.com/vkuptcov/agents-safe-environment/internal/terminal"
 )
 
 func TestBuildDockerRunArgsUsesDetachedSysboxAndIdentityLabels(t *testing.T) {
 	t.Parallel()
 	plan := testPlan()
-	args, err := BuildDockerRunArgs(
+	args, err := buildDockerRunArgsForTest(
 		plan,
 		"codex-safe-mvp:local",
 		"codex-safe-aba8b4ca4ff345d5d0443c0c",
@@ -29,7 +31,7 @@ func TestBuildDockerRunArgsUsesDetachedSysboxAndIdentityLabels(t *testing.T) {
 		"developers",
 		"/home/developer",
 		"",
-		testUserState(),
+		testUserMounts(),
 	)
 	if err != nil {
 		t.Fatalf("BuildDockerRunArgs() error = %v", err)
@@ -88,12 +90,12 @@ func TestBuildDockerRunArgsUsesDetachedSysboxAndIdentityLabels(t *testing.T) {
 	}
 }
 
-func TestBuildDockerRunArgsPreservesMountOrderAndUserState(t *testing.T) {
+func TestBuildDockerRunArgsPreservesMountOrderAndUserMounts(t *testing.T) {
 	t.Parallel()
 	// A custom CODEX_HOME source differs from its container target, and skills are present, so this
 	// exercises every mount mode and the source-not-equal-target user-state mounts in one place.
-	userState := UserState{CodexHome: "/host/custom codex", PersonalSkills: "/host/skills"}
-	args, err := BuildDockerRunArgs(
+	userMounts := UserMounts{CodexHome: "/host/custom codex", PersonalSkills: "/host/skills"}
+	args, err := buildDockerRunArgsForTest(
 		testPlan(),
 		"image",
 		"codex-safe-test",
@@ -103,7 +105,7 @@ func TestBuildDockerRunArgsPreservesMountOrderAndUserState(t *testing.T) {
 		"developers",
 		"/home/developer profile",
 		"/home/developer profile/.gitconfig",
-		userState,
+		userMounts,
 	)
 	if err != nil {
 		t.Fatalf("BuildDockerRunArgs() error = %v", err)
@@ -133,10 +135,10 @@ func TestBuildDockerRunArgsPreservesMountOrderAndUserState(t *testing.T) {
 
 func TestBuildDockerRunArgsRejectsMissingCodexHome(t *testing.T) {
 	t.Parallel()
-	_, err := BuildDockerRunArgs(
+	_, err := buildDockerRunArgsForTest(
 		testPlan(), "image", "codex-safe-test", 1000, 1000,
 		"developer", "developers", "/home/developer", "",
-		UserState{PersonalSkills: PersonalSkillsAbsent},
+		UserMounts{PersonalSkills: PersonalSkillsAbsent},
 	)
 	if err == nil || !strings.Contains(err.Error(), "resolved Codex home is required") {
 		t.Fatalf("BuildDockerRunArgs() error = %v, want missing Codex home", err)
@@ -147,11 +149,11 @@ func TestBuildDockerRunArgsOmitsAbsentCodexHome(t *testing.T) {
 	t.Parallel()
 	// agents-safe with no host Codex home: the container is created with no Codex mount and the
 	// codex-home label records the absent marker so reuse still matches.
-	userState := UserState{CodexHome: CodexHomeAbsent, PersonalSkills: PersonalSkillsAbsent}
-	args, err := BuildDockerRunArgs(
+	userMounts := UserMounts{CodexHome: CodexHomeAbsent, PersonalSkills: PersonalSkillsAbsent}
+	args, err := buildDockerRunArgsForTest(
 		testPlan(), "image", "codex-safe-test", 1000, 1000,
 		"developer", "developers", "/home/developer profile", "",
-		userState,
+		userMounts,
 	)
 	if err != nil {
 		t.Fatalf("BuildDockerRunArgs() error = %v", err)
@@ -166,7 +168,7 @@ func TestBuildDockerRunArgsOmitsAbsentCodexHome(t *testing.T) {
 
 func TestBuildDockerExecArgsOmitsCodexHomeWhenAbsent(t *testing.T) {
 	t.Parallel()
-	args, err := BuildDockerExecArgs(
+	args, err := buildDockerExecArgsForTest(
 		testPlan(), []string{"bash"}, strings.Repeat("a", 64), 1000, 1001, "/home/developer profile", false, false,
 	)
 	if err != nil {
@@ -183,7 +185,16 @@ func TestBuildDockerExecArgsWrapsCommandAndPreservesTerminalContract(t *testing.
 	t.Parallel()
 	containerID := strings.Repeat("a", 64)
 	command := []string{"printf", "%s\\n", "value with spaces; $(not-a-shell)", ""}
-	args, err := BuildDockerExecArgs(testPlan(), command, containerID, 1000, 1001, "/home/developer profile", true, true)
+	args, err := buildDockerExecArgsForTest(
+		testPlan(),
+		command,
+		containerID,
+		1000,
+		1001,
+		"/home/developer profile",
+		true,
+		true,
+	)
 	if err != nil {
 		t.Fatalf("BuildDockerExecArgs() error = %v", err)
 	}
@@ -244,9 +255,9 @@ func TestBuildDockerRunArgsRejectsInvalidIdentityInputs(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := BuildDockerRunArgs(
+			_, err := buildDockerRunArgsForTest(
 				testPlan(), "image", "codex-safe-test", 1000, 1000,
-				test.hostUser, test.hostGroup, test.hostHome, test.gitConfig, testUserState(),
+				test.hostUser, test.hostGroup, test.hostHome, test.gitConfig, testUserMounts(),
 			)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("BuildDockerRunArgs() error = %v, want %q", err, test.want)
@@ -291,7 +302,7 @@ func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
 		output: inspectionJSON(t, containerID, true, "running", matchingLabels("/project", 1000)),
 	}}}
 	docker := testDocker(runner)
-	docker.TTY = true
+	docker.AllocateTTY = true
 	if err := docker.Launch(context.Background(), simplePlan(), "image", []string{"make", "test"}); err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
@@ -320,7 +331,7 @@ func TestDockerLaunchRejectsMismatchedDeterministicNameOccupant(t *testing.T) {
 	}
 }
 
-func TestDockerLaunchRejectsUserStateMismatchWithActiveSessionDiagnostic(t *testing.T) {
+func TestDockerLaunchRejectsUserMountsMismatchWithActiveSessionDiagnostic(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
@@ -346,9 +357,9 @@ func TestDockerLaunchRejectsUserStateMismatchWithActiveSessionDiagnostic(t *test
 			if !strings.Contains(err.Error(), test.label) {
 				t.Fatalf("diagnostic must name %s: %v", test.label, err)
 			}
-			var mismatch *userStateMismatchError
+			var mismatch *userMountMismatchError
 			if !errors.As(err, &mismatch) {
-				t.Fatalf("error must be a userStateMismatchError: %v", err)
+				t.Fatalf("error must be a userMountMismatchError: %v", err)
 			}
 			// Neither reuse (no exec) nor terminate (no stop/rm): only the single inspect ran.
 			if len(runner.combinedCalls) != 1 {
@@ -361,7 +372,7 @@ func TestDockerLaunchRejectsUserStateMismatchWithActiveSessionDiagnostic(t *test
 	}
 }
 
-func TestDockerLaunchWaitsOutStoppedUserStateMismatch(t *testing.T) {
+func TestDockerLaunchWaitsOutStoppedUserMountsMismatch(t *testing.T) {
 	t.Parallel()
 	// A stopped container with matching ownership but a different Codex home is not an active
 	// session: the launcher must wait for the deterministic name to release and create a fresh
@@ -387,7 +398,7 @@ func TestDockerLaunchWaitsOutStoppedUserStateMismatch(t *testing.T) {
 
 func TestWritableMountSourcesExcludesReadOnly(t *testing.T) {
 	t.Parallel()
-	got := writableMountSources([]Mount{
+	got := writableMountSources([]launchplan.BindMount{
 		{Source: "/sources/primary", Target: "/sources/primary", ReadOnly: true},
 		{Source: "/sources/primary/.git", Target: "/sources/primary/.git"},
 		{Source: "/sources/feature worktree", Target: "/sources/feature worktree"},
@@ -398,12 +409,12 @@ func TestWritableMountSourcesExcludesReadOnly(t *testing.T) {
 	}
 }
 
-func TestBuildDockerRunArgsRecordsUserStateLabels(t *testing.T) {
+func TestBuildDockerRunArgsRecordsUserMountsLabels(t *testing.T) {
 	t.Parallel()
-	userState := UserState{CodexHome: "/host/custom codex", PersonalSkills: "/host/skills"}
-	args, err := BuildDockerRunArgs(
+	userMounts := UserMounts{CodexHome: "/host/custom codex", PersonalSkills: "/host/skills"}
+	args, err := buildDockerRunArgsForTest(
 		testPlan(), "image", "codex-safe-test", 1000, 1000,
-		"developer", "developers", "/home/developer", "", userState,
+		"developer", "developers", "/home/developer", "", userMounts,
 	)
 	if err != nil {
 		t.Fatalf("BuildDockerRunArgs() error = %v", err)
@@ -480,7 +491,7 @@ func TestDockerLaunchRetriesOnceAfterCommittedShutdown(t *testing.T) {
 			{output: []byte(newID)},
 		},
 		runErrors: []error{
-			&dockerCommandError{
+			&testCommandError{
 				err:    fakeExitError{1},
 				stderr: "Error response from daemon: container is not running",
 			},
@@ -503,7 +514,7 @@ func TestDockerLaunchDoesNotRetryUserCommandExit125(t *testing.T) {
 		outputs: []commandResult{
 			{output: inspectionJSON(t, containerID, true, "running", matchingLabels("/project", 1000))},
 		},
-		runErrors: []error{&dockerCommandError{
+		runErrors: []error{&testCommandError{
 			err:    fakeExitError{125},
 			stderr: "user command completed with status 125",
 		}},
@@ -611,10 +622,10 @@ func TestConfirmCreateCodexHomeTreatsEOFAsDecline(t *testing.T) {
 	t.Parallel()
 	home := filepath.Join(t.TempDir(), ".codex")
 	var diagnostics bytes.Buffer
-	docker := &Docker{
+	docker := &DockerLauncher{
 		Stdin:     strings.NewReader(""),
 		Stderr:    &diagnostics,
-		PromptTTY: true,
+		CanPrompt: true,
 	}
 
 	created, err := docker.confirmCreateCodexHome(home)
@@ -633,11 +644,11 @@ func TestConfirmCreateCodexHomeUsesPromptStreamsInsteadOfDockerTTY(t *testing.T)
 	t.Parallel()
 	home := filepath.Join(t.TempDir(), ".codex")
 	var diagnostics bytes.Buffer
-	docker := &Docker{
-		Stdin:     strings.NewReader("yes\n"),
-		Stderr:    &diagnostics,
-		TTY:       false,
-		PromptTTY: true,
+	docker := &DockerLauncher{
+		Stdin:       strings.NewReader("yes\n"),
+		Stderr:      &diagnostics,
+		AllocateTTY: false,
+		CanPrompt:   true,
 	}
 
 	created, err := docker.confirmCreateCodexHome(home)
@@ -656,11 +667,11 @@ func TestConfirmCreateCodexHomeDeclinesWhenPromptStreamIsNotTTY(t *testing.T) {
 	t.Parallel()
 	home := filepath.Join(t.TempDir(), ".codex")
 	var diagnostics bytes.Buffer
-	docker := &Docker{
-		Stdin:     strings.NewReader("yes\n"),
-		Stderr:    &diagnostics,
-		TTY:       true,
-		PromptTTY: false,
+	docker := &DockerLauncher{
+		Stdin:       strings.NewReader("yes\n"),
+		Stderr:      &diagnostics,
+		AllocateTTY: true,
+		CanPrompt:   false,
 	}
 
 	created, err := docker.confirmCreateCodexHome(home)
@@ -692,7 +703,7 @@ func TestDockerLaunchRejectsUnsupportedOSBeforeDocker(t *testing.T) {
 	t.Parallel()
 	runner := &fakeCommandRunner{}
 	docker := testDocker(runner)
-	docker.GOOS = "darwin"
+	docker.HostOS = "darwin"
 	err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"})
 	if err == nil || !strings.Contains(err.Error(), "requires Linux") {
 		t.Fatalf("Launch() error = %v", err)
@@ -745,16 +756,16 @@ func TestIsTerminalRejectsDevNull(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = file.Close() })
-	if terminal.IsReader(file) {
-		t.Fatalf("terminal.IsReader(%s) = true", os.DevNull)
+	if terminal.IsTerminal(file) {
+		t.Fatalf("terminal.IsTerminal(%s) = true", os.DevNull)
 	}
 }
 
-func testPlan() Plan {
-	return Plan{
+func testPlan() launchplan.Plan {
+	return launchplan.Plan{
 		ProjectRoot: "/sources/feature worktree",
 		WorkingDir:  "/sources/feature worktree/nested",
-		Mounts: []Mount{
+		Mounts: []launchplan.BindMount{
 			{Source: "/sources/primary", Target: "/sources/primary", ReadOnly: true},
 			{Source: "/sources/primary/.git", Target: "/sources/primary/.git"},
 			{Source: "/sources/feature worktree", Target: "/sources/feature worktree"},
@@ -762,28 +773,28 @@ func testPlan() Plan {
 	}
 }
 
-func simplePlan() Plan {
-	return Plan{
+func simplePlan() launchplan.Plan {
+	return launchplan.Plan{
 		ProjectRoot: "/project",
 		WorkingDir:  "/project/nested",
-		Mounts:      []Mount{{Source: "/project", Target: "/project"}},
+		Mounts:      []launchplan.BindMount{{Source: "/project", Target: "/project"}},
 	}
 }
 
-func testDocker(runner CommandRunner) *Docker {
-	return &Docker{
-		Binary:    "docker",
-		GOOS:      "linux",
-		Runner:    runner,
-		HostUID:   1000,
-		HostGID:   1000,
-		HostUser:  "developer",
-		HostGroup: "developers",
-		HostHome:  "/home/developer",
+func testDocker(runner dockercli.Runner) *DockerLauncher {
+	return &DockerLauncher{
+		DockerBinary:  "docker",
+		CommandRunner: runner,
+		HostOS:        "linux",
+		HostUID:       1000,
+		HostGID:       1000,
+		HostUser:      "developer",
+		HostGroup:     "developers",
+		HostHome:      "/home/developer",
 		// Focused Launch tests use fake paths, so inject a resolver instead of touching the
 		// filesystem. User-state resolution itself is covered in userstate_test.go.
-		resolveUserState: func(Plan) (userStateResolution, error) {
-			return userStateResolution{state: UserState{
+		resolveUserMounts: func(launchplan.Plan) (userMountResolution, error) {
+			return userMountResolution{mounts: UserMounts{
 				CodexHome:      "/home/developer/.codex",
 				PersonalSkills: PersonalSkillsAbsent,
 			}}, nil
@@ -793,16 +804,16 @@ func testDocker(runner CommandRunner) *Docker {
 
 func filesystemDocker(
 	t *testing.T,
-	runner CommandRunner,
+	runner dockercli.Runner,
 	home string,
 	stdin io.Reader,
 	stderr io.Writer,
-) *Docker {
+) *DockerLauncher {
 	t.Helper()
-	docker := &Docker{
-		Binary:          "docker",
-		GOOS:            "linux",
-		Runner:          runner,
+	docker := &DockerLauncher{
+		DockerBinary:    "docker",
+		CommandRunner:   runner,
+		HostOS:          "linux",
 		Stdin:           stdin,
 		Stdout:          io.Discard,
 		Stderr:          stderr,
@@ -811,16 +822,16 @@ func filesystemDocker(
 		HostUser:        "developer",
 		HostGroup:       "developers",
 		HostHome:        evalPath(t, home),
-		PromptTTY:       true,
+		CanPrompt:       true,
 		LookupEnv:       envLookup(nil),
 		CodexHomePolicy: CodexHomeRequired,
 	}
-	docker.resolveUserState = docker.defaultResolveUserState
+	docker.resolveUserMounts = docker.defaultResolveUserMounts
 	return docker
 }
 
-func testUserState() UserState {
-	return UserState{CodexHome: "/home/developer/.codex", PersonalSkills: PersonalSkillsAbsent}
+func testUserMounts() UserMounts {
+	return UserMounts{CodexHome: "/home/developer/.codex", PersonalSkills: PersonalSkillsAbsent}
 }
 
 func mustContainerName(t *testing.T, hostUID int, projectRoot string) string {
@@ -858,11 +869,11 @@ func inspectionJSON(
 	labels map[string]string,
 ) []byte {
 	t.Helper()
-	inspection := containerInspection{ID: containerID}
+	inspection := dockercli.ContainerInspection{ID: containerID}
 	inspection.Config.Labels = labels
 	inspection.State.Running = running
 	inspection.State.Status = status
-	data, err := json.Marshal([]containerInspection{inspection})
+	data, err := json.Marshal([]dockercli.ContainerInspection{inspection})
 	if err != nil {
 		t.Fatalf("marshal inspection: %v", err)
 	}
