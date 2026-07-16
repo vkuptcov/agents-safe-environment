@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -531,6 +532,162 @@ func TestDockerLaunchRejectsMissingSysbox(t *testing.T) {
 	}
 }
 
+func TestDockerLaunchDoesNotCreateCodexHomeBeforePreflight(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	var diagnostics bytes.Buffer
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{}}`)},
+	}}
+	docker := filesystemDocker(t, runner, home, strings.NewReader("y\n"), &diagnostics)
+
+	err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"})
+	if err == nil || !strings.Contains(err.Error(), `Docker runtime "sysbox-runc" is not registered`) {
+		t.Fatalf("Launch() error = %v, want missing Sysbox rejection", err)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".codex")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Codex home was created before preflight: %v", err)
+	}
+	if diagnostics.Len() != 0 {
+		t.Fatalf("prompt ran before preflight: %q", diagnostics.String())
+	}
+}
+
+func TestDockerLaunchDoesNotCreateCodexHomeBeforeRunningReuseValidation(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	var diagnostics bytes.Buffer
+	labels := matchingLabels("/project", 1000)
+	labels[codexHomeLabel] = CodexHomeAbsent
+	runner := &fakeCommandRunner{outputs: []commandResult{{
+		output: inspectionJSON(t, strings.Repeat("6", 64), true, "running", labels),
+	}}}
+	docker := filesystemDocker(t, runner, home, strings.NewReader("y\n"), &diagnostics)
+
+	err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"})
+	if err == nil || !strings.Contains(err.Error(), "already running without a usable host Codex home") {
+		t.Fatalf("Launch() error = %v, want active no-Codex-mount diagnostic", err)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".codex")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Codex home was created before reuse validation: %v", err)
+	}
+	if diagnostics.Len() != 0 {
+		t.Fatalf("prompt ran before reuse validation: %q", diagnostics.String())
+	}
+	if len(runner.combinedCalls) != 1 {
+		t.Fatalf("CombinedOutput calls = %#v, want inspect only", runner.combinedCalls)
+	}
+}
+
+func TestDockerLaunchCreatesCodexHomeAfterPreflight(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	var diagnostics bytes.Buffer
+	containerID := strings.Repeat("5", 64)
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+		{output: []byte(containerID)},
+	}}
+	docker := filesystemDocker(t, runner, home, strings.NewReader("y\n"), &diagnostics)
+
+	if err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	info, err := os.Stat(filepath.Join(home, ".codex"))
+	if err != nil || !info.IsDir() {
+		t.Fatalf("Codex home was not created after preflight: info=%v err=%v", info, err)
+	}
+	if !strings.Contains(diagnostics.String(), "Create it now?") ||
+		!strings.Contains(diagnostics.String(), "Created Codex home") {
+		t.Fatalf("confirmation diagnostics = %q", diagnostics.String())
+	}
+	assertWrappedRun(t, runner.runCalls, containerID, []string{"true"})
+}
+
+func TestConfirmCreateCodexHomeTreatsEOFAsDecline(t *testing.T) {
+	t.Parallel()
+	home := filepath.Join(t.TempDir(), ".codex")
+	var diagnostics bytes.Buffer
+	docker := &Docker{
+		Stdin:     strings.NewReader(""),
+		Stderr:    &diagnostics,
+		PromptTTY: true,
+	}
+
+	created, err := docker.confirmCreateCodexHome(home)
+	if err != nil {
+		t.Fatalf("confirmCreateCodexHome() error = %v", err)
+	}
+	if created {
+		t.Fatal("confirmCreateCodexHome() created a directory after EOF")
+	}
+	if _, err := os.Lstat(home); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Codex home exists after EOF: %v", err)
+	}
+}
+
+func TestConfirmCreateCodexHomeUsesPromptStreamsInsteadOfDockerTTY(t *testing.T) {
+	t.Parallel()
+	home := filepath.Join(t.TempDir(), ".codex")
+	var diagnostics bytes.Buffer
+	docker := &Docker{
+		Stdin:     strings.NewReader("yes\n"),
+		Stderr:    &diagnostics,
+		TTY:       false,
+		PromptTTY: true,
+	}
+
+	created, err := docker.confirmCreateCodexHome(home)
+	if err != nil {
+		t.Fatalf("confirmCreateCodexHome() error = %v", err)
+	}
+	if !created {
+		t.Fatal("confirmCreateCodexHome() declined despite interactive prompt streams")
+	}
+	if !strings.Contains(diagnostics.String(), "Create it now?") {
+		t.Fatalf("prompt was not written to the verified diagnostic stream: %q", diagnostics.String())
+	}
+}
+
+func TestConfirmCreateCodexHomeDeclinesWhenPromptStreamIsNotTTY(t *testing.T) {
+	t.Parallel()
+	home := filepath.Join(t.TempDir(), ".codex")
+	var diagnostics bytes.Buffer
+	docker := &Docker{
+		Stdin:     strings.NewReader("yes\n"),
+		Stderr:    &diagnostics,
+		TTY:       true,
+		PromptTTY: false,
+	}
+
+	created, err := docker.confirmCreateCodexHome(home)
+	if err != nil {
+		t.Fatalf("confirmCreateCodexHome() error = %v", err)
+	}
+	if created || diagnostics.Len() != 0 {
+		t.Fatalf("non-interactive prompt created=%v diagnostics=%q", created, diagnostics.String())
+	}
+}
+
+func TestReadPromptLineDoesNotConsumeTypeAhead(t *testing.T) {
+	t.Parallel()
+	input := bytes.NewBufferString("y\nnext command\n")
+
+	line, err := readPromptLine(input)
+	if err != nil {
+		t.Fatalf("readPromptLine() error = %v", err)
+	}
+	if line != "y" {
+		t.Fatalf("readPromptLine() = %q, want %q", line, "y")
+	}
+	if got := input.String(); got != "next command\n" {
+		t.Fatalf("readPromptLine() consumed type-ahead: remaining = %q", got)
+	}
+}
+
 func TestDockerLaunchRejectsUnsupportedOSBeforeDocker(t *testing.T) {
 	t.Parallel()
 	runner := &fakeCommandRunner{}
@@ -625,10 +782,41 @@ func testDocker(runner CommandRunner) *Docker {
 		HostHome:  "/home/developer",
 		// Focused Launch tests use fake paths, so inject a resolver instead of touching the
 		// filesystem. User-state resolution itself is covered in userstate_test.go.
-		resolveUserState: func(Plan) (UserState, error) {
-			return UserState{CodexHome: "/home/developer/.codex", PersonalSkills: PersonalSkillsAbsent}, nil
+		resolveUserState: func(Plan) (userStateResolution, error) {
+			return userStateResolution{state: UserState{
+				CodexHome:      "/home/developer/.codex",
+				PersonalSkills: PersonalSkillsAbsent,
+			}}, nil
 		},
 	}
+}
+
+func filesystemDocker(
+	t *testing.T,
+	runner CommandRunner,
+	home string,
+	stdin io.Reader,
+	stderr io.Writer,
+) *Docker {
+	t.Helper()
+	docker := &Docker{
+		Binary:          "docker",
+		GOOS:            "linux",
+		Runner:          runner,
+		Stdin:           stdin,
+		Stdout:          io.Discard,
+		Stderr:          stderr,
+		HostUID:         1000,
+		HostGID:         1000,
+		HostUser:        "developer",
+		HostGroup:       "developers",
+		HostHome:        evalPath(t, home),
+		PromptTTY:       true,
+		LookupEnv:       envLookup(nil),
+		CodexHomePolicy: CodexHomeRequired,
+	}
+	docker.resolveUserState = docker.defaultResolveUserState
+	return docker
 }
 
 func testUserState() UserState {

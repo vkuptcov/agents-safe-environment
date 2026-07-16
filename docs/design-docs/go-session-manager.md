@@ -130,13 +130,18 @@ validate the container before reuse and operators can find sessions by project p
 - `codex-safe.project-path`: canonical worktree root;
 - `codex-safe.host-uid`: invoking numeric UID;
 - `codex-safe.manager-protocol=1`: required wrapper-manager compatibility;
-- `codex-safe.codex-home`: canonical host source mounted as the container's Codex home;
+- `codex-safe.codex-home`: canonical host source mounted as the container's Codex home, or the literal `absent` for
+  an `agents-safe` container created without one;
 - `codex-safe.personal-skills`: canonical host source mounted for personal skills, or the literal `absent` when the
   optional directory does not exist.
 
 The project path and UID determine the container name. The Codex-home and personal-skills labels do not create a second
 container for the same worktree; they prove that a running container has the user-state mounts requested by the new
 invocation.
+
+Because `docker exec` cannot add a bind mount, a running container labeled with `codex-safe.codex-home=absent` cannot
+serve a later `codex-safe` launch that requires a mounted home. The host launcher rejects that reuse before offering
+to create the missing source.
 
 The deterministic name is the creation lock. Docker permits only one container with a given name, so concurrent
 launchers cannot both create the same project session.

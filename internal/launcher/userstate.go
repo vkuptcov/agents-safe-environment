@@ -46,7 +46,8 @@ const (
 
 // UserState holds the resolved host sources mounted for one launch's Codex user state.
 type UserState struct {
-	// CodexHome is the canonical host directory mounted read-write as the container Codex home.
+	// CodexHome is the canonical host directory mounted read-write as the container Codex home, or
+	// CodexHomeAbsent when an optional launch resolved no Codex home.
 	CodexHome string
 	// PersonalSkills is the canonical host $HOME/.agents/skills directory mounted read-only, or
 	// PersonalSkillsAbsent when the host has no such directory.
@@ -101,19 +102,57 @@ type UserStateInputs struct {
 	ConfirmCreateCodexHome func(path string) (bool, error)
 }
 
-// ResolveUserState resolves the Codex home and optional personal skills for one launch. It never
-// creates a missing source and never falls back to another location.
-func ResolveUserState(inputs UserStateInputs) (UserState, error) {
-	if inputs.LookupEnv == nil {
-		return UserState{}, errors.New("environment lookup is nil")
-	}
-	if err := validateMountPath("host home directory", inputs.HomeDir); err != nil {
-		return UserState{}, err
-	}
+type userStateResolution struct {
+	state            UserState
+	missingCodexHome string
+}
 
-	codexHome, err := resolveCodexHome(inputs)
+// ResolveUserState resolves the Codex home and optional personal skills for one launch. A required
+// implicit default may be created only through ConfirmCreateCodexHome; every other missing source
+// is rejected or recorded as absent according to CodexHomePolicy. Resolution never falls back to
+// another location.
+func ResolveUserState(inputs UserStateInputs) (UserState, error) {
+	resolution, err := inspectUserState(inputs)
 	if err != nil {
 		return UserState{}, err
+	}
+	if resolution.missingCodexHome == "" {
+		return resolution.state, nil
+	}
+	if inputs.ConfirmCreateCodexHome == nil {
+		return UserState{}, fmt.Errorf("Codex home %q does not exist", resolution.missingCodexHome)
+	}
+	created, err := inputs.ConfirmCreateCodexHome(resolution.missingCodexHome)
+	if err != nil {
+		return UserState{}, err
+	}
+	if !created {
+		return UserState{}, fmt.Errorf("Codex home %q does not exist", resolution.missingCodexHome)
+	}
+	resolution, err = inspectUserState(inputs)
+	if err != nil {
+		return UserState{}, err
+	}
+	if resolution.missingCodexHome != "" {
+		return UserState{}, fmt.Errorf("Codex home %q does not exist", resolution.missingCodexHome)
+	}
+	return resolution.state, nil
+}
+
+// inspectUserState resolves existing sources without prompting or creating host state. A missing
+// required implicit default is returned separately so the launcher can defer confirmation until
+// Docker preflight and deterministic-container reuse checks have succeeded.
+func inspectUserState(inputs UserStateInputs) (userStateResolution, error) {
+	if inputs.LookupEnv == nil {
+		return userStateResolution{}, errors.New("environment lookup is nil")
+	}
+	if err := validateMountPath("host home directory", inputs.HomeDir); err != nil {
+		return userStateResolution{}, err
+	}
+
+	codexHome, missingCodexHome, err := inspectCodexHome(inputs)
+	if err != nil {
+		return userStateResolution{}, err
 	}
 
 	state := UserState{CodexHome: codexHome}
@@ -123,16 +162,16 @@ func ResolveUserState(inputs UserStateInputs) (UserState, error) {
 		overlapSources = append(overlapSources, codexHome)
 	}
 
-	personalSkills, err := resolvePersonalSkills(inputs.HomeDir, overlapSources)
+	personalSkills, err := resolvePersonalSkills(inputs.HomeDir, overlapSources, inputs.CodexHomePolicy)
 	if err != nil {
-		return UserState{}, err
+		return userStateResolution{}, err
 	}
 	state.PersonalSkills = personalSkills
 
-	return state, nil
+	return userStateResolution{state: state, missingCodexHome: missingCodexHome}, nil
 }
 
-func resolveCodexHome(inputs UserStateInputs) (string, error) {
+func inspectCodexHome(inputs UserStateInputs) (string, string, error) {
 	source := filepath.Join(inputs.HomeDir, ".codex")
 	explicit := false
 	if requested, ok := inputs.LookupEnv(codexHomeEnv); ok && strings.TrimSpace(requested) != "" {
@@ -142,45 +181,76 @@ func resolveCodexHome(inputs UserStateInputs) (string, error) {
 		source = strings.TrimSpace(requested)
 		explicit = true
 		if !filepath.IsAbs(source) {
-			return "", fmt.Errorf("%s %q is not absolute", codexHomeEnv, source)
+			return "", "", fmt.Errorf("%s %q is not absolute", codexHomeEnv, source)
 		}
 	}
 
-	if _, err := os.Stat(source); errors.Is(err, os.ErrNotExist) {
-		switch {
-		case inputs.CodexHomePolicy == CodexHomeOptional:
-			// agents-safe runs commands that need no Codex state: mount the home only if it exists.
-			return CodexHomeAbsent, nil
-		case !explicit && inputs.ConfirmCreateCodexHome != nil:
-			// codex-safe offers to create the default home. An explicitly requested CODEX_HOME that
-			// is missing is left to fail below: it is more likely a typo than a path to materialize.
-			created, confirmErr := inputs.ConfirmCreateCodexHome(source)
-			if confirmErr != nil {
-				return "", confirmErr
+	info, lstatErr := os.Lstat(source)
+	if lstatErr == nil {
+		if _, err := os.Stat(source); err != nil {
+			if errors.Is(err, os.ErrNotExist) && info.Mode()&os.ModeSymlink != 0 {
+				return "", "", fmt.Errorf("Codex home %q is a broken symlink", source)
 			}
-			if !created {
-				return "", fmt.Errorf("Codex home %q does not exist", source)
-			}
+			return "", "", fmt.Errorf("inspect Codex home %q: %w", source, err)
 		}
-		// A required home that was declined, explicit-but-missing, or had no prompter falls through
-		// to canonicalization, which reports the standard missing-directory diagnostic.
+		canonical, err := canonicalizeExistingDir(
+			"Codex home",
+			source,
+			accessReadOK|accessWriteOK|accessExecOK,
+		)
+		return canonical, "", err
 	}
-	return canonicalizeExistingDir("Codex home", source, accessReadOK|accessWriteOK|accessExecOK)
+	if !errors.Is(lstatErr, os.ErrNotExist) {
+		return "", "", fmt.Errorf("inspect Codex home %q: %w", source, lstatErr)
+	}
+
+	if explicit {
+		return "", "", fmt.Errorf("Codex home %q does not exist", source)
+	}
+	if inputs.CodexHomePolicy == CodexHomeOptional {
+		// agents-safe runs commands that need no Codex state: mount the implicit default only if it
+		// exists. An explicit missing CODEX_HOME was rejected above because it is user intent.
+		return CodexHomeAbsent, "", nil
+	}
+	return CodexHomeAbsent, source, nil
 }
 
-func resolvePersonalSkills(homeDir string, writableSources []string) (string, error) {
-	source := filepath.Join(homeDir, ".agents", "skills")
-	if _, err := os.Lstat(source); err != nil {
+func resolvePersonalSkills(
+	homeDir string,
+	writableSources []string,
+	codexHomePolicy CodexHomePolicy,
+) (string, error) {
+	parent := filepath.Join(homeDir, ".agents")
+	parentInfo, err := os.Lstat(parent)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return PersonalSkillsAbsent, nil
+		}
+		return "", fmt.Errorf("inspect personal-skills parent %q: %w", parent, err)
+	}
+	if _, err := os.Stat(parent); err != nil {
+		if errors.Is(err, os.ErrNotExist) && parentInfo.Mode()&os.ModeSymlink != 0 {
+			if codexHomePolicy == CodexHomeOptional {
+				return PersonalSkillsAbsent, nil
+			}
+			return "", fmt.Errorf("personal-skills parent %q is a broken symlink", parent)
+		}
+		return "", fmt.Errorf("inspect personal-skills parent %q: %w", parent, err)
+	}
+
+	source := filepath.Join(parent, "skills")
+	sourceInfo, err := os.Lstat(source)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return PersonalSkillsAbsent, nil
 		}
 		return "", fmt.Errorf("inspect personal skills %q: %w", source, err)
 	}
-	// The entry exists (Lstat), but a following Stat that reports it missing means the target of a
-	// symlink is gone. That is a broken configuration, not an absent skills directory: surface it
-	// instead of silently launching without the user's authored skills.
 	if _, err := os.Stat(source); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) && sourceInfo.Mode()&os.ModeSymlink != 0 {
+			if codexHomePolicy == CodexHomeOptional {
+				return PersonalSkillsAbsent, nil
+			}
 			return "", fmt.Errorf("personal-skills source %q is a broken symlink", source)
 		}
 		return "", fmt.Errorf("inspect personal skills %q: %w", source, err)

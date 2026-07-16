@@ -236,10 +236,13 @@ The launcher resolves exactly one host Codex-home source before it creates or re
    without creating it or falling back to another location. How a source that does not yet exist is handled depends
    on the command's Codex-home policy:
    - `codex-safe` requires a Codex home. When `CODEX_HOME` is unset and the default `.codex` home is missing, the
-     launcher offers to create the default home and creates it only after the user agrees on an interactive terminal.
-     A non-interactive session, a declined prompt, or a missing explicitly requested `CODEX_HOME` fails preflight.
+     launcher offers to create the default home only after Docker preflight and active-container reuse validation
+     succeed. The prompt uses terminal stdin and stderr; EOF, a non-interactive session, or a declined answer leaves
+     the source missing and fails the launch. A missing explicitly requested `CODEX_HOME` is never offered for
+     creation.
    - `agents-safe` treats Codex state as optional. A missing source is recorded as absent: the launch mounts no Codex
-     home and sets no `CODEX_HOME` for the command, because an arbitrary command needs no Codex state.
+     home and sets no `CODEX_HOME` for the command, because an arbitrary command needs no Codex state. This exception
+     applies only to the implicit default; a missing explicitly requested `CODEX_HOME` remains an error.
 4. An existing source is canonicalized before the mount plan is built. A symlink used as the source may resolve to
    another directory, but symlinks inside it do not authorize additional host mounts.
 
@@ -257,6 +260,10 @@ Codex also discovers personal authored skills under `$HOME/.agents/skills`. When
 launcher canonicalizes it and mounts it read-only at the equivalent container path. A missing directory is allowed.
 The launcher does not mount the broader `$HOME/.agents` directory or follow skill symlinks by adding their external
 targets to the mount plan.
+
+For `codex-safe`, a dangling `.agents` parent symlink or dangling `skills` symlink is a configuration error rather than
+a silently absent skill set. `agents-safe` treats those same broken optional paths as absent because its arbitrary
+commands do not require personal Codex skills.
 
 To keep the read-only guarantee meaningful, the launcher rejects a canonical personal-skills source that overlaps any
 writable mount source: the active worktree root, a linked worktree's common Git directory, or the resolved Codex home.
@@ -442,6 +449,10 @@ launcher reports the mismatch and asks the user to finish the active session bef
 stale configuration or terminate another command. Ownership or protocol label mismatches remain name conflicts. The
 companion session design defines the complete inspection algorithm and diagnostics.
 
+A running container whose `codex-safe.codex-home` label is `absent` cannot satisfy a later `codex-safe` launch:
+`docker exec` cannot add the missing bind mount. The launcher reports that specific active-session condition and does
+not create the host directory first, so retrying after the unrelated session exits can still offer the normal prompt.
+
 The container's foreground workload is a Go session manager. Every `docker exec`, including the first, invokes
 `codex-safe-session run -- COMMAND`. That wrapper connects to a container-local Unix socket, runs the requested command,
 and holds the connection until its direct child exits. The manager exits after the last registered command finishes
@@ -522,6 +533,8 @@ Before creating a container, the launcher verifies:
 
 An error identifies the failed check and provides a diagnostic action. The launcher never compensates for missing
 Sysbox by using `runc`, `--privileged`, the host Docker socket, or direct host execution of Codex.
+Creation of a missing default Codex home is deferred until the Docker runtime/image checks pass and no running
+deterministic container needs to be rejected for incompatible fixed mounts.
 
 An image-pull, outer-container, or nested-daemon failure is returned to the user without retrying in a less isolated
 mode.
@@ -599,9 +612,14 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Resolve canonical paths when the launcher starts through a symbolic link.
 - Verify the exact mount plan and mode of every mount without starting a container.
 - Resolve default and explicit `CODEX_HOME` sources without hard-coded home prefixes.
-- Reject a missing, relative, root, non-directory, unreadable, or unwritable Codex-home source.
+- Under the required policy, reject a declined or non-interactive missing default; under both policies, reject a
+  missing explicit source and any relative, root, non-directory, unreadable, or unwritable source.
 - Canonicalize a symlinked Codex-home source without adding mounts for external symlinks contained inside it.
+- Reject a dangling default Codex-home symlink without offering to create it.
 - Mount an existing `$HOME/.agents/skills` read-only, allow it to be absent, and reject an invalid source.
+- Reject dangling personal-skills paths for `codex-safe` while treating them as absent for `agents-safe`.
+- Treat prompt EOF as decline, use the prompt's actual terminal streams, and preserve input after the answer line.
+- Prove Docker preflight and active-container validation run before a missing default Codex home is created.
 - Verify `HOME` and `CODEX_HOME`, the image-owned `codex` argv, forwarded arguments, working directory, and exit status.
 - Verify `agents-safe bash` preserves direct argv, starts in the selected project, rejects an omitted command, and
   propagates the command exit status.

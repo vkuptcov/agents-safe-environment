@@ -1,7 +1,6 @@
 package launcher
 
 import (
-	"bufio"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -72,6 +71,9 @@ type Docker struct {
 	HostGitConfig string
 	// TTY controls whether Docker allocates a terminal for the outer container.
 	TTY bool
+	// PromptTTY reports whether stdin and the diagnostic stream can service an interactive host
+	// prompt. It is intentionally independent from TTY, which also requires stdout to be a terminal.
+	PromptTTY bool
 	// LookupEnv reads host environment variables during user-state resolution. It is os.LookupEnv
 	// in production and a stub in focused tests.
 	LookupEnv func(string) (string, bool)
@@ -80,7 +82,7 @@ type Docker struct {
 	CodexHomePolicy CodexHomePolicy
 	// resolveUserState resolves one launch's Codex home and personal skills from the plan. It is the
 	// filesystem-backed resolver in production and is overridden in focused tests that use fake paths.
-	resolveUserState func(Plan) (UserState, error)
+	resolveUserState func(Plan) (userStateResolution, error)
 }
 
 // NewDocker creates a launcher backed by os/exec and the current process streams. codexHomePolicy
@@ -127,6 +129,7 @@ func NewDocker(codexHomePolicy CodexHomePolicy) (*Docker, error) {
 		HostHome:        hostHome,
 		HostGitConfig:   hostGitConfig,
 		TTY:             terminal.IsReader(os.Stdin) && terminal.IsReader(os.Stdout),
+		PromptTTY:       terminal.IsReader(os.Stdin) && terminal.IsReader(os.Stderr),
 		LookupEnv:       os.LookupEnv,
 		CodexHomePolicy: codexHomePolicy,
 	}
@@ -135,17 +138,16 @@ func NewDocker(codexHomePolicy CodexHomePolicy) (*Docker, error) {
 }
 
 // defaultResolveUserState resolves the launch user state from the host filesystem and environment.
-func (docker *Docker) defaultResolveUserState(plan Plan) (UserState, error) {
+func (docker *Docker) defaultResolveUserState(plan Plan) (userStateResolution, error) {
 	lookup := docker.LookupEnv
 	if lookup == nil {
 		lookup = os.LookupEnv
 	}
-	return ResolveUserState(UserStateInputs{
-		LookupEnv:              lookup,
-		HomeDir:                docker.HostHome,
-		WritableSources:        writableMountSources(plan.Mounts),
-		CodexHomePolicy:        docker.CodexHomePolicy,
-		ConfirmCreateCodexHome: docker.confirmCreateCodexHome,
+	return inspectUserState(UserStateInputs{
+		LookupEnv:       lookup,
+		HomeDir:         docker.HostHome,
+		WritableSources: writableMountSources(plan.Mounts),
+		CodexHomePolicy: docker.CodexHomePolicy,
 	})
 }
 
@@ -154,12 +156,15 @@ func (docker *Docker) defaultResolveUserState(plan Plan) (UserState, error) {
 // terminal; a non-interactive session declines so preflight fails with the standard missing-home
 // diagnostic instead of silently materializing state.
 func (docker *Docker) confirmCreateCodexHome(path string) (bool, error) {
-	if !docker.TTY {
+	if !docker.PromptTTY {
 		return false, nil
 	}
 	fmt.Fprintf(docker.Stderr, "Codex home %q does not exist. Create it now? [Y/n] ", path)
-	line, err := bufio.NewReader(docker.Stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
+	line, err := readPromptLine(docker.Stdin)
+	if errors.Is(err, io.EOF) {
+		return false, nil
+	}
+	if err != nil {
 		return false, fmt.Errorf("read Codex-home confirmation: %w", err)
 	}
 	switch strings.ToLower(strings.TrimSpace(line)) {
@@ -172,6 +177,54 @@ func (docker *Docker) confirmCreateCodexHome(path string) (bool, error) {
 	default:
 		return false, nil
 	}
+}
+
+func readPromptLine(reader io.Reader) (string, error) {
+	var line strings.Builder
+	var buffer [1]byte
+	for {
+		count, err := reader.Read(buffer[:])
+		if count == 1 {
+			if buffer[0] == '\n' {
+				return line.String(), nil
+			}
+			line.WriteByte(buffer[0])
+		}
+		if err != nil {
+			return line.String(), err
+		}
+		if count == 0 {
+			return line.String(), io.ErrNoProgress
+		}
+	}
+}
+
+func (docker *Docker) materializeUserState(
+	plan Plan,
+	resolution userStateResolution,
+) (UserState, error) {
+	if resolution.missingCodexHome == "" {
+		return resolution.state, nil
+	}
+	created, err := docker.confirmCreateCodexHome(resolution.missingCodexHome)
+	if err != nil {
+		return UserState{}, err
+	}
+	if !created {
+		return UserState{}, fmt.Errorf("Codex home %q does not exist", resolution.missingCodexHome)
+	}
+	resolve := docker.resolveUserState
+	if resolve == nil {
+		resolve = docker.defaultResolveUserState
+	}
+	resolved, err := resolve(plan)
+	if err != nil {
+		return UserState{}, err
+	}
+	if resolved.missingCodexHome != "" {
+		return UserState{}, fmt.Errorf("Codex home %q does not exist", resolved.missingCodexHome)
+	}
+	return resolved.state, nil
 }
 
 // writableMountSources returns the canonical read-write bind sources in the plan. They are the
@@ -206,7 +259,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, comma
 	if resolve == nil {
 		resolve = docker.defaultResolveUserState
 	}
-	userState, err := resolve(plan)
+	resolution, err := resolve(plan)
 	if err != nil {
 		return err
 	}
@@ -214,7 +267,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, comma
 	if err != nil {
 		return err
 	}
-	containerID, err := docker.acquireProjectContainer(ctx, plan, image, containerName, userState)
+	containerID, userState, err := docker.acquireProjectContainer(ctx, plan, image, containerName, resolution)
 	if err != nil {
 		return err
 	}
@@ -234,7 +287,13 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, comma
 		return execErr
 	}
 
-	containerID, err = docker.acquireProjectContainer(ctx, plan, image, containerName, userState)
+	containerID, userState, err = docker.acquireProjectContainer(
+		ctx,
+		plan,
+		image,
+		containerName,
+		userStateResolution{state: userState},
+	)
 	if err != nil {
 		return errors.Join(execErr, err)
 	}
@@ -249,54 +308,63 @@ func (docker *Docker) acquireProjectContainer(
 	plan Plan,
 	image string,
 	containerName string,
-	userState UserState,
-) (string, error) {
+	resolution userStateResolution,
+) (string, UserState, error) {
 	inspection, found, err := docker.inspectProjectContainer(ctx, containerName)
 	if err != nil {
-		return "", err
+		return "", UserState{}, err
 	}
 	if found {
 		if err := docker.validateProjectContainer(inspection, plan.ProjectRoot); err != nil {
-			return "", err
+			return "", UserState{}, err
 		}
 		if inspection.State.Running {
-			if err := docker.validateRunningUserState(inspection, plan.ProjectRoot, userState); err != nil {
-				return "", err
+			if err := docker.validateResolvedRunningUserState(inspection, plan.ProjectRoot, resolution); err != nil {
+				return "", UserState{}, err
 			}
-			return inspection.ID, nil
+			return inspection.ID, resolution.state, nil
 		}
-		containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName, userState)
+		containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName, resolution)
 		if err != nil {
-			return "", err
+			return "", UserState{}, err
 		}
 		if containerID != "" {
-			return containerID, nil
+			return containerID, resolution.state, nil
 		}
 	}
 
 	if err := docker.preflight(ctx, image); err != nil {
-		return "", err
+		return "", UserState{}, err
+	}
+	userState, err := docker.materializeUserState(plan, resolution)
+	if err != nil {
+		return "", UserState{}, err
 	}
 	for attempt := 0; attempt < containerCreateAttempts; attempt++ {
 		containerID, conflict, err := docker.createProjectContainer(ctx, plan, image, containerName, userState)
 		if err != nil {
-			return "", err
+			return "", UserState{}, err
 		}
 		if !conflict {
-			return containerID, nil
+			return containerID, userState, nil
 		}
-		containerID, err = docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName, userState)
+		containerID, err = docker.waitForReusableOrReleased(
+			ctx,
+			plan.ProjectRoot,
+			containerName,
+			userStateResolution{state: userState},
+		)
 		if err != nil {
-			return "", err
+			return "", UserState{}, err
 		}
 		if containerID != "" {
-			return containerID, nil
+			return containerID, userState, nil
 		}
 		if err := waitForPoll(ctx); err != nil {
-			return "", err
+			return "", UserState{}, err
 		}
 	}
-	return "", fmt.Errorf("container name %q was not released after a concurrent create", containerName)
+	return "", UserState{}, fmt.Errorf("container name %q was not released after a concurrent create", containerName)
 }
 
 func waitForPoll(ctx context.Context) error {
@@ -473,6 +541,22 @@ func (docker *Docker) validateRunningUserState(
 	return nil
 }
 
+func (docker *Docker) validateResolvedRunningUserState(
+	inspection containerInspection,
+	projectRoot string,
+	resolution userStateResolution,
+) error {
+	if resolution.missingCodexHome != "" {
+		return fmt.Errorf(
+			"a managed session for worktree %q is already running without a usable host Codex home; "+
+				"finish the active session before creating and mounting %q",
+			projectRoot,
+			resolution.missingCodexHome,
+		)
+	}
+	return docker.validateRunningUserState(inspection, projectRoot, resolution.state)
+}
+
 // userStateMismatchError reports that the running session for a worktree was created with a
 // different Codex home or personal-skills source than this launch resolved. The launcher does not
 // reuse it (its mounts are fixed) and does not stop it (another command may be active).
@@ -498,7 +582,7 @@ func (docker *Docker) waitForReusableOrReleased(
 	ctx context.Context,
 	projectRoot string,
 	containerName string,
-	userState UserState,
+	resolution userStateResolution,
 ) (string, error) {
 	waitContext, cancel := context.WithTimeout(ctx, containerStateTimeout)
 	defer cancel()
@@ -516,7 +600,7 @@ func (docker *Docker) waitForReusableOrReleased(
 			return "", err
 		}
 		if inspection.State.Running {
-			if err := docker.validateRunningUserState(inspection, projectRoot, userState); err != nil {
+			if err := docker.validateResolvedRunningUserState(inspection, projectRoot, resolution); err != nil {
 				return "", err
 			}
 			return inspection.ID, nil
@@ -556,7 +640,12 @@ func (docker *Docker) containerStoppedAfterExec(
 		}
 		return false, nil
 	}
-	containerID, err := docker.waitForReusableOrReleased(ctx, plan.ProjectRoot, containerName, userState)
+	containerID, err := docker.waitForReusableOrReleased(
+		ctx,
+		plan.ProjectRoot,
+		containerName,
+		userStateResolution{state: userState},
+	)
 	return containerID == "" && err == nil, err
 }
 

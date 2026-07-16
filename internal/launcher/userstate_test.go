@@ -130,6 +130,29 @@ func TestResolveUserStateOptionalCodexHomeAbsent(t *testing.T) {
 	}
 }
 
+func TestResolveUserStateOptionalExplicitMissingErrors(t *testing.T) {
+	t.Parallel()
+	home := evalPath(t, t.TempDir())
+	missing := filepath.Join(t.TempDir(), "missing codex")
+	confirmCalled := false
+
+	_, err := ResolveUserState(UserStateInputs{
+		LookupEnv:       envLookup(map[string]string{codexHomeEnv: missing}),
+		HomeDir:         home,
+		CodexHomePolicy: CodexHomeOptional,
+		ConfirmCreateCodexHome: func(string) (bool, error) {
+			confirmCalled = true
+			return true, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("ResolveUserState() error = %v, want missing explicit CODEX_HOME rejection", err)
+	}
+	if confirmCalled {
+		t.Error("ConfirmCreateCodexHome must not be offered for an explicit CODEX_HOME")
+	}
+}
+
 func TestResolveUserStateRequiredCreatesDefaultOnConfirm(t *testing.T) {
 	t.Parallel()
 	home := evalPath(t, t.TempDir())
@@ -220,6 +243,31 @@ func TestResolveUserStateCanonicalizesSymlinkedCodexHome(t *testing.T) {
 	}
 }
 
+func TestResolveUserStateRejectsDanglingDefaultCodexHomeSymlink(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	link := filepath.Join(home, ".codex")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing target"), link); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	confirmCalled := false
+
+	_, err := ResolveUserState(UserStateInputs{
+		LookupEnv: envLookup(nil),
+		HomeDir:   evalPath(t, home),
+		ConfirmCreateCodexHome: func(string) (bool, error) {
+			confirmCalled = true
+			return true, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "broken symlink") {
+		t.Fatalf("ResolveUserState() error = %v, want broken Codex-home symlink rejection", err)
+	}
+	if confirmCalled {
+		t.Error("ConfirmCreateCodexHome must not be offered for a dangling Codex-home symlink")
+	}
+}
+
 func TestResolveUserStateRejectsInvalidCodexHome(t *testing.T) {
 	t.Parallel()
 	home := evalPath(t, t.TempDir())
@@ -235,7 +283,7 @@ func TestResolveUserStateRejectsInvalidCodexHome(t *testing.T) {
 		homeDir string
 		want    string
 	}{
-		{name: "missing default", useEnv: false, homeDir: home, want: "canonicalize Codex home"},
+		{name: "missing default", useEnv: false, homeDir: home, want: "does not exist"},
 		{name: "relative", useEnv: true, codex: "relative/codex", homeDir: home, want: "is not absolute"},
 		{name: "filesystem root", useEnv: true, codex: "/", homeDir: home, want: "filesystem root"},
 		{name: "non-directory", useEnv: true, codex: nonDir, homeDir: home, want: "is not a directory"},
@@ -318,6 +366,66 @@ func TestResolveUserStateRejectsDanglingSkillsSymlink(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "broken symlink") {
 		t.Fatalf("ResolveUserState() error = %v, want broken-symlink rejection", err)
+	}
+}
+
+func TestResolveUserStateOptionalIgnoresDanglingSkillsSymlink(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	skillsLink := filepath.Join(home, ".agents", "skills")
+	mkdir(t, filepath.Dir(skillsLink))
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing target"), skillsLink); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	state, err := ResolveUserState(UserStateInputs{
+		LookupEnv:       envLookup(nil),
+		HomeDir:         evalPath(t, home),
+		CodexHomePolicy: CodexHomeOptional,
+	})
+	if err != nil {
+		t.Fatalf("ResolveUserState() error = %v", err)
+	}
+	if state.PersonalSkills != PersonalSkillsAbsent {
+		t.Fatalf("PersonalSkills = %q, want %q", state.PersonalSkills, PersonalSkillsAbsent)
+	}
+}
+
+func TestResolveUserStateRejectsDanglingSkillsParentSymlink(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mkdir(t, filepath.Join(home, ".codex"))
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing target"), filepath.Join(home, ".agents")); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	_, err := ResolveUserState(UserStateInputs{
+		LookupEnv: envLookup(nil),
+		HomeDir:   evalPath(t, home),
+	})
+	if err == nil || !strings.Contains(err.Error(), "personal-skills parent") ||
+		!strings.Contains(err.Error(), "broken symlink") {
+		t.Fatalf("ResolveUserState() error = %v, want broken parent-symlink rejection", err)
+	}
+}
+
+func TestResolveUserStateOptionalIgnoresDanglingSkillsParentSymlink(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing target"), filepath.Join(home, ".agents")); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	state, err := ResolveUserState(UserStateInputs{
+		LookupEnv:       envLookup(nil),
+		HomeDir:         evalPath(t, home),
+		CodexHomePolicy: CodexHomeOptional,
+	})
+	if err != nil {
+		t.Fatalf("ResolveUserState() error = %v", err)
+	}
+	if state.PersonalSkills != PersonalSkillsAbsent {
+		t.Fatalf("PersonalSkills = %q, want %q", state.PersonalSkills, PersonalSkillsAbsent)
 	}
 }
 

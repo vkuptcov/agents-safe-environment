@@ -2,8 +2,8 @@
 
 `codex-safe` runs interactive Codex for the current Git project inside an ephemeral outer container started through
 Sysbox. `agents-safe` runs an explicit command in that same environment. Both mount the active checkout at its original
-absolute path, mount the resolved host Codex home read-write, start a private Docker daemon inside the container, and
-reuse a live worktree container instead of creating another nested Docker environment.
+absolute path, start a private Docker daemon inside the container, and reuse a live worktree container instead of
+creating another nested Docker environment.
 
 `codex-safe` runs only Codex. Arguments after `--` are forwarded to Codex, not executed as an arbitrary program.
 `agents-safe` is the explicit command launcher: for example, `agents-safe bash` starts Bash inside the container.
@@ -12,8 +12,9 @@ reuse a live worktree container instead of creating another nested Docker enviro
 
 - No-argument `codex-safe` starts interactive Codex for the Git project containing the current directory.
 - `agents-safe COMMAND [ARG...]` starts the requested command in the same isolated project environment.
-- The resolved host Codex home (`CODEX_HOME`, else `~/.codex`) is mounted read-write at `$HOME/.codex`, and the
-  managed command always receives `CODEX_HOME=$HOME/.codex`.
+- `codex-safe` requires the resolved host Codex home (`CODEX_HOME`, else `~/.codex`) and may offer to create a missing
+  default `~/.codex`; `agents-safe` mounts it only when it already exists. A mounted home is read-write at
+  `$HOME/.codex`, and only commands with that mount receive `CODEX_HOME=$HOME/.codex`.
 - Personal authored skills under `$HOME/.agents/skills` are mounted read-only when present.
 - The pinned Codex CLI comes from an image-owned path a mounted Codex home cannot shadow.
 - A regular Git checkout is mounted read-write without exposing other host paths.

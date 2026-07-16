@@ -24,7 +24,7 @@ type projectLayout struct {
 	codexHome string
 }
 
-func newProjectLayout(t *testing.T) projectLayout {
+func newProjectLayout(t *testing.T, createCodexHome bool) projectLayout {
 	t.Helper()
 	root := t.TempDir()
 	layout := projectLayout{
@@ -41,10 +41,9 @@ func newProjectLayout(t *testing.T) projectLayout {
 	runInDir(t, layout.primary, "git", "worktree", "add", "-b", "smoke/feature", layout.worktree)
 	require.NoError(t, os.MkdirAll(layout.nested, 0o755), "nested project directory must be created")
 	require.NoError(t, os.MkdirAll(layout.hostHome, 0o755), "temporary host home must be created")
-	// codex-safe mounts $HOME/.codex read-write and the codex smoke assertions read CODEX_HOME, so
-	// every launch in this suite needs a resolvable Codex home. Phase 6 enriches this directory with
-	// sentinel configuration and dedicated Codex assertions.
-	require.NoError(t, os.MkdirAll(layout.codexHome, 0o755), "temporary Codex home must be created")
+	if createCodexHome {
+		require.NoError(t, os.MkdirAll(layout.codexHome, 0o755), "temporary Codex home must be created")
+	}
 	return layout
 }
 

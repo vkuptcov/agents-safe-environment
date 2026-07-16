@@ -89,3 +89,10 @@ Done when: the real-host test and durable docs describe and prove the direct Bas
   `~/.codex`; the shared CLI scaffold moved to `internal/cli` (+`clitest`); and the `codex-safe-probe` smoke
   transport was retired so the suite drives `agents-safe` directly. Unit tests and `go vet` pass on both modules;
   real-host `make test-smoke-go` and `make check-docs` are pending an environment with Sysbox/registry access.
+- 2026-07-16: The Codex-home follow-up review hardened the optional policy, prompt stream/EOF behavior, deferred host
+  directory creation until after Docker and reuse checks, added absent-home real-host coverage, and synchronized the
+  user-facing and design contracts. See
+  `docs/reviews/feature-review/2026-07-16-codex-home-policy-followup-review.md`.
+- 2026-07-16: Follow-up validation passed: `make test`, launcher race tests, `make check-docs`, and the full
+  `make test-smoke-go` retry. The first smoke run reproduced the existing cold-start `exit status 137` flake in
+  `TestSysboxAgentsSafeBash`; the new absent-home scenario passed in both runs.

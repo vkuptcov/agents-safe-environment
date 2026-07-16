@@ -308,3 +308,9 @@ Commit: `docs: document codex product launcher`
   the user-state labels on `State.Running`, so a stopped mismatch is waited out and replaced rather than reported as
   active. Also closed two coverage gaps (writable-source glue, reverse-containment overlap) and two stale doc
   comments. All gates re-run green including `make test-smoke-go`.
+- 2026-07-16: The follow-up implementation retired the Phase 3 test-only `codex-safe-probe`; real-host lifecycle
+  probes now use the public `agents-safe` launcher. The product-boundary assertion was renamed from
+  `TestRunNeverRunsArbitraryExecutable` to `TestConfigNeverRunsArbitraryExecutable`. The historical Phase 3 text
+  records the original sequencing, while this note records the implemented transport used for acceptance.
+- 2026-07-16: Codex-home follow-up validation passed: `make test`, launcher race tests, `make check-docs`, and the
+  full `make test-smoke-go` retry. The credentialed acceptance test remained intentionally skipped.

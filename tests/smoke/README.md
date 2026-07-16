@@ -109,6 +109,9 @@ Commands in the outer container talk to the private nested daemon instead.
 `TestSysboxAgentsSafeBash` starts `agents-safe bash -c ...` without a separator and verifies that Bash runs in the
 selected project before the idle lifecycle removes the outer container.
 
+`TestSysboxAgentsSafeWithoutCodexHome` omits the fixture `.codex` directory and verifies that the real outer container
+has no Codex-home bind mount, carries the `absent` compatibility label, and does not pass `CODEX_HOME` to the command.
+
 ## Probe synchronization
 
 Long-running probes communicate through files in the temporary linked worktree. That directory is visible to both
