@@ -21,60 +21,64 @@ const (
 	maximumDiagnosticBytes  = 16 * 1024
 )
 
-type process interface {
+// daemonProcess is the running container-local dockerd process controlled by Supervisor.
+type daemonProcess interface {
 	Signal(os.Signal) error
 	Kill() error
 	Wait() error
 }
 
-type processStarter interface {
-	Start(string, []string, io.Writer, io.Writer) (process, error)
+// daemonProcessStarter starts the container-local dockerd process.
+type daemonProcessStarter interface {
+	Start(string, []string, io.Writer, io.Writer) (daemonProcess, error)
 }
 
-type execProcessStarter struct{}
+// execDaemonProcessStarter is the production daemonProcessStarter backed by os/exec.
+type execDaemonProcessStarter struct{}
 
-func (execProcessStarter) Start(
+func (execDaemonProcessStarter) Start(
 	name string,
 	arguments []string,
 	stdout io.Writer,
 	stderr io.Writer,
-) (process, error) {
+) (daemonProcess, error) {
 	command := exec.Command(name, arguments...)
 	command.Stdout = stdout
 	command.Stderr = stderr
 	if err := command.Start(); err != nil {
 		return nil, err
 	}
-	return &execStartedProcess{command: command}, nil
+	return &execDaemonProcess{command: command}, nil
 }
 
-type execStartedProcess struct {
+// execDaemonProcess adapts os.Process operations needed for bounded dockerd shutdown.
+type execDaemonProcess struct {
 	command *exec.Cmd
 }
 
-func (process *execStartedProcess) Signal(processSignal os.Signal) error {
+func (process *execDaemonProcess) Signal(processSignal os.Signal) error {
 	return process.command.Process.Signal(processSignal)
 }
 
-func (process *execStartedProcess) Kill() error {
+func (process *execDaemonProcess) Kill() error {
 	return process.command.Process.Kill()
 }
 
-func (process *execStartedProcess) Wait() error {
+func (process *execDaemonProcess) Wait() error {
 	return process.command.Wait()
 }
 
 // dockerDaemon owns the one Wait call for dockerd. Closing done makes the
 // result safe for both the supervisor and bounded shutdown to observe.
 type dockerDaemon struct {
-	process process
+	process daemonProcess
 	done    chan struct{}
 
 	mutex   sync.Mutex
 	waitErr error
 }
 
-func newDockerDaemon(dockerd process) *dockerDaemon {
+func newDockerDaemon(dockerd daemonProcess) *dockerDaemon {
 	daemon := &dockerDaemon{process: dockerd, done: make(chan struct{})}
 	go func() {
 		err := dockerd.Wait()
@@ -89,8 +93,8 @@ func newDockerDaemon(dockerd process) *dockerDaemon {
 func startDockerDaemon(
 	ctx context.Context,
 	config Config,
-	paths runtimePaths,
-	starter processStarter,
+	paths containerPaths,
+	starter daemonProcessStarter,
 	ping func(context.Context, string) error,
 	logger *log.Logger,
 ) (*dockerDaemon, error) {
@@ -135,7 +139,7 @@ func startDockerDaemon(
 	return daemon, nil
 }
 
-func dockerDaemonArguments(paths runtimePaths) []string {
+func dockerDaemonArguments(paths containerPaths) []string {
 	return []string{
 		"--add-runtime=crun=" + paths.crunBinary,
 		"--data-root=" + paths.dockerDataRoot,

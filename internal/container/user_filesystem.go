@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
 const (
@@ -15,39 +13,12 @@ const (
 	sudoersMode = 0o440
 )
 
-// runtimePaths centralizes image-owned paths so tests can redirect privileged
-// filesystem operations without changing the public launcher contract.
-type runtimePaths struct {
-	bashRCSource       string
-	sudoersFile        string
-	dockerRunDirectory string
-	dockerDataRoot     string
-	dockerSocket       string
-	dockerdLog         string
-	crunBinary         string
-	sessionSocket      string
-	dockerdBinary      string
-}
-
-func defaultRuntimePaths() runtimePaths {
-	return runtimePaths{
-		bashRCSource:       "/etc/codex-safe/bashrc",
-		sudoersFile:        "/etc/sudoers.d/codex-safe-host",
-		dockerRunDirectory: "/run/docker",
-		dockerDataRoot:     "/var/lib/docker",
-		dockerSocket:       "/var/run/docker.sock",
-		dockerdLog:         "/tmp/codex-safe-dockerd.log",
-		crunBinary:         "/usr/local/bin/crun",
-		sessionSocket:      session.DefaultSocketPath,
-		dockerdBinary:      "dockerd",
-	}
-}
-
-func prepareUserFilesystem(
+// prepareContainerUserFilesystem creates the invoking user's home and shell/sudo configuration inside the container.
+func prepareContainerUserFilesystem(
 	ctx context.Context,
 	config Config,
-	paths runtimePaths,
-	commands commandRunner,
+	paths containerPaths,
+	commands systemCommandRunner,
 ) error {
 	if err := os.MkdirAll(config.HostHome, homeMode); err != nil {
 		return fmt.Errorf("create container-local home: %w", err)
@@ -84,7 +55,7 @@ func writeValidatedSudoers(
 	ctx context.Context,
 	target string,
 	contents []byte,
-	commands commandRunner,
+	commands systemCommandRunner,
 ) error {
 	directory := filepath.Dir(target)
 	temporary, err := os.CreateTemp(directory, ".codex-safe-sudoers-*")

@@ -11,23 +11,25 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
+// sessionManager is the container-local lifecycle service supervised alongside dockerd.
 type sessionManager interface {
 	Serve(context.Context) error
 }
 
-type managerFactory func(session.ManagerConfig) (sessionManager, error)
+// sessionManagerFactory constructs the manager after container bootstrap succeeds.
+type sessionManagerFactory func(session.ManagerConfig) (sessionManager, error)
 
-// Supervisor is the root Go workload of an outer codex-safe container. It
-// bootstraps identity, owns dockerd, and runs the session state machine.
+// Supervisor is the root Go workload of the codex-safe Sysbox container. It reconciles the invoking
+// host identity inside the container, owns dockerd, and runs the session state machine.
 type Supervisor struct {
 	config Config
-	paths  runtimePaths
+	paths  containerPaths
 	log    *log.Logger
 
-	commands     commandRunner
-	processes    processStarter
+	commands     systemCommandRunner
+	processes    daemonProcessStarter
 	ping         func(context.Context, string) error
-	newManager   managerFactory
+	newManager   sessionManagerFactory
 	effectiveUID func() int
 }
 
@@ -42,10 +44,10 @@ func NewSupervisor(config Config, logger *log.Logger) (*Supervisor, error) {
 	}
 	return &Supervisor{
 		config:       config,
-		paths:        defaultRuntimePaths(),
+		paths:        defaultContainerPaths(),
 		log:          logger,
-		commands:     execCommandRunner{},
-		processes:    execProcessStarter{},
+		commands:     execSystemCommandRunner{},
+		processes:    execDaemonProcessStarter{},
 		ping:         pingDockerDaemon,
 		newManager:   defaultManagerFactory,
 		effectiveUID: os.Geteuid,
@@ -68,11 +70,11 @@ func (supervisor *Supervisor) Serve(ctx context.Context) error {
 	if supervisor.effectiveUID() != 0 {
 		return fmt.Errorf("codex-safe-session serve must run as root")
 	}
-	if err := configureHostAccount(ctx, supervisor.config, supervisor.commands); err != nil {
-		return fmt.Errorf("configure host account: %w", err)
+	if err := reconcileContainerAccount(ctx, supervisor.config, supervisor.commands); err != nil {
+		return fmt.Errorf("reconcile container account: %w", err)
 	}
-	if err := prepareUserFilesystem(ctx, supervisor.config, supervisor.paths, supervisor.commands); err != nil {
-		return fmt.Errorf("prepare user filesystem: %w", err)
+	if err := prepareContainerUserFilesystem(ctx, supervisor.config, supervisor.paths, supervisor.commands); err != nil {
+		return fmt.Errorf("prepare container user filesystem: %w", err)
 	}
 	daemon, err := startDockerDaemon(
 		ctx,
