@@ -825,11 +825,7 @@ func testUserState() UserState {
 
 func mustContainerName(t *testing.T, hostUID int, projectRoot string) string {
 	t.Helper()
-	name, err := ProjectContainerName(hostUID, projectRoot)
-	if err != nil {
-		t.Fatalf("ProjectContainerName() error = %v", err)
-	}
-	return name
+	return ProjectContainerName(hostUID, projectRoot)
 }
 
 func matchingLabels(projectRoot string, hostUID int) map[string]string {

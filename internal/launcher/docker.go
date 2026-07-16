@@ -263,10 +263,7 @@ func (docker *Docker) Launch(ctx context.Context, plan Plan, image string, comma
 	if err != nil {
 		return err
 	}
-	containerName, err := ProjectContainerName(docker.HostUID, plan.ProjectRoot)
-	if err != nil {
-		return err
-	}
+	containerName := ProjectContainerName(docker.HostUID, plan.ProjectRoot)
 	containerID, userState, err := docker.acquireProjectContainer(ctx, plan, image, containerName, resolution)
 	if err != nil {
 		return err

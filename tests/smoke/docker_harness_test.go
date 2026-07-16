@@ -43,10 +43,8 @@ func newDockerHarness(t *testing.T, project projectLayout) *dockerHarness {
 	require.NoError(t, err, "Moby client must initialize from the Docker environment")
 	info, err := dockerClient.Info(ctx)
 	require.NoError(t, err, "Moby client must inspect the host Docker daemon")
-	outer, err := launcher.ProjectContainerName(os.Getuid(), project.worktree)
-	require.NoError(t, err, "deterministic project container name must be derivable")
-	projectKey, err := launcher.ProjectKey(os.Getuid(), project.worktree)
-	require.NoError(t, err, "unique project key must be derivable for smoke container names")
+	outer := launcher.ProjectContainerName(os.Getuid(), project.worktree)
+	projectKey := launcher.ProjectKey(os.Getuid(), project.worktree)
 	return &dockerHarness{
 		t:        t,
 		ctx:      ctx,
