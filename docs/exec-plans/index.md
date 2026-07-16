@@ -11,6 +11,10 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 - [codex-safe Infrastructure MVP](review/2026-07-13-codex-safe-mvp-exec-plan.md)
 - [Run Codex Inside the Container](review/2026-07-15-codex-launch-exec-plan.md)
 - [Generic agents-safe Command Launcher](review/2026-07-15-agents-safe-command-exec-plan.md)
+- [Internal Naming and Container Terminology](review/2026-07-16-internal-naming-terminology-exec-plan.md)
+- [Docker CLI Transport Rollback](review/2026-07-16-docker-cli-rollback-exec-plan.md)
+- [Launcher Package Boundaries](review/2026-07-16-launcher-package-boundaries-exec-plan.md)
+- [Moby Engine Client Migration — cancelled](review/2026-07-16-moby-engine-client-exec-plan.md)
 
 ## Completed
 

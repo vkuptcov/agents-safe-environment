@@ -2,20 +2,20 @@
 
 Status: Implemented MVP with an active session-manager evolution.
 
-Scope: Host-side project discovery and launch, the outer Sysbox container, its private Docker daemon, and the
+Scope: Host-side project discovery and launch, the Sysbox container, its private Docker daemon, and the
 container-local command lifetime protocol.
 
 ## Runtime Topology
 
 `codex-safe` and `agents-safe` discover the requested Git worktree, derive a mount and identity plan, and create or
-reuse one deterministically named outer container. The outer container runs under Sysbox and never receives the host
+reuse one deterministically named container. The container runs under Sysbox and never receives the host
 Docker socket.
 
 ```mermaid
 flowchart LR
     CLI["Host codex-safe / agents-safe CLI"] --> HostDocker["Host Docker daemon"]
-    HostDocker --> Outer["Sysbox outer container"]
-    Outer --> Supervisor["codex-safe-session serve"]
+    HostDocker --> Container["Sysbox container"]
+    Container --> Supervisor["codex-safe-session serve"]
     Supervisor --> InnerDocker["Private dockerd"]
     Supervisor --> Manager["Session manager socket"]
     CLI --> Wrapper["docker exec codex-safe-session run"]
@@ -26,7 +26,7 @@ flowchart LR
 
 The privileged `serve` process recreates the invoking host identity inside the container, prepares its ephemeral
 home, starts the private daemon, and owns the session manager. Each unprivileged `run` wrapper registers before it
-starts a command and keeps that registration until the child exits. The manager shuts down the outer container only
+starts a command and keeps that registration until the child exits. The manager shuts down the container only
 after the last registered command disconnects and the idle timeout expires.
 
 ## Core Modules
@@ -40,12 +40,14 @@ both the module paths and document links.
 | `cmd/agents-safe/` | Host CLI for arbitrary container commands. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/cli/` | Shared launcher CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/gitproject/` | Git discovery. | [Safe environment](docs/design-docs/codex-safe.md) |
-| `internal/launcher/` | Mount and Docker planning. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `internal/launcher/` | Managed-container lifecycle and host launch orchestration. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `internal/launcher/launchplan/` | Validated worktree and bind-mount launch contract. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `internal/launcher/dockercli/` | Typed adapter for the host Docker CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `cmd/codex-safe-session/` | Container CLI. | [Session manager](docs/design-docs/go-session-manager.md) |
-| `internal/container/` | Bootstrap and supervision. | [Session manager](docs/design-docs/go-session-manager.md) |
+| `internal/container/` | Container bootstrap. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/session/` | Command lifecycle. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/terminal/` | Terminal detection. | [Session manager](docs/design-docs/go-session-manager.md) |
-| `container/` | Outer image and shell defaults. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `container/` | Container image and shell defaults. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `tests/smoke/` | Real Docker/Sysbox boundary verification. | [Safe environment](docs/design-docs/codex-safe.md) |
 
 ## Data and Trust Boundaries
@@ -53,8 +55,8 @@ both the module paths and document links.
 - The selected worktree is mounted read-write at the same absolute path.
 - A linked worktree's primary checkout is mounted read-only while the shared Git directory remains writable.
 - The host home is not mounted. Only explicitly supported configuration files may receive narrow read-only mounts.
-- The host Docker socket is never mounted into the outer container.
-- Nested Docker state belongs to the private daemon and disappears with the outer container.
+- The host Docker socket is never mounted into the container.
+- Nested Docker state belongs to the private daemon and disappears with the container.
 - Passwordless sudo grants root only inside the Sysbox container, not on the host.
 
 ## Change Boundaries

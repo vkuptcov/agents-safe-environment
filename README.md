@@ -1,6 +1,6 @@
 # codex-safe
 
-`codex-safe` runs interactive Codex for the current Git project inside an ephemeral outer container started through
+`codex-safe` runs interactive Codex for the current Git project inside an ephemeral container started through
 Sysbox. `agents-safe` runs an explicit command in that same environment. Both mount the active checkout at its original
 absolute path, start a private Docker daemon inside the container, and reuse a live worktree container instead of
 creating another nested Docker environment.
@@ -20,14 +20,14 @@ creating another nested Docker environment.
 - A regular Git checkout is mounted read-write without exposing other host paths.
 - A linked worktree keeps its original absolute path; its primary checkout is read-only while the common `.git`
   directory stays writable.
-- The outer container uses `sysbox-runc` without `--privileged` or the host Docker socket.
+- The container uses `sysbox-runc` without `--privileged` or the host Docker socket.
 - A private nested Docker daemon runs containers and passes the project through at the same absolute path.
 - The container uses the invoking host user's login name, primary group name, UID, and GID, and a container-local
   home directory at the same absolute path as host `$HOME`.
 - An existing host `$HOME/.gitconfig` is available as a read-only global Git config.
 - Interactive tools use a UTF-8 locale and handle Cyrillic input and output; Bash uses a colored prompt.
 - Files created by managed commands and nested containers retain ownership that remains usable from the host.
-- Concurrent commands for one worktree execute in its already-running outer container and share its nested daemon.
+- Concurrent commands for one worktree execute in its already-running container and share its nested daemon.
 
 See the [design document](docs/design-docs/codex-safe.md) for the full product and security model. The
 [Codex launch execution plan](docs/exec-plans/review/2026-07-15-codex-launch-exec-plan.md) records the implementation
@@ -108,15 +108,15 @@ example, run a non-interactive Codex turn:
 ./bin/codex-safe --project . -- exec "summarize the build failure"
 ```
 
-While Codex runs, another terminal reuses the same outer container for the same worktree. Each project/UID pair maps
+While Codex runs, another terminal reuses the same container for the same worktree. Each project/UID pair maps
 to one deterministic `codex-safe-<24-hex-key>` container name. The launcher inspects that exact name and validates
 `codex-safe.managed=true`, `codex-safe.project-path`, `codex-safe.host-uid`, `codex-safe.manager-protocol`,
 `codex-safe.codex-home`, and `codex-safe.personal-skills` before reuse. Every invocation, including the first, runs
-`docker exec codex-safe-session run -- /usr/local/bin/codex [CODEX ARG...]`; no user command owns the outer container
+`docker exec codex-safe-session run -- /usr/local/bin/codex [CODEX ARG...]`; no user command owns the container
 lifecycle.
 
 A relaunch that resolves a different Codex home or personal-skills source for a still-running worktree is rejected
-with a finish-active-session diagnostic: user-state mounts are fixed when the container is created, so the launcher
+with a finish-active-session diagnostic: user mounts are fixed when the container is created, so the launcher
 neither reuses the stale session nor terminates the live one.
 
 When stdin and stdout are attached to a terminal, the launcher allocates a Docker TTY and forwards terminal input, so
@@ -139,7 +139,7 @@ For example, open Bash inside the environment for the current Git project:
 Options must precede `COMMAND`. The optional `--` marks the end of launcher options; it is useful when the command
 name starts with a hyphen. `agents-safe` sends the command and arguments directly to the container session wrapper,
 without invoking a host shell. The command can use programs installed in the image, such as Bash, Git, Make, Docker,
-and `rg`, or executables available under the mounted project. It receives the same project, user-state mounts,
+and `rg`, or executables available under the mounted project. It receives the same project, user mounts,
 identity, nested Docker daemon, working directory, and lifecycle behavior as `codex-safe`.
 
 ### Codex home, personal skills, and authentication
@@ -173,11 +173,12 @@ lifecycle probes run arbitrary bash through the public `agents-safe` command, an
 `codex-safe` directly, so the suite exercises the same product binaries a user runs.
 
 The harness builds the binaries and image, creates a temporary primary repository and linked worktree, starts a host
-sentinel container, and performs live assertions against the outer and nested containers. It verifies account names,
-global Git config, UTF-8 text, mount modes, Git writes, daemon separation, overlapping command lifetime, deterministic
-container reuse, idle removal, concurrent first callers, nested project access, file ownership, and cleanup. The Codex
-scenario also proves Codex-home state round-trip with host ownership, read-only personal skills, an unavailable
-external symlink target, image-owned-executable shadowing rejection, and the user-state reuse-mismatch diagnostic.
+sentinel container, and performs live assertions against the Sysbox container and nested containers. It verifies
+account names, global Git config, UTF-8 text, mount modes, Git writes, daemon separation, overlapping command lifetime,
+deterministic container reuse, idle removal, concurrent first callers, nested project access, file ownership, and
+cleanup. The Codex scenario also proves Codex-home state round-trip with host ownership, read-only personal skills, an
+unavailable external symlink target, image-owned-executable shadowing rejection, and the user-mount reuse-mismatch
+diagnostic.
 
 See [the smoke-test README](tests/smoke/README.md) for the architecture, synchronization protocol, complete assertion
 catalog, cleanup behavior, and extension guidelines.
@@ -192,10 +193,10 @@ delete them, and can read or change the mounted Codex home and its credentials. 
 except for its separately mounted common `.git` directory. Personal skills are read-only, but scripts they contain
 execute with the agent's permissions when Codex selects them.
 
-The outer container is deliberately started without `--privileged`, host namespaces, or `/var/run/docker.sock`.
-Nested containers are controlled by a daemon whose socket and storage exist only inside that outer container. This is
+The container is deliberately started without `--privileged`, host namespaces, or `/var/run/docker.sock`.
+Nested containers are controlled by a daemon whose socket and storage exist only inside that container. This is
 an infrastructure isolation check, not protection against kernel, Docker, Sysbox, image, or runtime vulnerabilities.
-Passwordless `sudo` grants root inside the outer container, not host root. It can modify the ephemeral image and all
+Passwordless `sudo` grants root inside the container, not host root. It can modify the ephemeral image and all
 host paths already mounted read-write, but it does not add host mounts or expose the host Docker socket.
 
 This release intentionally omits:
@@ -207,9 +208,9 @@ This release intentionally omits:
 - rootless or remote host Docker, Docker Desktop, macOS, and Windows;
 - production image publication, signing, and packaging.
 
-Each outer-container session uses fresh nested Docker storage. While any wrapped foreground command is running, later
+Each container session uses fresh nested Docker storage. While any wrapped foreground command is running, later
 invocations for the same canonical worktree and host UID execute in that container and reuse its storage. After the
-last command exits, the manager waits five seconds, stops the nested daemon, and Docker removes the outer container
+last command exits, the manager waits five seconds, stops the nested daemon, and Docker removes the container
 through `--rm`; stopped containers are not resumed. If the launcher or host daemon is killed abruptly, inspect
 project-owned sessions with:
 

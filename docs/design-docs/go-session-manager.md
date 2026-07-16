@@ -4,21 +4,21 @@ Status: Proposed
 
 Scope:
 
-- the lifetime of one outer Sysbox container shared by concurrent `codex-safe` commands;
+- the lifetime of one Sysbox container shared by concurrent `codex-safe` commands;
 - container-local registration of foreground commands;
 - startup, shutdown, and create-versus-stop races;
-- session reuse compatibility for creation-time user-state mounts;
+- session reuse compatibility for creation-time user mounts;
 - ownership boundaries between the host launcher, Go session-manager entrypoint, and command wrapper.
 
 ## Purpose and Intent
 
 ### Problem
 
-Docker ties a container's lifetime to its main process. The current launcher makes the first requested command that
-process and sends later commands through `docker exec`. If the first command exits, Docker stops and removes the
-container even when a later command is still running.
+Docker ties a container's lifetime to its main process. The old launcher made the first requested command that process
+and sent later commands through `docker exec`. If the first command exited, Docker stopped and removed the container
+even when a later command was still running.
 
-No user command should own the shared environment. The outer container should remain alive while any managed
+No user command should own the shared environment. The container should remain alive while any managed
 foreground command is running, then stop and retain the existing `--rm` cleanup behavior after the last command exits.
 
 ### Worked Example
@@ -30,7 +30,7 @@ Terminal A: codex-safe -- bash
 Terminal B: codex-safe -- make test
 Terminal A: exit
 
-The outer container exits because Bash from Terminal A is its main process.
+The container exits because Bash from Terminal A is its main process.
 Terminal B loses the environment while make test is still running.
 ```
 
@@ -50,7 +50,7 @@ container while `make test`, Codex, another shell, or any other managed foregrou
 
 ### Chosen Shape
 
-The outer container starts detached. Its long-running workload and image entrypoint is a small Go session manager
+The container starts detached. Its long-running workload and image entrypoint is a small Go session manager
 rather than a user command or shell script. Every requested command, including the first one, enters through the same
 wrapper:
 
@@ -58,7 +58,7 @@ wrapper:
 docker exec ... codex-safe-session run -- COMMAND ARG...
 ```
 
-The wrapper connects to the manager over a Unix socket that exists only inside the outer container. It starts the
+The wrapper connects to the manager over a Unix socket that exists only inside the container. It starts the
 requested command, holds the connection while that command runs, and exits with the command's status. The manager
 counts these open connections.
 
@@ -72,7 +72,7 @@ flowchart LR
         Launcher -->|"inspect or create deterministic name"| Engine["Host Docker Engine"]
     end
 
-    subgraph Outer["Outer Sysbox container"]
+    subgraph Container["Sysbox container"]
         Init["tini (PID 1)"] --> Manager["codex-safe-session serve<br/>Go entrypoint"]
         Manager --> Inner["nested dockerd"]
         Wrapper["codex-safe-session run"] -->|"register through local socket"| Manager
@@ -86,12 +86,12 @@ flowchart LR
 
 ### Success Criteria
 
-- No user command has special ownership of the outer container.
+- No user command has special ownership of the container.
 - The container remains running while at least one managed foreground command is running.
 - Exiting one of several concurrent commands does not interrupt the remaining commands.
 - Interactive Bash, Codex, `less`, tests, and other foreground commands all use the same lifetime rule.
 - The final command exit starts the idle timeout, followed by nested-daemon shutdown and container removal.
-- Two simultaneous first launches for one project create at most one outer container.
+- Two simultaneous first launches for one project create at most one container.
 - TTY behavior, argv boundaries, working directories, and command exit codes remain unchanged.
 
 ### Tradeoff
@@ -108,7 +108,7 @@ owning foreground command finishes.
 
 ### 1. Session Identity and Atomic Creation
 
-One outer session is identified by the canonical worktree root and invoking host UID. Its project key is:
+One container session is identified by the canonical worktree root and invoking host UID. Its project key is:
 
 ```text
 hex(SHA-256(decimal UID + NUL + canonical worktree root))[:24]
@@ -123,7 +123,7 @@ codex-safe-<project key>
 The UID remains part of the hash input and is also stored explicitly in `codex-safe.host-uid`; repeating it in the
 container name would not add identity information.
 
-The full, unhashed identity and creation-time user-state compatibility inputs remain in labels so the launcher can
+The full, unhashed identity and creation-time user-mount compatibility inputs remain in labels so the launcher can
 validate the container before reuse and operators can find sessions by project path:
 
 - `codex-safe.managed=true`: marks containers owned by this launcher;
@@ -136,7 +136,7 @@ validate the container before reuse and operators can find sessions by project p
   optional directory does not exist.
 
 The project path and UID determine the container name. The Codex-home and personal-skills labels do not create a second
-container for the same worktree; they prove that a running container has the user-state mounts requested by the new
+container for the same worktree; they prove that a running container has the user mounts requested by the new
 invocation.
 
 Because `docker exec` cannot add a bind mount, a running container labeled with `codex-safe.codex-home=absent` cannot
@@ -208,7 +208,7 @@ The launcher follows this algorithm:
 2. Inspect that exact name.
 3. If it does not exist, create it with `docker run --detach --rm`.
 4. If an ownership, project, UID, or manager-protocol label differs, fail with a name-conflict diagnostic.
-5. If it is running and either user-state label differs, report that the active session uses different Codex-home or
+5. If it is running and either user-mount label differs, report that the active session uses different Codex-home or
    personal-skills mounts and ask the user to finish that session before retrying.
 6. If it is running and all labels match, run the wrapper in it.
 7. If it is not running, or its manager rejects registration during shutdown, wait a bounded time for the name to be
@@ -218,9 +218,9 @@ The launcher follows this algorithm:
 A hash collision or unrelated stale container is never treated as a reusable session based on name alone. Full labels
 remain authoritative after Docker provides atomic name ownership.
 
-### 2. Outer Startup and Readiness
+### 2. Container Startup and Readiness
 
-The outer container starts detached and receives no container-level stdin or TTY. User interaction belongs to the
+The container starts detached and receives no container-level stdin or TTY. User interaction belongs to the
 individual `docker exec` commands.
 
 The image has no shell entrypoint. Docker starts:
@@ -243,7 +243,7 @@ user commands. Each `docker exec` explicitly runs `codex-safe-session run` and i
 and GID.
 
 The manager listens on `/run/codex-safe/session.sock`. The directory has mode `0700` and the socket has mode `0600`.
-Both are part of the ephemeral outer filesystem and are not bind-mounted from the host.
+Both are part of the ephemeral container filesystem and are not bind-mounted from the host.
 
 When shutdown commits, the manager creates `/run/codex-safe/stopping` with mode `0600` and the recreated host user's
 UID/GID. The marker remains alongside the socket until the next manager startup removes stale runtime state. A wrapper
@@ -333,7 +333,7 @@ Normal idle shutdown proceeds in this order:
 1. the manager observes zero active commands for the full idle timeout and commits shutdown;
 2. it closes the listener, sends SIGTERM to dockerd, and waits for bounded graceful shutdown;
 3. the Go entrypoint exits successfully;
-4. Docker stops remaining namespace processes and removes the outer container.
+4. Docker stops remaining namespace processes and removes the container.
 
 If dockerd exits while the manager is active, `serve` stops accepting commands and exits nonzero. On SIGINT or
 SIGTERM, it closes the listener, terminates dockerd, and waits for it. Tini remains PID 1 only to forward signals to
@@ -371,17 +371,17 @@ command argv, environment values, terminal data, or project contents.
 
 Failure behavior is:
 
-- manager bootstrap failure: the Go entrypoint stops dockerd if necessary and the outer container exits;
+- manager bootstrap failure: the Go entrypoint stops dockerd if necessary and the container exits;
 - wrapper cannot register: the user command does not start;
 - command cannot start: the wrapper unregisters it and returns a nonzero status;
 - wrapper crashes: its socket closes and the manager unregisters the command;
 - command exits nonzero: the wrapper returns the same status without treating it as manager failure;
 - manager crashes: Docker terminates the container namespace, including dockerd;
-- dockerd crashes: the manager closes its listener and the outer container exits nonzero.
+- dockerd crashes: the manager closes its listener and the container exits nonzero.
 
 If the host launcher or terminal disappears, Docker may leave the exec process running inside the container. The
 wrapper and its command then remain a real active command until they exit. This is not a stale manager record. A later
-launcher can reuse the session, inspect it, or explicitly stop the outer container if the command is unwanted.
+launcher can reuse the session, inspect it, or explicitly stop the container if the command is unwanted.
 
 Host Docker daemon or machine failure can still prevent normal cleanup. Existing identity labels remain the source
 for diagnosing any surviving container record.
@@ -389,7 +389,7 @@ for diagnosing any surviving container record.
 ### 9. Security Properties
 
 The manager socket is not exposed to the host or nested containers by default. It can only register an active command
-inside the current outer container and cannot request host operations, mounts, or Docker configuration.
+inside the current container and cannot request host operations, mounts, or Docker configuration.
 
 Any process already running as the recreated host user can connect to the socket and keep the session alive. This is a
 denial-of-service possibility within the existing trust boundary: the same user already controls the project and the
@@ -400,12 +400,12 @@ from the socket.
 
 ## Invariants
 
-- An outer container's lifetime never depends on one distinguished user command.
+- A container's lifetime never depends on one distinguished user command.
 - Every requested command, including the first, runs through `codex-safe-session run`.
 - The manager cannot exit for idleness while any registered wrapper's direct child is running.
 - A wrapper connection is counted at most once and released exactly once.
 - No manager-protocol message contains or executes command data.
-- Docker's deterministic-name constraint prevents duplicate outer-container creation.
+- Docker's deterministic-name constraint prevents duplicate container creation.
 - A running container is reused only when its Codex-home and personal-skills labels match the requested mount sources.
 - Once manager shutdown commits, the old manager never accepts another command.
 - Final-command shutdown retains `docker run --rm` cleanup.
@@ -413,7 +413,7 @@ from the socket.
 
 ## Boundaries and Non-Goals
 
-This design owns outer-container liveness while managed foreground commands run. It does not own persistent terminal
+This design owns container liveness while managed foreground commands run. It does not own persistent terminal
 sessions, terminal reattachment, background service health, or arbitrary process discovery.
 
 The following are deliberately outside this contract:
@@ -421,7 +421,7 @@ The following are deliberately outside this contract:
 - keeping a container alive only because it has detached background or nested containers;
 - resuming a Bash or Codex terminal after its original exec attachment is lost;
 - retaining an idle container indefinitely for later manual attachment;
-- restarting stopped or failed outer containers;
+- restarting stopped or failed containers;
 - coordinating sessions across hosts or remote Docker daemons;
 - isolation between mutually untrusted processes running as the same container user;
 - making the manager a general RPC, shell, or terminal server.
@@ -468,7 +468,7 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 
 - Derive the same Docker name for the same canonical root and UID.
 - Derive different names for different worktrees or UIDs.
-- Verify direct inspection of the deterministic name and the exact identity and user-state labels.
+- Verify direct inspection of the deterministic name and the exact identity and user-mount labels.
 - Verify detached `docker run --rm` uses that name.
 - Verify first and subsequent commands receive the same wrapper prefix.
 - Handle matching name conflicts by reuse and ownership or protocol mismatches by a name-conflict diagnostic.
@@ -479,9 +479,9 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 ### Sysbox integration tests
 
 - Start Bash and `make test`, exit Bash, and prove Make and nested Docker remain alive.
-- Exit the final command and prove manager, dockerd, and outer container disappear after the idle timeout.
-- Run two first callers concurrently and prove exactly one outer container and nested daemon exist.
-- Launch the same worktree with different user-state sources and prove the live container is not reused or terminated.
+- Exit the final command and prove manager, dockerd, and container disappear after the idle timeout.
+- Run two first callers concurrently and prove exactly one container and nested daemon exist.
+- Launch the same worktree with different user-mount sources and prove the live container is not reused or terminated.
 - Start a command during the idle timeout and prove reuse or one clean replacement after committed shutdown.
 - Disconnect a host Docker CLI while its command continues and prove the command keeps the session active.
 - Crash the wrapper, manager, and dockerd independently and verify bounded cleanup and diagnostics.
