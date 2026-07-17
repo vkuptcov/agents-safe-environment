@@ -144,7 +144,7 @@ Done when: requirements 3 and 4 show one settled session/sidecar pair that survi
 
 ### Phase 4: Lease Closure, Sidecar Recovery, and Generation Isolation
 Purpose: Prove destructive lifetime transitions and recovery without changing the live session mount.
-Status: to be done
+Status: done
 Done when: requirements 5 through 7 have decisive cleanup, recovery, inode, image-ID, and sibling-isolation evidence.
 
 1. Kill the session container and assert lease EOF makes the sidecar exit, Docker removes it through `--rm`, and only
@@ -290,3 +290,36 @@ helper that fails the spike on a negative duration rather than printing one.
   container still reached the host sentinel through both hops.
 - The design's claim that the session container name is the sole arbiter is what the evidence supports: both
   candidate sidecar creates succeeded, because each attempt's generation makes its sidecar name distinct.
+
+### 2026-07-17: Phase 4 — Requirements 5 through 7
+
+- R5 PASS: `docker kill` of the session closed the lease in 20 ms. The sidecar removed only its own generation and
+  exited 135 ms later, and Docker removed it through `--rm`. It held one mount and no Docker socket throughout, so
+  cleanup needed no daemon access. An unrelated sibling generation was untouched.
+- R6 PASS: a graceful `docker stop` left the generation at `device=78 inode=1617`, unchanged before and after
+  recovery, and removed only `control.sock` and `e0.sock`. The first same-name create **conflicted** on the name the
+  departing sidecar still held; the single permitted retry succeeded after its `destroy` event, 23 ms after `die`.
+  The replacement ran under the same name from the session's image ID while the run-specific mutable tag pointed at
+  a different image, and it restored the data path with no session replacement.
+- R7 PASS: a departing sidecar was held at lease EOF by withholding its event acknowledgement. A newer sibling
+  generation was created and proven to serve while the old cleanup was pending. On release, only the old generation
+  disappeared: the newer generation, its sidecar, its parent, and its two-hop nonce path all survived.
+
+Timings, all measured on the host orchestrator's monotonic clock (raw, not proposed production values):
+
+| Interval | Observed |
+| --- | --- |
+| Cold sidecar-create-to-first-successful-lease | 322-363 ms across four pairs |
+| Kill-to-lease-EOF | 20 ms |
+| Lease-EOF-to-sidecar-exit | 135 ms |
+| Sidecar die-to-name-creatable | 23 ms (after one name conflict and one retry) |
+| Replacement-create-to-start | 116 ms |
+| Replacement-start-to-first-successful-lease | 810 ms |
+| Replacement-create-to-first-successful-lease | 926 ms |
+| Lease-to-restored-data-path | 63 ms |
+| Observed lease retry gap | 1 s (the helper's configured interval, across 2 lease-loop steps) |
+| Spike-only watchdog | 60 s, the replacement's initial-lease failure bound |
+
+The recovery lease is dominated by the helper's 1-second retry gap, not by Docker: the replacement bound its
+sockets long before the session's next attempt. That is exactly the dependency the design's timeout inequality
+exists to protect, and it is why the feature execution plan must derive its values rather than copy these.
