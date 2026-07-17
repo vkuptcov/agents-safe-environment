@@ -113,4 +113,10 @@ ENV TERM=xterm-256color
 
 # Tini remains PID 1 only to reap orphaned descendants and forward signals. The Go session manager
 # is the container's single lifecycle-owning workload and gracefully stops its dockerd child.
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session", "serve"]
+#
+# The entrypoint owns supervision and binary selection; the container's role stays a Docker command.
+# The session container supplies none, so Docker appends the default below and its effective process
+# is unchanged. The relay sidecar supplies a command beginning with `relay`, which replaces the
+# default without bypassing tini and without a second image.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session"]
+CMD ["serve"]

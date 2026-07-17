@@ -130,7 +130,7 @@ the client can stop a sidecar and await its removal.
 
 ### Phase 3: Image Identity and Entrypoint Split
 Purpose: Make an image reference resolvable to one immutable ID and let the sidecar select `relay` through the image.
-Status: to be done
+Status: done
 Done when: an absent reference is pulled and resolves to an immutable ID, and `tini` still owns PID 1 with an
 unchanged default `serve` command. Creating both containers from that ID is Phase 6's outcome, not this phase's.
 

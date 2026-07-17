@@ -62,7 +62,11 @@ type ExecRequest struct {
 
 // ContainerInspection is the subset of Docker inspect state used by launcher lifecycle policy.
 type ContainerInspection struct {
-	ID     string `json:"Id"`
+	ID string `json:"Id"`
+	// Image is the immutable content ID this container was created from. On reuse it is
+	// authoritative: a replacement sidecar must match the already-running session rather than a
+	// mutable tag that may have moved since.
+	Image  string `json:"Image"`
 	Config struct {
 		Labels map[string]string `json:"Labels"`
 	} `json:"Config"`

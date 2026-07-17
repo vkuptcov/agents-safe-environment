@@ -413,10 +413,13 @@ The session-side forwarder and relay sidecar implement one private protocol, so 
 containers must use the same immutable image ID.
 
 Before initial creation, the launcher ensures the requested reference is present locally, pulling it when it is not,
-and then resolves it to its content ID. The pull is what `docker run` already performs implicitly; resolving a
-reference to an immutable ID requires the image to be local, so the launcher makes that step explicit rather than
-turning a first run into a preflight failure. It creates both the sidecar and the session container from that exact
-ID, even when the user supplied a mutable tag.
+and then resolves it to its content ID. It creates both the sidecar and the session container from that exact ID,
+even when the user supplied a mutable tag.
+
+The pull belongs to preflight rather than to `docker run`'s implicit one. Preflight already inspects the image, and
+that inspection runs before any create, so a reference absent from local storage fails the launch there and never
+reaches an implicit pull. Resolving a reference to an immutable ID needs the image local anyway. Making preflight
+pull therefore fixes a first-run failure that predates this design rather than introducing a step.
 
 If a running session is reused, its Docker inspection field `.Image` is authoritative. A missing sidecar is recreated
 from that ID, not from the image reference supplied by the later launcher.
