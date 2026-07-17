@@ -4,7 +4,7 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
-- No plans are currently in progress.
+- [Project-Specific Agent Environments](active/2026-07-17-project-environments-exec-plan.md)
 
 ## Review
 
