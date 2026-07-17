@@ -133,7 +133,11 @@ validate the container before reuse and operators can find sessions by project p
 - `codex-safe.codex-home`: canonical host source mounted as the container's Codex home, or the literal `absent` for
   an `agents-safe` container created without one;
 - `codex-safe.personal-skills`: canonical host source mounted for personal skills, or the literal `absent` when the
-  optional directory does not exist.
+  optional directory does not exist;
+- `codex-safe.host-mcp`: sorted `host:port` list of forwarded host MCP endpoints, or the literal `absent` when none
+  were forwarded, as defined by [`host-mcp-forwarding.md`](host-mcp-forwarding.md);
+- `codex-safe.host-mcp-channel`: host directory of that container's MCP channel, absent as a label when no endpoint
+  was forwarded. It locates the channel and is never compared for reuse.
 
 The project path and UID determine the container name. The Codex-home and personal-skills labels do not create a second
 container for the same worktree; they prove that a running container has the user mounts requested by the new
@@ -223,7 +227,15 @@ remain authoritative after Docker provides atomic name ownership.
 The container starts detached and receives no container-level stdin or TTY. User interaction belongs to the
 individual `docker exec` commands.
 
-The image has no shell entrypoint. Docker starts:
+The image has no shell entrypoint. Its exec-form entrypoint selects the `codex-safe-session` binary, and its default
+command selects `serve`:
+
+```dockerfile
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session"]
+CMD ["serve"]
+```
+
+The session container does not override that command, so Docker starts:
 
 ```text
 tini -- codex-safe-session serve
@@ -491,11 +503,12 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 
 Proposed ownership:
 
-- `cmd/codex-safe-session/`: one image binary with `serve` and `run` modes;
+- `cmd/codex-safe-session/`: one image binary with `serve` and `run` modes, plus the relay mode owned by
+  [`host-mcp-forwarding.md`](host-mcp-forwarding.md);
 - `internal/session/`: local protocol, manager state machine, and command wrapper;
 - `internal/container/`: privileged account bootstrap, dockerd readiness, and process supervision;
 - `internal/launcher/`: deterministic naming, detached creation, conflict retry, and wrapper-prefixed `docker exec`;
-- `container/Dockerfile`: reproducible manager build and direct Go entrypoint configuration;
+- `container/Dockerfile`: reproducible manager build, direct Go entrypoint configuration, and default `serve` command;
 - `tests/smoke/`: overlapping-command, race, crash, TTY, and cleanup proofs on a real Sysbox host.
 
 ## Related Design

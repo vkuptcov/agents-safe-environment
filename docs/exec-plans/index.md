@@ -4,7 +4,7 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
-- No plans are currently active.
+- [Host MCP Relay Sidecar Linux/Sysbox Spike](active/2026-07-17-host-mcp-sidecar-spike-exec-plan.md)
 
 ## Review
 

@@ -322,7 +322,9 @@ but scripts they contain execute with the same permissions as the agent when Cod
 File-based credentials in `$CODEX_HOME/auth.json` are available through the Codex-home mount. Credentials stored only
 in the host operating system's keychain or keyring are not available inside the container. The launcher does not mount
 keyring services, browser profiles, desktop sockets, `.ssh`, cloud credential directories, password stores, Git
-credential helpers, or arbitrary Unix sockets.
+credential helpers, or pre-existing Unix sockets. The only socket mount this project allows is the launcher-created
+host MCP channel owned by [`host-mcp-forwarding.md`](host-mcp-forwarding.md), which carries no host credential and
+exposes only the endpoints that design selected.
 
 The launcher neither changes `cli_auth_credentials_store` nor converts credentials between storage modes. If the
 mounted configuration requires an unavailable keyring, Codex reports the authentication error and the launcher
@@ -334,12 +336,17 @@ needed for the terminal, locale, Codex paths, and an explicitly configured proxy
 
 ### 5. Container and Sysbox
 
-The container runs through the local Docker Engine with `--runtime=sysbox-runc`. The launcher does not use:
+The container runs through the local Docker Engine with `--runtime=sysbox-runc`. For the session container, the
+launcher does not use:
 
 - `--privileged` on the container;
 - `/var/run/docker.sock` or any other host container-engine socket;
 - `--pid=host`, `--network=host`, `--ipc=host`, or `--userns=host`;
 - bind mounts of `/`, `/home`, `/var/lib/docker`, `/dev`, or other broad host paths.
+
+These rules govern the session container, where the agent runs. The separate relay sidecar defined by
+[`host-mcp-forwarding.md`](host-mcp-forwarding.md) deliberately uses `--network=host` to reach host loopback MCP
+servers; it runs no agent code and receives no capability, Docker socket, or writable root filesystem.
 
 The container gets its own PID, mount, network, IPC, UTS, cgroup, and user namespaces. Root inside the container
 is constrained by the Sysbox user namespace and is not host root.
@@ -439,13 +446,20 @@ and Docker registries require network access. Nested Docker networks remain insi
 `codex-safe` does not prevent network exfiltration. Code in the container can transmit accessible project or
 Codex-home content. Domain allowlists, enforced proxies, and fully offline operation require a separate design.
 
+Host services that listen on loopback are not reachable from the container under this contract. Narrow, explicit reach
+to the host MCP servers named by the resolved Codex home is owned by
+[`host-mcp-forwarding.md`](host-mcp-forwarding.md).
+
 ### 10. Lifecycle and Concurrency
 
 A new container has a deterministic name derived from the canonical worktree root and invoking host UID. The
 launcher inspects that exact name, then validates `codex-safe.managed`, `codex-safe.project-path`,
-`codex-safe.host-uid`, `codex-safe.manager-protocol`, `codex-safe.codex-home`, and
-`codex-safe.personal-skills`. The `codex-safe.codex-home` and `codex-safe.personal-skills` labels each contain the
+`codex-safe.host-uid`, `codex-safe.manager-protocol`, `codex-safe.codex-home`, `codex-safe.personal-skills`, and
+`codex-safe.host-mcp`. The `codex-safe.codex-home` and `codex-safe.personal-skills` labels each contain the
 canonical resolved source or the literal `absent`, so reuse validation matches an absent Codex home or absent skills.
+`codex-safe.host-mcp` is owned by [`host-mcp-forwarding.md`](host-mcp-forwarding.md) and follows the same rule. That
+design also sets `codex-safe.host-mcp-channel`, which locates a running container's MCP channel and is read rather
+than compared.
 A compatible running container receives the new command through `docker exec`; an absent name is created with detached
 `docker run --rm`. Different worktrees continue to use distinct Docker daemons and writable layers.
 
@@ -551,13 +565,15 @@ mode.
 - Each worktree session receives a separate nested Docker daemon; registered concurrent commands in that session share
   it.
 - No user command is the container's lifecycle-owning main process.
-- Read-write host access is limited to the active working tree, linked-worktree common Git directory, and resolved
-  Codex home.
+- Read-write host access is limited to the active working tree, linked-worktree common Git directory, resolved
+  Codex home, and the host MCP channel directory defined by [`host-mcp-forwarding.md`](host-mcp-forwarding.md).
 - Personal host skills outside the Codex home are exposed only through the narrow read-only
   `$HOME/.agents/skills` mount.
 - The linked worktree's primary checkout is read-only except for the nested common Git directory.
 - Git working-tree and common-directory absolute paths match their host paths.
-- The container is never privileged and never shares host namespaces.
+- The session container is never privileged and never shares host namespaces. The one component that shares the host
+  network namespace is the relay sidecar owned by [`host-mcp-forwarding.md`](host-mcp-forwarding.md), which runs this
+  project's own image with no capability, no Docker socket, and a read-only root filesystem.
 - Unsafe fallback behavior is forbidden.
 - Host-side orchestration and Docker argument construction are implemented in Go.
 - `codex-safe` executes the pinned image-owned Codex binary with an explicit container-local `CODEX_HOME`.
