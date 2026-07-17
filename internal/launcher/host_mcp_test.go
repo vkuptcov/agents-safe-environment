@@ -125,17 +125,33 @@ func TestValidateRunningHostMCPRejectsAMismatch(t *testing.T) {
 // diagnostic must name that case rather than reporting a differing endpoint set.
 func TestValidateRunningHostMCPNamesTheNarrowingCase(t *testing.T) {
 	t.Parallel()
-	attempt := &launchAttempt{plan: testPlan()}
+	attempt := &launchAttempt{plan: testPlan(), noHostMCP: true}
 	inspection := dockercli.ContainerInspection{}
 	inspection.Config.Labels = map[string]string{hostMCPLabel: "127.0.0.1:64342"}
 
-	// An empty resolution is what --no-host-mcp produces.
 	err := attempt.validateRunningHostMCP(inspection, hostmcp.Set{})
 	if err == nil {
 		t.Fatal("--no-host-mcp against a forwarding session must be rejected")
 	}
 	if !strings.Contains(err.Error(), "--no-host-mcp cannot narrow") {
 		t.Fatalf("the diagnostic must name the narrowing case, got %v", err)
+	}
+}
+
+// An empty set that was NOT requested with --no-host-mcp -- the user removed config.toml or its last
+// loopback endpoint -- must get the ordinary differing-set message, never a claim they used the flag.
+func TestValidateRunningHostMCPEmptySetWithoutFlagIsNotNarrowing(t *testing.T) {
+	t.Parallel()
+	attempt := &launchAttempt{plan: testPlan()} // noHostMCP defaults to false
+	inspection := dockercli.ContainerInspection{}
+	inspection.Config.Labels = map[string]string{hostMCPLabel: "127.0.0.1:64342"}
+
+	err := attempt.validateRunningHostMCP(inspection, hostmcp.Set{})
+	if err == nil {
+		t.Fatal("an empty resolution against a forwarding session must still be rejected")
+	}
+	if strings.Contains(err.Error(), "--no-host-mcp") {
+		t.Fatalf("a normal empty resolution must not blame --no-host-mcp, got %v", err)
 	}
 }
 

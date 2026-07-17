@@ -51,6 +51,10 @@ type hostMCPPlan struct {
 	// launch that fails afterwards can stop it promptly instead of leaving it to its initial-lease
 	// timeout.
 	sidecarStarted bool
+	// sessionID is set once this attempt's session container is created. A post-create failure must
+	// stop that session before the generation is removed, or the session would keep the directory
+	// bind-mounted while its host pathname disappears, breaking a later sidecar's recovery.
+	sessionID string
 }
 
 // removeCandidate discards a generation this attempt allocated and then did not use.
@@ -62,22 +66,43 @@ func (forwarding hostMCPPlan) removeCandidate() error {
 }
 
 // cleanupCandidate unwinds a candidate this attempt allocated but did not hand off: it stops the
-// candidate sidecar it started and removes the generation directory it created.
+// session container it created, then the candidate sidecar it started, then removes the generation
+// directory.
 //
-// It runs on every failure after a candidate exists. Without it, a launch that fails between sidecar
-// creation and handoff would leave the sidecar running until its 60-second initial-lease timeout;
-// with it, the sidecar is stopped at once. It removes only this attempt's own resources and adopts
-// nothing, so a launch that already adopted a running session's channel is left untouched.
-func (attempt *launchAttempt) cleanupCandidate(ctx context.Context) error {
+// It removes only this attempt's own resources and adopts nothing, so a launch that already adopted
+// a running session's channel is left untouched. Three rules keep it safe:
+//
+//   - The session is stopped before the generation is removed, so a still-running session never has
+//     its bind-mounted channel unlinked from under it.
+//   - The generation is removed only if every stop succeeded, so a container that could not be
+//     stopped keeps its directory.
+//   - Cleanup runs on a context detached from the launch's, so a cancelled or timed-out launch still
+//     unwinds rather than skipping the stops and unlinking a live channel anyway.
+func (attempt *launchAttempt) cleanupCandidate(parent context.Context) error {
 	if !attempt.hostMCP.candidate {
 		return nil
 	}
-	var stopErr error
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), containerStateTimeout)
+	defer cancel()
+
+	var errs []error
+	if attempt.hostMCP.sessionID != "" {
+		if err := attempt.cli.Stop(ctx, attempt.containerName, containerStopTimeout); err != nil {
+			errs = append(errs, fmt.Errorf("stop session after failed host MCP launch: %w", err))
+		}
+	}
 	if attempt.hostMCP.sidecarStarted {
 		name := sidecarName(attempt.projectKey, attempt.hostMCP.channel)
-		stopErr = attempt.stopSidecar(ctx, name)
+		if err := attempt.stopSidecar(ctx, name); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	return errors.Join(stopErr, attempt.hostMCP.removeCandidate())
+	if len(errs) == 0 {
+		if err := attempt.hostMCP.removeCandidate(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // sidecarName is the relay sidecar's deterministic name.
@@ -167,10 +192,22 @@ func (attempt *launchAttempt) createSessionWithHostMCP(
 		// The candidate sidecar is now this attempt's to clean up if the launch fails from here.
 		attempt.hostMCP.sidecarStarted = true
 	}
-	containerID, conflict, err := attempt.createContainer(ctx, userMounts)
+	// When this launch forwards MCP, the session create is the launcher's half of the cold-start
+	// bound: a wedged `docker run` that outlasts it would let the sidecar reach its initial-lease
+	// timeout before serve could ever lease. Bound it so that bound is a fact, not an assumption. A
+	// launch that forwards nothing keeps the parent context and its existing behavior.
+	createCtx := ctx
+	if !attempt.hostMCP.set.Empty() {
+		bounded, cancel := context.WithTimeout(ctx, sessionCreateTimeout)
+		defer cancel()
+		createCtx = bounded
+	}
+	containerID, conflict, err := attempt.createContainer(createCtx, userMounts)
 	if err != nil || conflict {
 		return containerID, conflict, err
 	}
+	// The session now exists, so a later failure must stop it before removing the generation.
+	attempt.hostMCP.sessionID = containerID
 	if err := attempt.awaitHostMCPReady(ctx, containerID); err != nil {
 		return "", false, err
 	}
@@ -336,10 +373,15 @@ func (attempt *launchAttempt) ensureSidecar(
 	if found && inspection.State.Running {
 		return nil
 	}
-	// Wait boundedly for Docker to release the name, then retry creation exactly once, rather than
-	// proceeding into a readiness timeout that would report the wrong cause.
-	if err := attempt.awaitSidecarNameRelease(ctx, name); err != nil {
+	// Wait boundedly for Docker to release the name. If the sidecar becomes running while we wait it
+	// is ours and is adopted; only a released name is retried, exactly once, rather than proceeding
+	// into a readiness timeout that would report the wrong cause.
+	outcome, err := attempt.awaitSidecarName(ctx, name, true)
+	if err != nil {
 		return err
+	}
+	if outcome == sidecarBecameRunning {
+		return nil
 	}
 	if _, conflict, err = attempt.cli.Create(ctx, request); err != nil {
 		return fmt.Errorf("recreate host MCP relay sidecar: %w", err)
@@ -352,7 +394,24 @@ func (attempt *launchAttempt) ensureSidecar(
 	return nil
 }
 
-func (attempt *launchAttempt) awaitSidecarNameRelease(ctx context.Context, name string) error {
+// sidecarNameOutcome distinguishes the two ways a bounded name wait can succeed. Conflating them
+// makes a launcher retry a create that then falsely conflicts with a sidecar that just became this
+// session's own.
+type sidecarNameOutcome int
+
+const (
+	sidecarNameReleased sidecarNameOutcome = iota
+	sidecarBecameRunning
+)
+
+// awaitSidecarName waits, boundedly, for a sidecar name to be released. adoptOnRunning selects what
+// a running observation means: during recovery it means the sidecar is this session's own and is
+// adopted; after a Stop it is a transient state on the way to removal and the wait continues.
+func (attempt *launchAttempt) awaitSidecarName(
+	ctx context.Context,
+	name string,
+	adoptOnRunning bool,
+) (sidecarNameOutcome, error) {
 	waitContext, cancel := context.WithTimeout(ctx, containerStateTimeout)
 	defer cancel()
 	ticker := time.NewTicker(containerPollInterval)
@@ -360,18 +419,18 @@ func (attempt *launchAttempt) awaitSidecarNameRelease(ctx context.Context, name 
 	for {
 		inspection, found, err := attempt.cli.Inspect(waitContext, name)
 		if err != nil {
-			return fmt.Errorf("inspect host MCP relay sidecar %q: %w", name, err)
+			return sidecarNameReleased, fmt.Errorf("inspect host MCP relay sidecar %q: %w", name, err)
 		}
 		if !found {
-			return nil
+			return sidecarNameReleased, nil
 		}
-		if inspection.State.Running {
+		if adoptOnRunning && inspection.State.Running {
 			// It came back to life between our create and this inspect: it is ours, and it serves.
-			return nil
+			return sidecarBecameRunning, nil
 		}
 		select {
 		case <-waitContext.Done():
-			return fmt.Errorf(
+			return sidecarNameReleased, fmt.Errorf(
 				"host MCP relay sidecar name %q was not released after %s (state %q)",
 				name, containerStateTimeout, inspection.State.Status)
 		case <-ticker.C:
@@ -379,13 +438,22 @@ func (attempt *launchAttempt) awaitSidecarNameRelease(ctx context.Context, name 
 	}
 }
 
-// stopSidecar stops and awaits a candidate this attempt created and then lost the race with. It
-// removes only this attempt's own sidecar and adopts nothing.
+// stopSidecar stops and awaits a candidate this attempt created and then lost the race with, or is
+// unwinding after a failed launch. It removes only this attempt's own sidecar and adopts nothing.
+//
+// After a Stop, the container is on its way out, so a transient running observation is ignored: this
+// waits for the name to be released. A stop failure on an already-removed container is success,
+// which Stop already reports, so a not-found here is the expected end.
 func (attempt *launchAttempt) stopSidecar(ctx context.Context, name string) error {
 	if err := attempt.cli.Stop(ctx, name, containerStopTimeout); err != nil {
 		return err
 	}
-	return attempt.awaitSidecarNameRelease(ctx, name)
+	// adoptOnRunning is false: after a Stop the container is on its way out, so wait for the name to
+	// be released rather than mistaking a transient running observation for adoption.
+	if _, err := attempt.awaitSidecarName(ctx, name, false); err != nil {
+		return err
+	}
+	return nil
 }
 
 // awaitChannelReady probes control.sock until the channel reports ready.
@@ -400,26 +468,28 @@ func (attempt *launchAttempt) awaitChannelReady(
 	sidecar string,
 	sessionID string,
 ) error {
-	deadline := time.Now().Add(readinessTimeout)
+	// One deadline governs the whole wait, including the probe dials and the liveness inspections, so
+	// a hung Docker inspection or a wedged probe cannot exceed the advertised readiness bound.
+	readyCtx, cancel := context.WithTimeout(ctx, readinessTimeout)
+	defer cancel()
 	var lastProbe error
-	for time.Now().Before(deadline) {
-		ready, err := probeChannelReady(ctx, channel.ControlPath())
+	for {
+		ready, err := probeChannelReady(readyCtx, channel.ControlPath())
 		if err == nil && ready {
 			return nil
 		}
 		lastProbe = err
-		if err := attempt.requireHostMCPContainersAlive(ctx, sidecar, sessionID); err != nil {
+		if err := attempt.requireHostMCPContainersAlive(readyCtx, sidecar, sessionID); err != nil {
 			return err
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-readyCtx.Done():
+			return fmt.Errorf(
+				"host MCP channel %q did not report ready within %s (last probe: %v)",
+				channel.ControlPath(), readinessTimeout, lastProbe)
 		case <-time.After(readinessPollInterval):
 		}
 	}
-	return fmt.Errorf(
-		"host MCP channel %q did not report ready within %s (last probe: %v)",
-		channel.ControlPath(), readinessTimeout, lastProbe)
 }
 
 // requireHostMCPContainersAlive fails the wait as soon as either container is gone, naming the one
@@ -478,12 +548,17 @@ type hostMCPMismatchError struct {
 	projectRoot string
 	running     string
 	requested   string
+	// noHostMCP is true when this launch resolved an empty set because the user passed --no-host-mcp,
+	// as opposed to merely having no loopback endpoints configured.
+	noHostMCP bool
 }
 
 func (err *hostMCPMismatchError) Error() string {
-	if err.requested == hostmcp.AbsentLabel {
-		// The user asked for less access than the session already has. The mount is creation-time
-		// state and docker exec cannot remove it, so naming this case beats reporting a differing set.
+	// The narrowing diagnostic is used only when the user explicitly asked for less access with
+	// --no-host-mcp. A normal launch that merely resolved an empty set -- because config.toml was
+	// removed or lost its last loopback endpoint -- gets the ordinary differing-set message, since
+	// the user did not ask to narrow anything.
+	if err.noHostMCP {
 		return fmt.Sprintf(
 			"a managed session for worktree %q is already forwarding host MCP endpoints (%s), and "+
 				"--no-host-mcp cannot narrow a running session because the socket mount is fixed at "+
@@ -512,6 +587,7 @@ func (attempt *launchAttempt) validateRunningHostMCP(
 			projectRoot: attempt.plan.ProjectRoot,
 			running:     running,
 			requested:   set.Label(),
+			noHostMCP:   attempt.noHostMCP,
 		}
 	}
 	return nil

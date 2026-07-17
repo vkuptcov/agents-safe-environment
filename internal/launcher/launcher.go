@@ -302,9 +302,17 @@ func (docker *DockerLauncher) Launch(
 		return execErr
 	}
 
-	// The mounts are already materialized, so the replacement container reuses them as resolved.
+	// The first session shut down. Its old generation belongs to its own sidecar, which removes it on
+	// lease EOF, so the replacement gets a fresh candidate rather than reusing a generation another
+	// sidecar may be cleaning up. The mounts are already materialized, so they reuse them as resolved.
+	if err := attempt.reallocateHostMCPCandidate(); err != nil {
+		return errors.Join(execErr, err)
+	}
 	containerID, userMounts, err = attempt.acquireContainer(ctx, userMountResolution{mounts: userMounts})
 	if err != nil {
+		if cleanupErr := attempt.cleanupCandidate(ctx); cleanupErr != nil {
+			return errors.Join(execErr, err, cleanupErr)
+		}
 		return errors.Join(execErr, err)
 	}
 	if err := attempt.execCommand(ctx, command, containerID, userMounts); err != nil {

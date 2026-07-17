@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/stretchr/testify/require"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
 )
 
 // hostMCPSentinel is a host loopback server standing in for a Codex MCP server. It binds 127.0.0.1
@@ -197,11 +199,18 @@ func (fixture *smokeFixture) requireOneHostMCPSidecar() container.InspectRespons
 	return sidecar
 }
 
+// listHostMCPSidecars returns only this fixture's own sidecars, filtered by the project path and
+// host UID it was created for. A test must never touch another project's forwarding session, which
+// may be live on a shared developer machine.
 func (fixture *smokeFixture) listHostMCPSidecars() []string {
 	fixture.t.Helper()
 	items, err := fixture.docker.client.ContainerList(fixture.docker.ctx, container.ListOptions{
-		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", "codex-safe.host-mcp-sidecar=true")),
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", "codex-safe.host-mcp-sidecar=true"),
+			filters.Arg("label", "codex-safe.project-path="+fixture.project.worktree),
+			filters.Arg("label", "codex-safe.host-uid="+strconv.Itoa(os.Getuid())),
+		),
 	})
 	require.NoError(fixture.t, err, "host-MCP sidecars must be listable")
 	ids := make([]string, 0, len(items))
@@ -211,11 +220,15 @@ func (fixture *smokeFixture) listHostMCPSidecars() []string {
 	return ids
 }
 
+// removeHostMCPSidecars removes only this fixture's own sidecars and only the channel directories
+// under this project's key. It never removes the shared channel root, which belongs to every project
+// of the invoking user.
 func (fixture *smokeFixture) removeHostMCPSidecars() {
 	for _, id := range fixture.listHostMCPSidecars() {
 		_ = fixture.docker.client.ContainerRemove(fixture.docker.ctx, id, container.RemoveOptions{Force: true})
 	}
 	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
-		_ = os.RemoveAll(filepath.Join(runtimeDir, "codex-safe"))
+		projectKey := launcher.ProjectKey(os.Getuid(), fixture.project.worktree)
+		_ = os.RemoveAll(filepath.Join(runtimeDir, "codex-safe", projectKey))
 	}
 }

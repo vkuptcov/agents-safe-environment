@@ -85,8 +85,10 @@ func NewChannel(lookupEnv func(string) (string, bool), projectKey string, endpoi
 		return Channel{}, fmt.Errorf("create host MCP generation %q: %w", channel.Generation, err)
 	}
 	// MkdirAll and Mkdir both honour the umask, so the mode this channel relies on is applied rather
-	// than assumed.
+	// than assumed. If that fails, remove the directory before returning: the caller never receives a
+	// Channel for a failed allocation, so its own candidate cleanup could not find this one.
 	if err := os.Chmod(channel.Generation, directoryMode); err != nil {
+		_ = os.RemoveAll(channel.Generation)
 		return Channel{}, fmt.Errorf("set host MCP generation mode %q: %w", channel.Generation, err)
 	}
 	return channel, nil
