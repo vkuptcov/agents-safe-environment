@@ -4,7 +4,7 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
-- No plans are currently in progress.
+- [Host MCP Forwarding](active/2026-07-17-host-mcp-forwarding-exec-plan.md)
 
 ## Review
 
