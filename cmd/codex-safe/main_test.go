@@ -25,6 +25,11 @@ func TestConfigHelp(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Usage: codex-safe") {
 		t.Errorf("stdout = %q, want usage", stdout.String())
 	}
+	// The usage is hand-written, not generated from the flag set, so it must advertise the flag or
+	// --help would describe an incomplete interface.
+	if !strings.Contains(stdout.String(), "--no-host-mcp") {
+		t.Errorf("usage must document --no-host-mcp, got %q", stdout.String())
+	}
 	if stderr.Len() != 0 {
 		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
@@ -59,7 +64,7 @@ func TestConfigDefaultsToInteractiveCodex(t *testing.T) {
 	if exitCode != 0 {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
-	wantCommand := []string{launcher.CodexBinaryPath}
+	wantCommand := []string{launcher.CodexBinaryPath, "--sandbox", "danger-full-access"}
 	if !reflect.DeepEqual(fakeLauncher.Command, wantCommand) {
 		t.Errorf("command = %#v, want interactive Codex %#v", fakeLauncher.Command, wantCommand)
 	}
@@ -94,7 +99,7 @@ func TestConfigForwardsCodexArguments(t *testing.T) {
 	if fakeLauncher.Image != "test:image" {
 		t.Errorf("image = %q, want test:image", fakeLauncher.Image)
 	}
-	wantCommand := []string{launcher.CodexBinaryPath, "exec", "--model", "gpt-5"}
+	wantCommand := []string{launcher.CodexBinaryPath, "--sandbox", "danger-full-access", "exec", "--model", "gpt-5"}
 	if !reflect.DeepEqual(fakeLauncher.Command, wantCommand) {
 		t.Errorf("command = %#v, want %#v", fakeLauncher.Command, wantCommand)
 	}
@@ -119,7 +124,7 @@ func TestConfigNeverRunsArbitraryExecutable(t *testing.T) {
 	if exitCode != 0 {
 		t.Errorf("Run() = %d, want 0", exitCode)
 	}
-	wantCommand := []string{launcher.CodexBinaryPath, "/bin/sh", "-c", "rm -rf /; $(malicious)"}
+	wantCommand := []string{launcher.CodexBinaryPath, "--sandbox", "danger-full-access", "/bin/sh", "-c", "rm -rf /; $(malicious)"}
 	if !reflect.DeepEqual(fakeLauncher.Command, wantCommand) {
 		t.Errorf("command = %#v, want the executable forwarded as a Codex argument %#v", fakeLauncher.Command, wantCommand)
 	}

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vkuptcov/agents-safe-environment/internal/mcpchannel"
 )
 
 const (
@@ -38,6 +40,9 @@ type Config struct {
 	DockerReadyTimeout time.Duration
 	// DockerShutdownTimeout bounds graceful nested-daemon shutdown.
 	DockerShutdownTimeout time.Duration
+	// HostMCP is the forwarded endpoint set, fixed at container creation and empty for a session
+	// that forwards nothing.
+	HostMCP []mcpchannel.Endpoint
 }
 
 // ConfigFromEnvironment parses the launcher contract without modifying the
@@ -83,6 +88,11 @@ func ConfigFromEnvironment(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 
+	hostMCP, err := hostMCPEndpointsFromEnvironment(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		HostUID:               hostUID,
 		HostGID:               hostGID,
@@ -91,6 +101,7 @@ func ConfigFromEnvironment(lookup func(string) (string, bool)) (Config, error) {
 		HostHome:              hostHome,
 		DockerReadyTimeout:    readyTimeout,
 		DockerShutdownTimeout: defaultDockerShutdownTimeout,
+		HostMCP:               hostMCP,
 	}, nil
 }
 

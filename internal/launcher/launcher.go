@@ -70,6 +70,15 @@ type launchAttempt struct {
 	plan          launchplan.Plan
 	image         string
 	containerName string
+	projectKey    string
+	// noHostMCP skips discovery entirely for this launch.
+	noHostMCP bool
+	// hostMCP is this attempt's forwarding decision. Its zero value forwards nothing, which is the
+	// zero-cost path through every lifecycle step.
+	hostMCP hostMCPPlan
+	// hostMCPImageID pins both containers to one immutable image, because they implement one private
+	// protocol and a compatible tag is not enough.
+	hostMCPImageID string
 }
 
 // NewDockerLauncher creates a launcher backed by the host Docker CLI and current process streams.
@@ -119,6 +128,14 @@ func NewDockerLauncher(codexHomePolicy CodexHomePolicy) (*DockerLauncher, error)
 		CodexHomePolicy: codexHomePolicy,
 	}
 	return docker, nil
+}
+
+// lookupEnv returns this launcher's environment reader, defaulting to the process environment.
+func (docker *DockerLauncher) lookupEnv() func(string) (string, bool) {
+	if docker.LookupEnv != nil {
+		return docker.LookupEnv
+	}
+	return os.LookupEnv
 }
 
 // resolveMounts resolves this launch's user mounts through the test seam when one is injected, and
@@ -228,6 +245,7 @@ func (docker *DockerLauncher) Launch(
 	plan launchplan.Plan,
 	image string,
 	command []string,
+	options launchplan.Options,
 ) error {
 	if err := docker.validateConfiguration(); err != nil {
 		return err
@@ -248,10 +266,24 @@ func (docker *DockerLauncher) Launch(
 		plan:          plan,
 		image:         image,
 		containerName: ProjectContainerName(docker.HostUID, plan.ProjectRoot),
+		projectKey:    ProjectKey(docker.HostUID, plan.ProjectRoot),
+		noHostMCP:     options.NoHostMCP,
+	}
+
+	// Discovery runs during preflight, before a container is created or reused, and its channel must
+	// exist before either container because it is a bind mount.
+	if err := attempt.planHostMCP(resolution); err != nil {
+		return err
 	}
 
 	containerID, userMounts, err := attempt.acquireContainer(ctx, resolution)
 	if err != nil {
+		// A candidate this attempt allocated and never handed off is this attempt's to unwind:
+		// stop its sidecar promptly rather than leaving it to its initial-lease timeout, and remove
+		// its generation directory.
+		if cleanupErr := attempt.cleanupCandidate(ctx); cleanupErr != nil {
+			return errors.Join(err, cleanupErr)
+		}
 		return err
 	}
 
@@ -270,9 +302,17 @@ func (docker *DockerLauncher) Launch(
 		return execErr
 	}
 
-	// The mounts are already materialized, so the replacement container reuses them as resolved.
+	// The first session shut down. Its old generation belongs to its own sidecar, which removes it on
+	// lease EOF, so the replacement gets a fresh candidate rather than reusing a generation another
+	// sidecar may be cleaning up. The mounts are already materialized, so they reuse them as resolved.
+	if err := attempt.reallocateHostMCPCandidate(); err != nil {
+		return errors.Join(execErr, err)
+	}
 	containerID, userMounts, err = attempt.acquireContainer(ctx, userMountResolution{mounts: userMounts})
 	if err != nil {
+		if cleanupErr := attempt.cleanupCandidate(ctx); cleanupErr != nil {
+			return errors.Join(execErr, err, cleanupErr)
+		}
 		return errors.Join(execErr, err)
 	}
 	if err := attempt.execCommand(ctx, command, containerID, userMounts); err != nil {

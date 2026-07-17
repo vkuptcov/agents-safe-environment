@@ -4,11 +4,13 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
-- No plans are currently active.
+- No plans are currently in progress.
 
 ## Review
 
-- No plans are currently awaiting acceptance.
+- [Host MCP Relay Sidecar Linux/Sysbox Spike](review/2026-07-17-host-mcp-sidecar-spike-exec-plan.md): PASS verdict;
+  the feature execution plan is authorized.
+- [Host MCP Forwarding](review/2026-07-17-host-mcp-forwarding-exec-plan.md): implemented and proven on real Sysbox.
 
 ## Completed
 

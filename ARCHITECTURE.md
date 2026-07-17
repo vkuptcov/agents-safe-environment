@@ -45,6 +45,9 @@ both the module paths and document links.
 | `internal/launcher/dockercli/` | Typed adapter for the host Docker CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `cmd/codex-safe-session/` | Container CLI. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/container/` | Container bootstrap. | [Session manager](docs/design-docs/go-session-manager.md) |
+| `internal/launcher/hostmcp/` | MCP endpoint discovery. | [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) |
+| `internal/mcpchannel/` | MCP channel wire contract. | [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) |
+| `internal/relay/` | Host MCP relay sidecar. | [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) |
 | `internal/session/` | Command lifecycle. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/terminal/` | Terminal detection. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `container/` | Container image and shell defaults. | [Safe environment](docs/design-docs/codex-safe.md) |
@@ -56,6 +59,9 @@ both the module paths and document links.
 - A linked worktree's primary checkout is mounted read-only while the shared Git directory remains writable.
 - The host home is not mounted. Only explicitly supported configuration files may receive narrow read-only mounts.
 - The host Docker socket is never mounted into the container.
+- The session container shares no host namespace. The optional relay sidecar in
+  [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) shares the host network namespace only, runs no agent
+  code, and exists only while a session forwards host MCP endpoints.
 - Nested Docker state belongs to the private daemon and disappears with the container.
 - Passwordless sudo grants root only inside the Sysbox container, not on the host.
 
@@ -65,6 +71,8 @@ both the module paths and document links.
   [Safe Environment for Running Codex Agents](docs/design-docs/codex-safe.md).
 - Container startup, daemon supervision, registration, command wrapping, and idle shutdown changes belong to
   [Go Session Manager](docs/design-docs/go-session-manager.md).
+- Reaching host MCP servers that listen on loopback belongs to
+  [Host MCP Access](docs/design-docs/host-mcp-forwarding.md).
 - Runtime or security-boundary changes must update the owning design doc in the same change.
 - Non-trivial implementations follow the lifecycle in [Execution Plans](docs/exec-plans/README.md).
 - Review findings and deferred work follow [Reviews](docs/reviews/README.md).

@@ -2,6 +2,7 @@ package dockercli
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +42,12 @@ func (client *Client) Inspect(
 	return inspections[0], true, nil
 }
 
-// Preflight verifies that Docker exposes the required runtime and can inspect the requested image.
+// Preflight verifies that Docker exposes the required runtime and that the requested image is
+// present locally, pulling it when it is not.
+//
+// The pull is not a convenience. Resolving a reference to an immutable content ID requires the image
+// to be local, and this check runs before any create, so without it a reference absent from local
+// storage fails preflight and never reaches a pull at all.
 func (client *Client) Preflight(ctx context.Context, runtime string, image string) error {
 	if runtime == "" {
 		return errors.New("container runtime is required")
@@ -60,9 +66,53 @@ func (client *Client) Preflight(ctx context.Context, runtime string, image strin
 	if _, found := runtimes[runtime]; !found {
 		return fmt.Errorf("Docker runtime %q is not registered", runtime)
 	}
-	output, err = client.combinedOutput(ctx, "image", "inspect", image)
+	return client.ensureImage(ctx, image)
+}
+
+// ensureImage makes the reference present locally, pulling only when it is absent.
+func (client *Client) ensureImage(ctx context.Context, image string) error {
+	if _, err := client.combinedOutput(ctx, "image", "inspect", image); err == nil {
+		return nil
+	}
+	output, err := client.combinedOutput(ctx, "pull", image)
 	if err != nil {
-		return commandFailure(fmt.Sprintf("inspect image %q", image), output, err)
+		return commandFailure(fmt.Sprintf("pull image %q", image), output, err)
+	}
+	if output, err := client.combinedOutput(ctx, "image", "inspect", image); err != nil {
+		return commandFailure(fmt.Sprintf("inspect image %q after pull", image), output, err)
+	}
+	return nil
+}
+
+// ResolveImageID returns the immutable content ID of a locally present reference.
+//
+// The session container and its relay sidecar implement one private protocol, so a compatible tag is
+// not enough: both must be created from this exact ID, even when the user supplied a mutable tag
+// that moves underneath them.
+func (client *Client) ResolveImageID(ctx context.Context, image string) (string, error) {
+	if strings.TrimSpace(image) == "" {
+		return "", errors.New("container image is required")
+	}
+	output, err := client.combinedOutput(ctx, "image", "inspect", "--format", "{{.Id}}", image)
+	if err != nil {
+		return "", commandFailure(fmt.Sprintf("resolve image %q to an immutable ID", image), output, err)
+	}
+	imageID := strings.TrimSpace(string(output))
+	if err := validateImageID(imageID); err != nil {
+		return "", err
+	}
+	return imageID, nil
+}
+
+// validateImageID rejects anything that is not a digest-form content ID, so a malformed value can
+// never be passed to a create as if it pinned the image.
+func validateImageID(imageID string) error {
+	digest, found := strings.CutPrefix(imageID, "sha256:")
+	if !found || len(digest) != 64 {
+		return fmt.Errorf("invalid Docker image ID %q", imageID)
+	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		return fmt.Errorf("invalid Docker image ID %q", imageID)
 	}
 	return nil
 }

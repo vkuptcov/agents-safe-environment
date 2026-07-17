@@ -15,10 +15,13 @@ import (
 
 const defaultImage = "codex-safe-mvp:local"
 
-const usage = `Usage: agents-safe [--project PATH] [--image REF] [--] COMMAND [ARG...]
+const usage = `Usage: agents-safe [--project PATH] [--image REF] [--no-host-mcp] [--] COMMAND [ARG...]
 
 Run a command for the current Git project inside an ephemeral Sysbox container.
-Options must appear before COMMAND; COMMAND is executed directly without a shell.`
+Options must appear before COMMAND; COMMAND is executed directly without a shell.
+
+  --no-host-mcp  Do not forward host MCP servers into the container. By default a loopback
+                 MCP server in the base config.toml is reached through a confined relay.`
 
 // config returns the agents-safe launcher configuration. It is a function so tests can drive the
 // same command policy the binary uses.

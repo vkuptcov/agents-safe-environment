@@ -70,12 +70,33 @@ func (supervisor *Supervisor) Serve(ctx context.Context) error {
 	if supervisor.effectiveUID() != 0 {
 		return fmt.Errorf("codex-safe-session serve must run as root")
 	}
-	if err := reconcileContainerAccount(ctx, supervisor.config, supervisor.commands); err != nil {
+
+	// Everything from here to the first lease is bounded together. The sidecar starts its
+	// initial-lease timeout when Docker creates it, so an unbounded bootstrap could outlast that
+	// timeout and leave the session permanently unleased. This deadline is the session's half of the
+	// design's cold-start bound; the launcher bounds container creation as the other half.
+	bootstrapContext, cancelBootstrap := context.WithTimeout(ctx, PreLeaseDeadline)
+	defer cancelBootstrap()
+	if err := reconcileContainerAccount(bootstrapContext, supervisor.config, supervisor.commands); err != nil {
 		return fmt.Errorf("reconcile container account: %w", err)
 	}
-	if err := prepareContainerUserFilesystem(ctx, supervisor.config, supervisor.paths, supervisor.commands); err != nil {
+	if err := prepareContainerUserFilesystem(
+		bootstrapContext, supervisor.config, supervisor.paths, supervisor.commands,
+	); err != nil {
 		return fmt.Errorf("prepare container user filesystem: %w", err)
 	}
+
+	// The listeners and the lease come before dockerd, which keeps that daemon's ready timeout out
+	// of the cold-start budget. Neither needs it. The channel's own lifetime is the session's, so it
+	// takes ctx rather than the bootstrap deadline.
+	channel, err := startHostMCP(ctx, bootstrapContext, supervisor.config.HostMCP, supervisor.log)
+	if err != nil {
+		return fmt.Errorf("start host MCP forwarding: %w", err)
+	}
+	defer channel.close()
+	// The deadline has done its job; the session's own lifetime governs everything after it.
+	cancelBootstrap()
+
 	daemon, err := startDockerDaemon(
 		ctx,
 		supervisor.config,

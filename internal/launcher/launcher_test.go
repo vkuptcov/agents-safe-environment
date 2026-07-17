@@ -50,6 +50,8 @@ func TestBuildDockerRunArgsUsesDetachedSysboxAndIdentityLabels(t *testing.T) {
 		"codex-safe.codex-home=/home/developer/.codex",
 		"--label",
 		"codex-safe.personal-skills=absent",
+		"--label",
+		"codex-safe.host-mcp=absent",
 		"--env",
 		"CODEX_SAFE_HOST_UID=1000",
 		"--env",
@@ -276,7 +278,7 @@ func TestDockerLaunchCreatesDetachedContainerThenExecutesWrapper(t *testing.T) {
 		{output: []byte(containerID + "\n")},
 	}}
 	docker := testDocker(runner)
-	if err := docker.Launch(context.Background(), simplePlan(), "image", []string{"echo", "safe"}); err != nil {
+	if err := docker.Launch(context.Background(), simplePlan(), "image", []string{"echo", "safe"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
 	containerName := mustContainerName(t, docker.HostUID, "/project")
@@ -303,7 +305,7 @@ func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
 	}}}
 	docker := testDocker(runner)
 	docker.AllocateTTY = true
-	if err := docker.Launch(context.Background(), simplePlan(), "image", []string{"make", "test"}); err != nil {
+	if err := docker.Launch(context.Background(), simplePlan(), "image", []string{"make", "test"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
 	if len(runner.combinedCalls) != 1 {
@@ -322,7 +324,7 @@ func TestDockerLaunchRejectsMismatchedDeterministicNameOccupant(t *testing.T) {
 	runner := &fakeCommandRunner{outputs: []commandResult{{
 		output: inspectionJSON(t, containerID, true, "running", labels),
 	}}}
-	err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"})
+	err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{})
 	if err == nil || !strings.Contains(err.Error(), "refusing deterministic-name reuse") {
 		t.Fatalf("Launch() error = %v, want label mismatch", err)
 	}
@@ -350,7 +352,7 @@ func TestDockerLaunchRejectsUserMountsMismatchWithActiveSessionDiagnostic(t *tes
 			runner := &fakeCommandRunner{outputs: []commandResult{{
 				output: inspectionJSON(t, containerID, true, "running", labels),
 			}}}
-			err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"})
+			err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{})
 			if err == nil || !strings.Contains(err.Error(), "finish the active session") {
 				t.Fatalf("Launch() error = %v, want finish-active-session diagnostic", err)
 			}
@@ -390,7 +392,7 @@ func TestDockerLaunchWaitsOutStoppedUserMountsMismatch(t *testing.T) {
 			{output: []byte(newID)},
 		},
 	}
-	if err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}); err != nil {
+	if err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v, want a fresh container for the stopped mismatch", err)
 	}
 	assertWrappedRun(t, runner.runCalls, newID, []string{"true"})
@@ -433,7 +435,7 @@ func TestDockerLaunchReusesConcurrentCreateWinner(t *testing.T) {
 		{output: []byte("Conflict. The container name is already in use by container other"), err: fakeExitError{125}},
 		{output: inspectionJSON(t, containerID, true, "running", matchingLabels("/project", 1000))},
 	}}
-	if err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}); err != nil {
+	if err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
 	assertWrappedRun(t, runner.runCalls, containerID, []string{"true"})
@@ -450,7 +452,7 @@ func TestDockerLaunchWaitsForStoppedNameReleaseBeforeCreate(t *testing.T) {
 		{output: []byte(`[]`)},
 		{output: []byte(newID)},
 	}}
-	if err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}); err != nil {
+	if err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
 	assertWrappedRun(t, runner.runCalls, newID, []string{"true"})
@@ -467,7 +469,7 @@ func TestDockerLaunchPreservesChildExitWhenContainerStillRuns(t *testing.T) {
 		},
 		runErrors: []error{exitError},
 	}
-	err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"false"})
+	err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"false"}, launchplan.Options{})
 	var got fakeExitError
 	if !errors.As(err, &got) || got.ExitCode() != 37 {
 		t.Fatalf("Launch() error = %v, want child exit 37", err)
@@ -498,7 +500,7 @@ func TestDockerLaunchRetriesOnceAfterCommittedShutdown(t *testing.T) {
 			nil,
 		},
 	}
-	if err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}); err != nil {
+	if err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
 	if len(runner.runCalls) != 2 {
@@ -519,7 +521,7 @@ func TestDockerLaunchDoesNotRetryUserCommandExit125(t *testing.T) {
 			stderr: "user command completed with status 125",
 		}},
 	}
-	err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"})
+	err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{})
 	if err == nil {
 		t.Fatal("Launch() succeeded after user command exit 125")
 	}
@@ -534,7 +536,7 @@ func TestDockerLaunchRejectsMissingSysbox(t *testing.T) {
 		containerNotFound(),
 		{output: []byte(`{"runc":{}}`)},
 	}}
-	err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"})
+	err := testDocker(runner).Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{})
 	if err == nil || !strings.Contains(err.Error(), `Docker runtime "sysbox-runc" is not registered`) {
 		t.Fatalf("Launch() error = %v", err)
 	}
@@ -553,7 +555,7 @@ func TestDockerLaunchDoesNotCreateCodexHomeBeforePreflight(t *testing.T) {
 	}}
 	docker := filesystemDocker(t, runner, home, strings.NewReader("y\n"), &diagnostics)
 
-	err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"})
+	err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{})
 	if err == nil || !strings.Contains(err.Error(), `Docker runtime "sysbox-runc" is not registered`) {
 		t.Fatalf("Launch() error = %v, want missing Sysbox rejection", err)
 	}
@@ -576,7 +578,7 @@ func TestDockerLaunchDoesNotCreateCodexHomeBeforeRunningReuseValidation(t *testi
 	}}}
 	docker := filesystemDocker(t, runner, home, strings.NewReader("y\n"), &diagnostics)
 
-	err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"})
+	err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{})
 	if err == nil || !strings.Contains(err.Error(), "already running without a usable host Codex home") {
 		t.Fatalf("Launch() error = %v, want active no-Codex-mount diagnostic", err)
 	}
@@ -604,7 +606,7 @@ func TestDockerLaunchCreatesCodexHomeAfterPreflight(t *testing.T) {
 	}}
 	docker := filesystemDocker(t, runner, home, strings.NewReader("y\n"), &diagnostics)
 
-	if err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"}); err != nil {
+	if err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
 	info, err := os.Stat(filepath.Join(home, ".codex"))
@@ -704,7 +706,7 @@ func TestDockerLaunchRejectsUnsupportedOSBeforeDocker(t *testing.T) {
 	runner := &fakeCommandRunner{}
 	docker := testDocker(runner)
 	docker.HostOS = "darwin"
-	err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"})
+	err := docker.Launch(context.Background(), simplePlan(), "image", []string{"true"}, launchplan.Options{})
 	if err == nil || !strings.Contains(err.Error(), "requires Linux") {
 		t.Fatalf("Launch() error = %v", err)
 	}

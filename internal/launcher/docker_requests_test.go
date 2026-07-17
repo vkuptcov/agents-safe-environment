@@ -16,7 +16,7 @@ func runArgsFor(
 	containerName string,
 	userMounts UserMounts,
 ) ([]string, error) {
-	request, err := docker.buildCreateRequest(plan, image, containerName, userMounts)
+	request, err := docker.buildCreateRequest(plan, image, containerName, userMounts, hostMCPPlan{})
 	if err != nil {
 		return nil, err
 	}

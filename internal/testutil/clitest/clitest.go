@@ -15,6 +15,7 @@ type RecordingLauncher struct {
 	LaunchPlan    launchplan.Plan
 	Image         string
 	Command       []string
+	Options       launchplan.Options
 	Err           error
 	PanicOnLaunch bool
 }
@@ -26,6 +27,7 @@ func (recording *RecordingLauncher) Launch(
 	plan launchplan.Plan,
 	image string,
 	command []string,
+	options launchplan.Options,
 ) error {
 	if recording.PanicOnLaunch {
 		panic("Launch should not be called")
@@ -33,6 +35,7 @@ func (recording *RecordingLauncher) Launch(
 	recording.LaunchPlan = plan
 	recording.Image = image
 	recording.Command = append([]string(nil), command...)
+	recording.Options = options
 	return recording.Err
 }
 

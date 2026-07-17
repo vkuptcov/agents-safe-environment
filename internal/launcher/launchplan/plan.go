@@ -10,6 +10,15 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 )
 
+// Options are the per-launch choices the CLI resolves and the launcher applies. They live here, in
+// the package both the CLI scaffold and the launcher already import, so neither has to depend on the
+// other to name them.
+type Options struct {
+	// NoHostMCP skips host MCP discovery entirely: no config.toml read, no forwarders, no mount, and
+	// no relay. It selects creation-time state and so cannot narrow a session that already forwards.
+	NoHostMCP bool
+}
+
 // BindMount describes one host path exposed to the Sysbox container through a Docker bind mount.
 type BindMount struct {
 	// Source is the canonical absolute path on the host.
