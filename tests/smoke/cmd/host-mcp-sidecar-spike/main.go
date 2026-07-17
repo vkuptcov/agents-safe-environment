@@ -60,6 +60,8 @@ func main() {
 		err = runSocketClient(os.Args[2:])
 	case "dial-check":
 		err = runDialCheck(os.Args[2:])
+	case "session-check":
+		err = runSessionCheck(os.Args[2:])
 	case "launcher-helper":
 		err = runLauncherHelper(os.Args[2:])
 	default:
@@ -442,6 +444,58 @@ func runSocketClient(args []string) error {
 }
 
 // ---------------------------------------------------------------------------
+// session-check
+// ---------------------------------------------------------------------------
+
+// runSessionCheck asserts, from inside the Sysbox session container, the two facts requirement 2
+// actually rests on: that this process really is the mapped host identity rather than root, and that
+// Sysbox presents the sidecar's socket with the host's ownership and mode intact. A nonce round trip
+// proves connectability but would look identical if the socket were root-owned and this process held
+// a DAC bypass, so connectability alone cannot carry the requirement.
+func runSessionCheck(args []string) error {
+	flags := flag.NewFlagSet("session-check", flag.ExitOnError)
+	socket := flags.String("socket", "", "endpoint socket path inside this container")
+	expectUID := flags.Int("expect-uid", -1, "required effective UID and socket owner")
+	expectGID := flags.Int("expect-gid", -1, "required effective GID and socket group")
+	expectMode := flags.Int("expect-mode", 0o600, "required socket permission bits")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *socket == "" || *expectUID < 0 || *expectGID < 0 {
+		return errors.New("session-check requires --socket, --expect-uid and --expect-gid")
+	}
+
+	if effective := os.Geteuid(); effective != *expectUID {
+		return fmt.Errorf("effective UID is %d, want the mapped host UID %d", effective, *expectUID)
+	}
+	if effective := os.Getegid(); effective != *expectGID {
+		return fmt.Errorf("effective GID is %d, want the mapped host GID %d", effective, *expectGID)
+	}
+
+	info, err := os.Lstat(*socket)
+	if err != nil {
+		return fmt.Errorf("inspecting %s: %w", *socket, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("%s is %v, not a Unix socket", *socket, info.Mode())
+	}
+	if permission := info.Mode().Perm(); permission != os.FileMode(*expectMode) {
+		return fmt.Errorf("%s has mode %04o, want %04o", *socket, permission, *expectMode)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("cannot read ownership of %s", *socket)
+	}
+	if int(stat.Uid) != *expectUID || int(stat.Gid) != *expectGID {
+		return fmt.Errorf("%s is owned by %d:%d, want %d:%d as mapped by Sysbox",
+			*socket, stat.Uid, stat.Gid, *expectUID, *expectGID)
+	}
+	logf("session-check euid=%d egid=%d socket=%s type=socket mode=%04o owner=%d:%d",
+		os.Geteuid(), os.Getegid(), *socket, info.Mode().Perm(), stat.Uid, stat.Gid)
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // dial-check
 // ---------------------------------------------------------------------------
 
@@ -491,7 +545,9 @@ func runDialCheck(args []string) error {
 // its lease outlive the launcher that created them.
 func runLauncherHelper(args []string) error {
 	flags := flag.NewFlagSet("launcher-helper", flag.ExitOnError)
-	barrier := flags.String("barrier", "", "orchestrator barrier as host:port, released before create")
+	barrier := flags.String("barrier", "", "orchestrator barrier as host:port, released before this attempt starts")
+	createBarrier := flags.String("create-barrier", "", "orchestrator barrier as host:port, released immediately before the contested session create")
+	hold := flags.String("hold", "", "after handoff, run this heartbeat file inside the session and block until killed")
 	hostParent := flags.String("host-parent", "", "project runtime parent on the host")
 	generation := flags.String("generation", "", "this attempt's generation directory name")
 	sidecarName := flags.String("sidecar-name", "", "this attempt's sidecar container name")
@@ -536,6 +592,18 @@ func runLauncherHelper(args []string) error {
 		return fmt.Errorf("starting candidate sidecar: %w", err)
 	}
 
+	// Building a candidate sidecar takes long enough that a barrier released before it would let one
+	// attempt finish the whole race before the other reached it. Wait until this attempt's channel is
+	// actually bound, then rendezvous again, so the contested create is the next thing both do.
+	if *createBarrier != "" {
+		if err := awaitPath(filepath.Join(generationPath, controlSocketName), *readiness); err != nil {
+			return fmt.Errorf("awaiting candidate channel: %w", err)
+		}
+		if err := waitForBarrier(*createBarrier); err != nil {
+			return err
+		}
+	}
+
 	// The session container's name is the sole arbiter of creation. Each attempt allocates its own
 	// generation, so both candidate sidecars are created; only one attempt wins this create.
 	output, err := createSession(*sessionName, *image, generationPath, *label)
@@ -569,12 +637,48 @@ func runLauncherHelper(args []string) error {
 	if err := awaitReady(filepath.Join(generationPath, controlSocketName), *readiness); err != nil {
 		return err
 	}
-	return writeReport(*result, map[string]string{
+
+	// A launcher that returns cleanly is not the case the design cares about. --hold starts a command
+	// through docker exec and stays attached to it, so the orchestrator can kill this process group
+	// out from under a running command, the way a dying terminal would.
+	var held *exec.Cmd
+	if *hold != "" {
+		held = exec.Command("docker", "exec", *sessionName, "/bin/sh", "-c",
+			fmt.Sprintf("while true; do date +%%s%%N >> %s; sleep 0.2; done", *hold))
+		if err := held.Start(); err != nil {
+			return fmt.Errorf("starting the held command: %w", err)
+		}
+		logf("launcher-helper is attached to a running command and holding")
+	}
+
+	if err := writeReport(*result, map[string]string{
 		"outcome":    "winner",
 		"sidecar":    *sidecarName,
 		"generation": *generation,
 		"session":    strings.TrimSpace(output),
-	})
+	}); err != nil {
+		return err
+	}
+	if held != nil {
+		// Waiting on the attached command is what a launcher does, and it parks this process on a
+		// real syscall. An empty select would instead trip Go's all-goroutines-asleep detector and
+		// kill the launcher before the orchestrator could.
+		return held.Wait()
+	}
+	return nil
+}
+
+// awaitPath waits for a path to exist, bounded, so a rendezvous cannot be reached before the thing
+// it is meant to synchronize on actually exists.
+func awaitPath(path string, bound time.Duration) error {
+	deadline := time.Now().Add(bound)
+	for time.Now().Before(deadline) {
+		if _, err := os.Lstat(path); err == nil {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("%s did not appear within %s", path, bound)
 }
 
 func createSidecar(name, image, hostParent, generation, endpoint, events, label string) error {

@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -119,6 +120,84 @@ func (s *spikeSentinel) serve() {
 			}
 			_, _ = fmt.Fprintf(connection, "%s\n", s.response)
 		}()
+	}
+}
+
+// ---------------------------------------------------------------------------
+// child process output
+// ---------------------------------------------------------------------------
+
+// safeBuffer collects a child launcher's output. os/exec fills it from its own copy goroutines while
+// the orchestrator reads it for diagnostics on a live process, so both sides need the lock.
+type safeBuffer struct {
+	mutex  sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *safeBuffer) Write(data []byte) (int, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.buffer.Write(data)
+}
+
+func (b *safeBuffer) String() string {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.buffer.String()
+}
+
+// ---------------------------------------------------------------------------
+// barrier
+// ---------------------------------------------------------------------------
+
+// spikeBarrier holds every arriving attempt until all of them are present, then releases them
+// together. It is a rendezvous, not a sleep: an attempt that never arrives fails the watchdog rather
+// than letting the others race unopposed.
+type spikeBarrier struct {
+	t        *testing.T
+	name     string
+	listener net.Listener
+	arrived  chan net.Conn
+}
+
+func (f *spikeFixture) newBarrier(name string) *spikeBarrier {
+	f.t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(f.t, err, "the %s barrier must bind loopback", name)
+	barrier := &spikeBarrier{t: f.t, name: name, listener: listener, arrived: make(chan net.Conn, 8)}
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			barrier.arrived <- connection
+		}
+	}()
+	return barrier
+}
+
+func (b *spikeBarrier) address() string { return b.listener.Addr().String() }
+
+func (b *spikeBarrier) close() { _ = b.listener.Close() }
+
+// releaseAll blocks until count attempts are waiting, then lets them all go at once.
+func (b *spikeBarrier) releaseAll(count int) {
+	b.t.Helper()
+	held := make([]net.Conn, 0, count)
+	for range count {
+		select {
+		case connection := <-b.arrived:
+			held = append(held, connection)
+		case <-time.After(spikeWatchdog):
+			b.t.Fatalf("only %d of %d attempts reached the %s barrier within the %s watchdog",
+				len(held), count, b.name, spikeWatchdog)
+		}
+	}
+	for _, connection := range held {
+		_, err := fmt.Fprintln(connection, "go")
+		require.NoError(b.t, err, "the %s barrier must release every attempt", b.name)
+		_ = connection.Close()
 	}
 }
 
@@ -1010,9 +1089,20 @@ func (f *spikeFixture) phaseReachabilityAndOwnership() {
 	require.Equal(f.t, spikeGenerationTarget, sessionInspection.Mounts[0].Destination,
 		"the session container's mount target is the generation directory")
 
-	identity, code := f.execInSession(sessionID, []string{"/usr/bin/id", "-u"})
-	require.Zero(f.t, code, "the session container must report its numeric user: %s", identity)
-	f.fact("session container user inside Sysbox: uid=%s", strings.TrimSpace(identity))
+	// The identity and the mapped ownership are asserted inside the container, not merely printed.
+	// A nonce round trip proves connectability, which a root-owned socket reached by a root process
+	// would also produce, so connectability cannot carry this requirement on its own.
+	checked, code := f.execInSession(sessionID, []string{
+		spikeHelper, "session-check",
+		"--socket", filepath.Join(spikeGenerationTarget, spikeEndpointSocket),
+		"--expect-uid", strconv.Itoa(os.Getuid()),
+		"--expect-gid", strconv.Itoa(os.Getgid()),
+		"--expect-mode", "384", // 0600
+	})
+	require.Zero(f.t, code,
+		"the Sysbox session must run as the mapped host identity and see the sidecar's socket with the host's ownership and mode: %s",
+		checked)
+	f.fact("session-side assertion: %s", strings.TrimSpace(checked))
 
 	listing, code := f.execInSession(sessionID, []string{"/bin/ls", "-ln", spikeGenerationTarget})
 	require.Zero(f.t, code, "the session container must list its mounted generation: %s", listing)
@@ -1020,8 +1110,8 @@ func (f *spikeFixture) phaseReachabilityAndOwnership() {
 
 	f.requireNonceFromSession(sessionID, "the Sysbox session container")
 	f.pass("R2", fmt.Sprintf(
-		"a %04o socket owned by host %d:%d and created by the sidecar was connectable from the Sysbox session as %s, and the nonce crossed both hops",
-		info.Mode().Perm(), stat.Uid, stat.Gid, f.identity))
+		"the Sysbox session asserted its own effective identity is %s and that the sidecar's socket is a %04o socket owned by %d:%d through the ID-shifted mount, then carried the nonce across both hops",
+		f.identity, info.Mode().Perm(), stat.Uid, stat.Gid))
 
 	// This pair is finished; kill it so requirement 3 starts from a clean project runtime parent.
 	require.NoError(f.t, f.docker.ContainerKill(f.ctx, sessionID, "KILL"), "the reachability session must be killable")
@@ -1053,20 +1143,15 @@ func (f *spikeFixture) arbitration(helper string) {
 		_ = f.docker.ContainerRemove(removeCtx, sessionName, container.RemoveOptions{Force: true})
 	})
 
-	// A real barrier: neither attempt proceeds to create until both are ready to.
-	barrier, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(f.t, err, "the create barrier must bind loopback")
-	defer barrier.Close()
-	arrived := make(chan net.Conn, 2)
-	go func() {
-		for {
-			connection, err := barrier.Accept()
-			if err != nil {
-				return
-			}
-			arrived <- connection
-		}
-	}()
+	// Two barriers, because one is not enough. The first releases both attempts to build their
+	// candidate sidecars. The second holds them once their channels are bound and immediately before
+	// the contested session create -- without it, the first attempt could finish the entire race
+	// while the second was still starting its sidecar, and a sequential conflict would masquerade as
+	// arbitration.
+	startBarrier := f.newBarrier("start")
+	defer startBarrier.close()
+	createBarrier := f.newBarrier("contested create")
+	defer createBarrier.close()
 
 	reportDir := f.t.TempDir()
 	attempts := []string{"a", "b"}
@@ -1080,7 +1165,8 @@ func (f *spikeFixture) arbitration(helper string) {
 		sidecar := "codex-safe-mcp-race-" + generation
 		report := filepath.Join(reportDir, attempt+".report")
 		process := exec.Command(helper, "launcher-helper",
-			"--barrier", barrier.Addr().String(),
+			"--barrier", startBarrier.address(),
+			"--create-barrier", createBarrier.address(),
 			"--host-parent", f.parent,
 			"--generation", generation,
 			"--sidecar-name", sidecar,
@@ -1092,9 +1178,9 @@ func (f *spikeFixture) arbitration(helper string) {
 			"--result", report,
 			"--readiness", spikeWatchdog.String(),
 		)
-		var combined bytes.Buffer
-		process.Stdout = &combined
-		process.Stderr = &combined
+		combined := &safeBuffer{}
+		process.Stdout = combined
+		process.Stderr = combined
 		require.NoError(f.t, process.Start(), "launcher attempt %q must start", attempt)
 		done := make(chan error, 1)
 		go func() { done <- process.Wait() }()
@@ -1104,21 +1190,10 @@ func (f *spikeFixture) arbitration(helper string) {
 		waits = append(waits, done)
 	}
 
-	// Release both attempts only once both have reached the barrier.
-	held := make([]net.Conn, 0, len(attempts))
-	for range attempts {
-		select {
-		case connection := <-arrived:
-			held = append(held, connection)
-		case <-time.After(spikeWatchdog):
-			f.t.Fatal("both launcher attempts never reached the create barrier within the watchdog")
-		}
-	}
-	for _, connection := range held {
-		_, err := fmt.Fprintln(connection, "go")
-		require.NoError(f.t, err, "the create barrier must release every attempt")
-		_ = connection.Close()
-	}
+	startBarrier.releaseAll(len(attempts))
+	// Both candidate sidecars are now bound and both attempts are parked one call short of the
+	// contested create. Releasing here is what makes the two creates actually contend.
+	createBarrier.releaseAll(len(attempts))
 
 	for index, done := range waits {
 		select {
@@ -1167,13 +1242,17 @@ func (f *spikeFixture) arbitration(helper string) {
 	f.awaitGone(sessionName)
 }
 
-// launcherDeath proves the sidecar, its lease, and the data path outlive the creating launcher.
+// launcherDeath proves the sidecar, its lease, the running command, and the data path outlive the
+// launcher that created them. The launcher is killed mid-command rather than allowed to return: a
+// clean exit would only show that detached containers keep running, which is not the case the design
+// is defending against.
 func (f *spikeFixture) launcherDeath(helper string) {
 	f.t.Helper()
 	generation := "g-" + spikeNonce()
 	sidecarName := "codex-safe-mcp-detach-" + generation
 	sessionName := "codex-safe-session-detach-" + f.runID
 	report := filepath.Join(f.t.TempDir(), "detach.report")
+	heartbeat := "/tmp/codex-safe-spike-heartbeat"
 	f.t.Cleanup(func() {
 		removeCtx, cancel := context.WithTimeout(context.Background(), spikeWatchdog)
 		defer cancel()
@@ -1191,34 +1270,118 @@ func (f *spikeFixture) launcherDeath(helper string) {
 		"--label", f.label,
 		"--result", report,
 		"--readiness", spikeWatchdog.String(),
+		"--hold", heartbeat,
 	)
-	var combined bytes.Buffer
-	process.Stdout = &combined
-	process.Stderr = &combined
-	require.NoError(f.t, process.Run(), "the creating launcher must hand off and exit cleanly: %s", combined.String())
+	combined := &safeBuffer{}
+	process.Stdout = combined
+	process.Stderr = combined
+	// Its own process group, so the kill below takes down the launcher and its attached docker exec
+	// client together, the way a dying terminal takes down everything it owns.
+	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(f.t, process.Start(), "the creating launcher must start")
+	// ProcessState is only valid once Wait returns, so liveness is read from this channel rather
+	// than from the Cmd, which Wait is concurrently writing.
+	finished := make(chan struct{})
+	go func() { _ = process.Wait(); close(finished) }()
+	alive := func() bool {
+		select {
+		case <-finished:
+			return false
+		default:
+			return true
+		}
+	}
 
+	f.awaitFile(report, finished, combined)
 	values := parseReport(f.t, report)
 	require.Equal(f.t, "winner", values["outcome"], "the only launcher must create the session")
-	require.True(f.t, process.ProcessState.Exited(), "the creating launcher must have exited")
+	sessionID := f.inspect(sessionName).ID
+
+	// The command must be established and ticking before the launcher dies, or this proves nothing.
+	f.awaitHeartbeatBeyond(sessionID, heartbeat, 2)
+	before := f.heartbeatCount(sessionID, heartbeat)
+	require.Greater(f.t, before, 2, "the held command must be running steadily before the launcher is killed")
+	require.True(f.t, alive(), "the launcher must still be alive, holding its command:\n%s", combined.String())
+
+	pgid, err := syscall.Getpgid(process.Process.Pid)
+	require.NoError(f.t, err, "the launcher's process group must be resolvable")
+	killedPid := process.Process.Pid
+	require.NoError(f.t, syscall.Kill(-pgid, syscall.SIGKILL), "the launcher's process group must be killable")
+	select {
+	case <-finished:
+	case <-time.After(spikeWatchdog):
+		f.t.Fatalf("the killed launcher never terminated\n%s", combined.String())
+	}
+	require.False(f.t, process.ProcessState.Exited(),
+		"the launcher must have been killed mid-command, not exited on its own:\n%s", combined.String())
 
 	// The launcher is gone. Everything it created must still be alive and serving.
-	sessionID := f.inspect(sessionName).ID
 	require.Equal(f.t, "running", f.inspect(sidecarName).State.Status, "the sidecar must outlive its launcher")
 	require.Equal(f.t, "running", f.inspect(sessionName).State.Status, "the session must outlive its launcher")
 	ready, err := f.probe(generation)
-	require.NoError(f.t, err, "the channel must still answer a readiness probe after the launcher exits")
-	require.True(f.t, ready, "the lease must still be held after the launcher exits")
-	f.requireNonceFromHost(generation, "the channel after launcher exit")
-	f.requireNonceFromSession(sessionID, "the session after launcher exit")
+	require.NoError(f.t, err, "the channel must still answer a readiness probe after the launcher dies")
+	require.True(f.t, ready, "the lease must still be held after the launcher dies")
+
+	after := f.awaitHeartbeatBeyond(sessionID, heartbeat, before)
+	f.requireNonceFromHost(generation, "the channel after launcher death")
+	f.requireNonceFromSession(sessionID, "the session after launcher death")
 
 	f.pass("R4", fmt.Sprintf(
-		"child launcher pid %d exited after handoff; sidecar %q and session %q stayed running, the lease stayed held, and the session still reached the host sentinel",
-		process.ProcessState.Pid(), sidecarName, sessionName))
+		"child launcher pid %d was SIGKILLed with its process group while a docker exec command was running; that command kept writing (%d -> %d heartbeats), sidecar %q and session %q stayed running, the lease stayed held, and the session still reached the host sentinel",
+		killedPid, before, after, sidecarName, sessionName))
 
 	require.NoError(f.t, f.docker.ContainerKill(f.ctx, sessionName, "KILL"), "the detached session must be killable")
 	f.events.await(sidecarName, "cleanup-done")
 	f.awaitGone(sidecarName)
 	f.awaitGone(sessionName)
+}
+
+// heartbeatCount reads how many ticks the held command has written inside the session container.
+func (f *spikeFixture) heartbeatCount(sessionID, path string) int {
+	f.t.Helper()
+	output, code := f.execInSession(sessionID, []string{"/bin/sh", "-c",
+		fmt.Sprintf("wc -l < %s 2>/dev/null || echo 0", path)})
+	if code != 0 {
+		return 0
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(output))
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+// awaitHeartbeatBeyond proves the held command is still making progress, not merely that its old
+// output survives. A file left behind by a dead command would look identical to a live one.
+func (f *spikeFixture) awaitHeartbeatBeyond(sessionID, path string, previous int) int {
+	f.t.Helper()
+	deadline := time.Now().Add(spikeWatchdog)
+	for time.Now().Before(deadline) {
+		if current := f.heartbeatCount(sessionID, path); current > previous {
+			return current
+		}
+		time.Sleep(spikePoll)
+	}
+	f.t.Fatalf("the held command stopped writing after its launcher was killed (still %d ticks)", previous)
+	return 0
+}
+
+// awaitFile waits for a launcher's report to appear, failing fast if the launcher dies first.
+func (f *spikeFixture) awaitFile(path string, finished <-chan struct{}, output *safeBuffer) {
+	f.t.Helper()
+	deadline := time.Now().Add(spikeWatchdog)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		select {
+		case <-finished:
+			f.t.Fatalf("the launcher exited before writing %s\n%s", path, output.String())
+		default:
+		}
+		time.Sleep(spikePoll)
+	}
+	f.t.Fatalf("the launcher never wrote %s within the %s watchdog\n%s", path, spikeWatchdog, output.String())
 }
 
 // phaseClosureRecoveryAndIsolation settles requirements 5, 6 and 7.

@@ -1009,11 +1009,13 @@ All seven requirements passed:
 1. Host-loopback reachability: a `--network=host --cap-drop=ALL --read-only` sidecar running as uid 1000 reached a
    sentinel bound to `127.0.0.1` only. The identical container on the default bridge network could not, so the
    reach is the host network namespace and nothing else.
-2. Shared socket ownership: the sidecar's `0600` socket appeared inside the Sysbox session as `1000:1000`, and the
-   nonce crossed both hops.
-3. Concurrent-create arbitration: two racing launchers left exactly one session, one sidecar, and one generation.
-4. Launcher-death survival: the session, sidecar, lease, and data path all survived the creating launcher's exit.
-5. Lease closure: `docker kill` closed the lease in 20 ms, and the sidecar cleaned up and exited with no Docker
+2. Shared socket ownership: the session container asserted from inside Sysbox that it runs as the mapped host
+   identity and that the sidecar's socket is `0600` owned by `1000:1000`, then carried the nonce across both hops.
+3. Concurrent-create arbitration: two launchers, each held with its channel bound one call short of the contested
+   create, left exactly one session, one sidecar, and one generation.
+4. Launcher-death survival: the launcher was killed with its process group while a `docker exec` command was
+   running; that command, the session, the sidecar, the lease, and the data path all survived.
+5. Lease closure: `docker kill` closed the lease in 10 ms, and the sidecar cleaned up and exited with no Docker
    access of its own.
 6. Sidecar restart: the generation inode survived, and the replacement recovered under the same deterministic name
    from the session's immutable image ID.
@@ -1026,10 +1028,10 @@ Three results carry consequences beyond a passing row, and the execution plan mu
   Requirements 1, 2 and 5 all held, so the detached host relay fallback in
   [Boundaries and Non-Goals](#boundaries-and-non-goals) is not needed.
 - The same-name replacement create really does conflict. Docker's asynchronous `--rm` removal held the name after the
-  `die` event; the single permitted retry succeeded once `destroy` arrived, 27 ms later. The bounded-wait-and-retry
+  `die` event; the single permitted retry succeeded once `destroy` arrived, 30 ms later. The bounded-wait-and-retry
   rule in [Identity and single instance](#identity-and-single-instance) is load-bearing, not defensive.
 - Recovery time is dominated by `serve`'s lease retry interval, not by Docker. The replacement bound its sockets long
-  before the session's next attempt, so the retry gap set the observed 831 ms from start to lease. This is exactly
+  before the session's next attempt, so the retry gap set the observed 825 ms from start to lease. This is exactly
   the dependency the timeout inequality protects; the execution plan must derive its values from measured bounds plus
   an explicit safety margin rather than copying the spike's throwaway numbers.
 

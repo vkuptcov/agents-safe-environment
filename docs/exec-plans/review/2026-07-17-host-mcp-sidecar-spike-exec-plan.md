@@ -278,9 +278,11 @@ The verdict below applies to exactly this environment and to no other.
   against the negative case: the identical image, command, identity and confinement on the default bridge network
   failed to reach the sentinel (exit 1) while the host-network container succeeded (exit 0), so the reach is
   attributable to the host network namespace and not to a sentinel that was never loopback-only.
-- R2 PASS: `e0.sock` is `type=socket mode=0600 owner=1000:1000` on the host, and Sysbox presented it inside the
-  session container as `srw------- 1 1000 1000`. The numeric host user connected through the ID-shifted mount and
-  the nonce crossed both hops.
+- R2 PASS: `e0.sock` is `type=socket mode=0600 owner=1000:1000` on the host. Inside the Sysbox session a
+  `session-check` helper asserted — not merely logged — that its own effective identity is `1000:1000` and that the
+  socket is a `0600` socket owned by `1000:1000` through the ID-shifted mount, then the nonce crossed both hops.
+  The assertion matters because a nonce round trip alone would look identical if the socket were root-owned and the
+  process held a DAC bypass.
 - Sidecar-create-to-first-successful-lease over this phase's window: 369 ms, an upper bound that includes the
   inspection and host-probe work above rather than a clean cold-start figure.
 
@@ -292,14 +294,19 @@ helper that fails the spike on a negative duration rather than printing one.
 
 ### 2026-07-17: Phase 3 — Requirements 3 and 4
 
-- R3 PASS: two child launcher processes, released together by a TCP barrier, each created its own generation and
-  candidate sidecar and then raced for one deterministic session name. Exactly one reported `winner` and one
-  reported `loser`. The loser stopped and awaited only its own sidecar and removed only its own generation
-  directory; it adopted nothing. Once both returned, exactly one session container was running, exactly one sidecar
-  remained — the winner's — only the winner's generation existed, and its channel still served the nonce.
-- R4 PASS: a child launcher created the generation, sidecar and session, probed the channel ready, and exited. After
-  its exit, both containers were still `running`, the readiness probe still reported the lease held, and the session
-  container still reached the host sentinel through both hops.
+- R3 PASS: two child launcher processes each created their own generation and candidate sidecar, then contended for
+  one deterministic session name. Two barriers make the contention real: the first releases both attempts to build
+  their sidecars, and the second holds each attempt once its own channel is bound and one call short of the session
+  create, so neither can finish the race before the other reaches it. Exactly one reported `winner` and one
+  `loser`. The loser stopped and awaited only its own sidecar and removed only its own generation directory; it
+  adopted nothing. Once both returned, exactly one session container was running, exactly one sidecar remained —
+  the winner's — only the winner's generation existed, and its channel still served the nonce.
+- R4 PASS: a child launcher created the generation, sidecar and session, started a command through `docker exec`,
+  and stayed attached to it. The orchestrator then `SIGKILL`ed the launcher's whole process group — launcher and
+  attached exec client together, as a dying terminal would — while that command was ticking. The command kept
+  writing afterwards, both containers stayed `running`, the readiness probe still reported the lease held, and the
+  session still reached the host sentinel through both hops. A launcher that merely returned cleanly would prove
+  only that detached containers keep running, which is not the case the design defends against.
 - The design's claim that the session container name is the sole arbiter is what the evidence supports: both
   candidate sidecar creates succeeded, because each attempt's generation makes its sidecar name distinct.
 
@@ -323,19 +330,23 @@ its own calls and the relay's reported transitions; the Docker daemon's event ti
 
 | Interval | Observed |
 | --- | --- |
-| Cold sidecar-create-to-first-successful-lease | 333-350 ms across three uninterrupted pairs |
-| Kill-to-lease-EOF | 20 ms |
-| Lease-EOF-to-sidecar-exit | 46 ms |
-| Sidecar die-to-name-creatable | 27 ms (after one name conflict and one retry) |
-| Replacement-create-to-start | 91 ms |
-| Replacement-start-to-first-successful-lease | 831 ms |
-| Replacement-create-to-first-successful-lease | 922 ms |
-| Lease-to-restored-data-path | 83 ms |
+| Cold sidecar-create-to-first-successful-lease | 314-386 ms across three uninterrupted pairs |
+| Kill-to-lease-EOF | 10 ms |
+| Lease-EOF-to-sidecar-exit | 27 ms |
+| Sidecar die-to-name-creatable | 30 ms (after one name conflict and one retry) |
+| Replacement-create-to-start | 100 ms |
+| Replacement-start-to-first-successful-lease | 825 ms |
+| Replacement-create-to-first-successful-lease | 925 ms |
+| Lease-to-restored-data-path | 54 ms |
 | Observed lease retry gap | 1 s (the helper's configured interval, across 2 lease-loop steps) |
 | Spike-only watchdog | 60 s, the replacement's initial-lease failure bound |
 
-A fourth cold-start sample, 369 ms, is excluded from the range above: its window deliberately contains the phase 2
-security inspection and host probe, so it is an upper bound rather than a cold-start measurement.
+A fourth cold-start sample, 761 ms, is excluded from the range above: its window deliberately contains the phase 2
+security inspection, the two control containers, and the host probe, so it is an upper bound rather than a
+cold-start measurement.
+
+These are single-run values from the final harness. Their spread across runs is real but small, and none of them is
+close to a threshold the verdict depends on.
 
 The recovery lease is dominated by the helper's 1-second retry gap, not by Docker: the replacement bound its
 sockets long before the session's next attempt. That is exactly the dependency the design's timeout inequality
@@ -345,14 +356,16 @@ exists to protect, and it is why the feature execution plan must derive its valu
 
 1. Host-loopback reachability — PASS. A confined host-network sidecar running as uid 1000 reached a sentinel bound
    to `127.0.0.1` only, while the identical container on the default bridge network could not.
-2. Shared socket ownership — PASS. A host `0600` socket owned by `1000:1000` was seen inside Sysbox as
-   `srw------- 1 1000 1000`, and the nonce crossed both hops.
-3. Concurrent-create arbitration — PASS. Two racing launchers left exactly one session, one sidecar, one generation.
-4. Launcher-death survival — PASS. The session, sidecar, lease, and data path survived the launcher's exit.
-5. Lease closure — PASS. The lease closed 20 ms after `docker kill`, and the sidecar cleaned up and exited with no
+2. Shared socket ownership — PASS. The session asserted from inside Sysbox that it runs as `1000:1000` and that the
+   socket is `0600` owned by `1000:1000`, then the nonce crossed both hops.
+3. Concurrent-create arbitration — PASS. Two launchers, held at a barrier one call short of the contested create,
+   left exactly one session, one sidecar, one generation.
+4. Launcher-death survival — PASS. The launcher was `SIGKILL`ed mid-command; the command, session, sidecar, lease,
+   and data path all survived.
+5. Lease closure — PASS. The lease closed 10 ms after `docker kill`, and the sidecar cleaned up and exited with no
    Docker access.
-6. Sidecar restart — PASS. The generation stayed at `device=78 inode=1658`, and the replacement recovered under the
-   same name from the session's image ID.
+6. Sidecar restart — PASS. The generation inode was unchanged, and the replacement recovered under the same name
+   from the session's image ID.
 7. Generation cleanup — PASS. A departing sidecar removed only its own generation while the newer sibling kept
    serving.
 
@@ -383,6 +396,35 @@ every number above is from the corrected run. What changed:
 
 Nothing about the verdict rests on the corrected values: the requirements were decided by observed lifecycle events
 and byte-path assertions, not by their durations.
+
+### 2026-07-17: Codex Review and Second Re-Run
+
+An independent read-only review by Codex (`gpt-5.6-sol`, effort `xhigh`) of the first five commits returned
+**REQUEST CHANGES**, confidence HIGH: requirements 2, 3 and 4 could pass without exercising everything they claimed.
+It independently reported the two timing defects already fixed above. Its three new findings were accepted in full,
+because each was right, and the spike was re-run:
+
+- R3 did not synchronize the contested create. The single barrier released both attempts *before* each built its
+  candidate sidecar, roughly 300 ms of work, so one attempt could win the name outright before the other tried and
+  an ordinary sequential conflict would look like arbitration. A second barrier now holds each attempt with its
+  channel already bound, one call short of the session create.
+- R2 logged the container-side identity instead of asserting it. `id -u` and `ls -ln` were only required to exit
+  zero and were then recorded as facts, so a socket presented as `root:root` to a root process would still have
+  passed. A `session-check` helper mode now asserts the effective UID/GID and the socket's type, mode and ownership
+  inside the session before the nonce runs.
+- R4 proved a clean handoff, not launcher death. The child returned normally with no command running. It now holds
+  a `docker exec` command and is `SIGKILL`ed with its process group mid-command.
+
+Two harness bugs surfaced while fixing R4, both found by running the spike repeatedly rather than once:
+
+- The held launcher parked on an empty `select`, which trips Go's all-goroutines-asleep detector and killed the
+  launcher before the orchestrator could. It now waits on its attached command, which is both correct and what a
+  launcher actually does. This made R4 fail in 2 of 3 runs.
+- The orchestrator read `Cmd.ProcessState` and a plain `bytes.Buffer` while `Wait` and `os/exec`'s copy goroutines
+  wrote them. Liveness now comes from a channel and child output through a mutex-guarded buffer.
+
+Reproducibility after the fixes: 9 consecutive passing runs, plus one clean run under `-race`. The verdict is
+unchanged.
 
 ### 2026-07-17: Disposal and Final Gates
 
