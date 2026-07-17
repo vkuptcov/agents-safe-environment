@@ -278,9 +278,11 @@ func (docker *DockerLauncher) Launch(
 
 	containerID, userMounts, err := attempt.acquireContainer(ctx, resolution)
 	if err != nil {
-		// A candidate this attempt allocated and never used is this attempt's to clean up.
-		if removeErr := attempt.hostMCP.removeCandidate(); removeErr != nil {
-			return errors.Join(err, removeErr)
+		// A candidate this attempt allocated and never handed off is this attempt's to unwind:
+		// stop its sidecar promptly rather than leaving it to its initial-lease timeout, and remove
+		// its generation directory.
+		if cleanupErr := attempt.cleanupCandidate(ctx); cleanupErr != nil {
+			return errors.Join(err, cleanupErr)
 		}
 		return err
 	}

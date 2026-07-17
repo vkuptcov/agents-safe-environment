@@ -47,6 +47,10 @@ type hostMCPPlan struct {
 	// attempt adopts a running session's channel instead, because a launcher removes only what its
 	// own attempt created.
 	candidate bool
+	// sidecarStarted records that this attempt created and started its candidate sidecar, so a
+	// launch that fails afterwards can stop it promptly instead of leaving it to its initial-lease
+	// timeout.
+	sidecarStarted bool
 }
 
 // removeCandidate discards a generation this attempt allocated and then did not use.
@@ -55,6 +59,25 @@ func (forwarding hostMCPPlan) removeCandidate() error {
 		return nil
 	}
 	return forwarding.channel.Remove()
+}
+
+// cleanupCandidate unwinds a candidate this attempt allocated but did not hand off: it stops the
+// candidate sidecar it started and removes the generation directory it created.
+//
+// It runs on every failure after a candidate exists. Without it, a launch that fails between sidecar
+// creation and handoff would leave the sidecar running until its 60-second initial-lease timeout;
+// with it, the sidecar is stopped at once. It removes only this attempt's own resources and adopts
+// nothing, so a launch that already adopted a running session's channel is left untouched.
+func (attempt *launchAttempt) cleanupCandidate(ctx context.Context) error {
+	if !attempt.hostMCP.candidate {
+		return nil
+	}
+	var stopErr error
+	if attempt.hostMCP.sidecarStarted {
+		name := sidecarName(attempt.projectKey, attempt.hostMCP.channel)
+		stopErr = attempt.stopSidecar(ctx, name)
+	}
+	return errors.Join(stopErr, attempt.hostMCP.removeCandidate())
 }
 
 // sidecarName is the relay sidecar's deterministic name.
@@ -96,6 +119,23 @@ func (attempt *launchAttempt) planHostMCP(resolution userMountResolution) error 
 	return nil
 }
 
+// reallocateHostMCPCandidate allocates a fresh generation for the same endpoint set, after a
+// previous candidate was discarded. Every session creation gets a new random generation; a
+// discarded one is never reused.
+func (attempt *launchAttempt) reallocateHostMCPCandidate() error {
+	if attempt.hostMCP.set.Empty() {
+		return nil
+	}
+	channel, err := hostmcp.NewChannel(
+		attempt.docker.lookupEnv(), attempt.projectKey, len(attempt.hostMCP.set.Endpoints),
+	)
+	if err != nil {
+		return err
+	}
+	attempt.hostMCP = hostMCPPlan{set: attempt.hostMCP.set, channel: channel, candidate: true}
+	return nil
+}
+
 // resolveHostMCPImage pins this launch to one immutable image ID, so the session container and its
 // sidecar cannot end up on different builds of a private protocol. It runs only on the non-empty
 // path: with no endpoints there is no sidecar and no protocol, so the resolution has no purpose.
@@ -124,6 +164,8 @@ func (attempt *launchAttempt) createSessionWithHostMCP(
 		); err != nil {
 			return "", false, err
 		}
+		// The candidate sidecar is now this attempt's to clean up if the launch fails from here.
+		attempt.hostMCP.sidecarStarted = true
 	}
 	containerID, conflict, err := attempt.createContainer(ctx, userMounts)
 	if err != nil || conflict {
@@ -158,16 +200,16 @@ func (attempt *launchAttempt) printForwardedEndpoints() {
 }
 
 // discardHostMCPCandidate stops and awaits only this attempt's own sidecar and removes only its own
-// generation. It adopts nothing: the winner's resources are not this attempt's to touch.
+// generation, for the race loser that must keep its candidate transient. It adopts nothing: the
+// winner's resources are not this attempt's to touch. It leaves the plan marked as a candidate so a
+// later failure in the same launch still cleans up, but clears sidecarStarted because the sidecar is
+// already gone.
 func (attempt *launchAttempt) discardHostMCPCandidate(ctx context.Context) error {
-	if attempt.hostMCP.set.Empty() || !attempt.hostMCP.candidate {
-		return nil
-	}
-	name := sidecarName(attempt.projectKey, attempt.hostMCP.channel)
-	if err := attempt.stopSidecar(ctx, name); err != nil {
+	if err := attempt.cleanupCandidate(ctx); err != nil {
 		return err
 	}
-	return attempt.hostMCP.removeCandidate()
+	attempt.hostMCP.sidecarStarted = false
+	return nil
 }
 
 // reuseHostMCPAfterWait re-inspects a container that became reusable while this attempt waited, and

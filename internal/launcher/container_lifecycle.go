@@ -96,6 +96,11 @@ func (attempt *launchAttempt) acquireContainer(
 			}
 			return containerID, userMounts, nil
 		}
+		// The winner vanished before it could be adopted, so this attempt will try to create again.
+		// Its previous candidate generation was just removed, so allocate a fresh one before retrying.
+		if err := attempt.reallocateHostMCPCandidate(); err != nil {
+			return "", UserMounts{}, err
+		}
 		if err := waitForContainerPoll(ctx); err != nil {
 			return "", UserMounts{}, err
 		}
