@@ -290,12 +290,20 @@ container's launcher binary.
 Every `codex-safe` invocation runs this process through the session wrapper:
 
 ```text
-codex-safe-session run -- codex [forwarded Codex arguments]
+codex-safe-session run -- codex --sandbox danger-full-access [forwarded Codex arguments]
 ```
 
 The process uses the invoking host UID and GID, the selected project directory as its working directory, the
 container-local `HOME` and `CODEX_HOME`, and the launcher's terminal streams. Arguments stay separate argv elements;
 the launcher does not invoke a shell. Start failures and Codex exit status propagate through the wrapper and launcher.
+
+The launcher selects `--sandbox danger-full-access` by default. The Sysbox container is the isolation boundary, so
+Codex's own bubblewrap-based inner sandbox is redundant, and the image intentionally ships no bubblewrap on `PATH`.
+Without the default Codex reports that it "could not find bubblewrap" and falls back to a bundled copy; the explicit
+sandbox mode keeps Codex fully functional inside the container without weakening the outer boundary. The default is
+suppressed when the forwarded arguments already select a policy through `-s`/`--sandbox` or
+`--dangerously-bypass-approvals-and-sandbox` (or `--full-auto` on a subcommand), so an explicit user choice is never
+overridden. `agents-safe` runs an arbitrary command and never adds this flag.
 
 `agents-safe` uses the same identity, working directory, terminal streams, and wrapper, but replaces the Codex argv
 with the required command argv and treats the Codex home as optional: it mounts one and sets `CODEX_HOME` only when a

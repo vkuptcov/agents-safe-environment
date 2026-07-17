@@ -12,10 +12,10 @@ func TestCodexBinaryPathIsImageOwnedAbsolute(t *testing.T) {
 	}
 }
 
-func TestDefaultCodexCommandPrependsBinaryPath(t *testing.T) {
+func TestDefaultCodexCommandPrependsBinaryPathAndSandbox(t *testing.T) {
 	t.Parallel()
 	got := DefaultCodexCommand([]string{"exec", "--model", "gpt-5"})
-	want := []string{CodexBinaryPath, "exec", "--model", "gpt-5"}
+	want := []string{CodexBinaryPath, "--sandbox", "danger-full-access", "exec", "--model", "gpt-5"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DefaultCodexCommand() = %#v, want %#v", got, want)
 	}
@@ -24,8 +24,31 @@ func TestDefaultCodexCommandPrependsBinaryPath(t *testing.T) {
 func TestDefaultCodexCommandInteractiveWithoutArguments(t *testing.T) {
 	t.Parallel()
 	got := DefaultCodexCommand(nil)
-	want := []string{CodexBinaryPath}
+	want := []string{CodexBinaryPath, "--sandbox", "danger-full-access"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DefaultCodexCommand(nil) = %#v, want %#v", got, want)
+	}
+}
+
+func TestDefaultCodexCommandKeepsExplicitSandboxChoice(t *testing.T) {
+	t.Parallel()
+	cases := map[string][]string{
+		"short flag":        {"-s", "read-only"},
+		"long flag":         {"--sandbox", "workspace-write"},
+		"short equals":      {"-s=read-only"},
+		"long equals":       {"--sandbox=workspace-write"},
+		"full auto":         {"--full-auto"},
+		"bypass sandbox":    {"--dangerously-bypass-approvals-and-sandbox"},
+		"flag after subcmd": {"exec", "--sandbox", "read-only"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := DefaultCodexCommand(args)
+			want := append([]string{CodexBinaryPath}, args...)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("DefaultCodexCommand(%#v) = %#v, want %#v", args, got, want)
+			}
+		})
 	}
 }
