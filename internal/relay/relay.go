@@ -97,7 +97,7 @@ func Run(ctx context.Context, config Config) error {
 	}
 	defer channel.close()
 
-	established, closed := channel.serveControl()
+	established, leaseEnded := channel.serveControl()
 	channel.serveEndpoints(ctx, config, logger)
 	logger.Printf("relay bound %d endpoint socket(s) and %s", len(config.Endpoints), mcpchannel.ControlSocketName)
 
@@ -112,12 +112,19 @@ func Run(ctx context.Context, config Config) error {
 	}
 
 	select {
-	case <-closed:
+	case outcome := <-leaseEnded:
+		if outcome.err != nil {
+			// A non-EOF read error is an internal failure, not proof the session is gone. The live
+			// session may still hold this generation's bind mount, so its inode must survive for a
+			// replacement sidecar to rebind. Only clean EOF permits removal.
+			logger.Printf("relay lease ended with an error, preserving the generation directory: %v", outcome.err)
+			return fmt.Errorf("host MCP lease read failed: %w", outcome.err)
+		}
 		logger.Printf("relay observed lease EOF; the session is gone")
 		// Close the sockets before unlinking the directory that holds them.
 		channel.close()
-		if err := os.RemoveAll(config.Generation); err != nil {
-			return fmt.Errorf("remove generation %q: %w", config.Generation, err)
+		if err := removeGeneration(config.Generation); err != nil {
+			return err
 		}
 		logger.Printf("relay removed its generation directory")
 		return nil
@@ -125,6 +132,22 @@ func Run(ctx context.Context, config Config) error {
 		logger.Printf("relay stopping while leased; preserving the generation directory")
 		return nil
 	}
+}
+
+// removeGeneration removes the sidecar's own generation directory, and only that.
+//
+// The sidecar mounts the project runtime parent, so an unconstrained RemoveAll on a bad path could
+// reach far more than one generation. The generation must therefore be a named child of a parent:
+// a path with no parent, or one whose parent is itself, is refused rather than removed.
+func removeGeneration(generation string) error {
+	parent := filepath.Dir(generation)
+	if parent == generation || filepath.Base(generation) == "." || filepath.Base(generation) == string(filepath.Separator) {
+		return fmt.Errorf("refusing to remove %q: it is not a named generation directory", generation)
+	}
+	if err := os.RemoveAll(generation); err != nil {
+		return fmt.Errorf("remove generation %q: %w", generation, err)
+	}
+	return nil
 }
 
 // socketPaths returns every path this sidecar owns, endpoint sockets first and control.sock last.
@@ -159,13 +182,24 @@ func removeStaleSockets(paths []string, logger *log.Logger) error {
 	return nil
 }
 
+// leaseOutcome is how an established lease ended. A nil err is clean EOF, which alone proves the
+// session is gone and permits removing the generation.
+type leaseOutcome struct {
+	err error
+}
+
 // channel is the bound socket set.
 type channel struct {
-	endpoints []net.Listener
-	control   net.Listener
-	paths     []string
-	logger    *log.Logger
-	closeOnce sync.Once
+	endpoints    []net.Listener
+	endpointPath []string
+	control      net.Listener
+	controlPath  string
+	logger       *log.Logger
+	closeOnce    sync.Once
+
+	// shuttingDown is set before any listener is closed, so a probe accepted during shutdown can
+	// never answer Ready even though a lease is still nominally held.
+	shuttingDown atomic.Bool
 }
 
 // bind binds every endpoint socket and then control.sock, in that order, and starts no accept loop.
@@ -181,7 +215,7 @@ func bind(config Config, logger *log.Logger) (*channel, error) {
 			return nil, fmt.Errorf("bind endpoint socket %q: %w", path, err)
 		}
 		bound.endpoints = append(bound.endpoints, listener)
-		bound.paths = append(bound.paths, path)
+		bound.endpointPath = append(bound.endpointPath, path)
 	}
 	controlPath := filepath.Join(config.Generation, mcpchannel.ControlSocketName)
 	control, err := listenUnix(controlPath)
@@ -190,7 +224,7 @@ func bind(config Config, logger *log.Logger) (*channel, error) {
 		return nil, fmt.Errorf("bind control socket %q: %w", controlPath, err)
 	}
 	bound.control = control
-	bound.paths = append(bound.paths, controlPath)
+	bound.controlPath = controlPath
 	return bound, nil
 }
 
@@ -209,74 +243,101 @@ func listenUnix(path string) (net.Listener, error) {
 }
 
 // close removes this sidecar's socket entries and preserves the generation directory.
+//
+// The order mirrors the design's "control removed first" rule, which is what keeps readiness
+// truthful during shutdown: a launcher must never read Ready from a channel whose endpoints are
+// already closing. shuttingDown is set first so a probe in flight answers not-ready; control.sock is
+// removed next so no new probe can arrive; the endpoint sockets go last.
 func (bound *channel) close() {
 	bound.closeOnce.Do(func() {
-		for _, listener := range bound.endpoints {
-			_ = listener.Close()
-		}
+		bound.shuttingDown.Store(true)
+
 		if bound.control != nil {
 			_ = bound.control.Close()
 		}
-		// Closing a Go unix listener unlinks the path it created; make removal explicit so a failed
-		// attempt cannot leave a partial endpoint set behind.
-		for _, path := range bound.paths {
-			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				bound.logger.Printf("relay could not remove %s: %v", filepath.Base(path), err)
-			}
+		removePath(bound.controlPath, bound.logger)
+
+		for index, listener := range bound.endpoints {
+			_ = listener.Close()
+			removePath(bound.endpointPath[index], bound.logger)
 		}
 	})
 }
 
+// removePath unlinks a socket path. A Go unix listener unlinks on close, so this makes removal
+// explicit for a path whose listener never bound or was closed already.
+func removePath(path string, logger *log.Logger) {
+	if path == "" {
+		return
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		logger.Printf("relay could not remove %s: %v", filepath.Base(path), err)
+	}
+}
+
 // serveControl answers probes and accepts exactly one lease. It reports when that lease is
-// established and when it reaches EOF.
-func (bound *channel) serveControl() (established <-chan struct{}, closed <-chan struct{}) {
+// established and how it ended: a nil error is clean EOF, the only outcome that permits removing the
+// generation.
+func (bound *channel) serveControl() (established <-chan struct{}, ended <-chan leaseOutcome) {
 	establishedSignal := make(chan struct{})
-	closedSignal := make(chan struct{})
+	endedSignal := make(chan leaseOutcome, 1)
 	go func() {
 		var leaseHeld atomic.Bool
-		var establishedOnce, closedOnce sync.Once
+		var establishedOnce sync.Once
 		for {
 			connection, err := bound.control.Accept()
 			if err != nil {
+				// A closed listener is the expected shutdown path; anything else ends the loop too,
+				// but there is nothing more this control socket can serve either way.
 				return
 			}
-			go func() {
-				role := make([]byte, 1)
-				_ = connection.SetReadDeadline(time.Now().Add(30 * time.Second))
-				if _, err := io.ReadFull(connection, role); err != nil {
-					_ = connection.Close()
-					return
-				}
-				_ = connection.SetReadDeadline(time.Time{})
-				switch role[0] {
-				case mcpchannel.RoleProbe:
-					// Ready only once the lease exists, so a launcher never starts a command against
-					// a channel whose container side has not attached yet.
-					answer := mcpchannel.NotReady
-					if leaseHeld.Load() {
-						answer = mcpchannel.Ready
-					}
-					_, _ = connection.Write([]byte{answer})
-					_ = connection.Close()
-				case mcpchannel.RoleLease:
-					if !leaseHeld.CompareAndSwap(false, true) {
-						_, _ = connection.Write([]byte{mcpchannel.Refused})
-						_ = connection.Close()
-						return
-					}
-					establishedOnce.Do(func() { close(establishedSignal) })
-					// The lease sends no further data; its EOF is what this sidecar waits for.
-					_, _ = io.Copy(io.Discard, connection)
-					_ = connection.Close()
-					leaseHeld.Store(false)
-					closedOnce.Do(func() { close(closedSignal) })
-				default:
-					_ = connection.Close()
-				}
-			}()
+			go bound.handleControl(connection, &leaseHeld, &establishedOnce, establishedSignal, endedSignal)
 		}
 	}()
-	return establishedSignal, closedSignal
+	return establishedSignal, endedSignal
+}
+
+func (bound *channel) handleControl(
+	connection net.Conn,
+	leaseHeld *atomic.Bool,
+	establishedOnce *sync.Once,
+	establishedSignal chan struct{},
+	endedSignal chan leaseOutcome,
+) {
+	role := make([]byte, 1)
+	_ = connection.SetReadDeadline(time.Now().Add(30 * time.Second))
+	if _, err := io.ReadFull(connection, role); err != nil {
+		_ = connection.Close()
+		return
+	}
+	_ = connection.SetReadDeadline(time.Time{})
+	switch role[0] {
+	case mcpchannel.RoleProbe:
+		// Ready only once the lease exists and the channel is not shutting down, so a launcher never
+		// starts a command against a channel whose container side has not attached or is closing.
+		answer := mcpchannel.NotReady
+		if leaseHeld.Load() && !bound.shuttingDown.Load() {
+			answer = mcpchannel.Ready
+		}
+		_, _ = connection.Write([]byte{answer})
+		_ = connection.Close()
+	case mcpchannel.RoleLease:
+		if !leaseHeld.CompareAndSwap(false, true) {
+			_, _ = connection.Write([]byte{mcpchannel.Refused})
+			_ = connection.Close()
+			return
+		}
+		establishedOnce.Do(func() { close(establishedSignal) })
+		// The lease sends no further data. A clean read to EOF returns nil and proves the session is
+		// gone; any read error is an internal failure that must preserve the generation.
+		_, copyErr := io.Copy(io.Discard, connection)
+		_ = connection.Close()
+		leaseHeld.Store(false)
+		// The channel is buffered and written once; a second lease cannot reach here.
+		endedSignal <- leaseOutcome{err: copyErr}
+	default:
+		_ = connection.Close()
+	}
 }
 
 // serveEndpoints starts accepting on every endpoint socket. It runs only after the whole set plus
@@ -285,27 +346,54 @@ func (bound *channel) serveEndpoints(ctx context.Context, config Config, logger 
 	for index, listener := range bound.endpoints {
 		go func(index int, listener net.Listener) {
 			endpoint := config.Endpoints[index]
-			for {
-				connection, err := listener.Accept()
+			acceptLoop(listener, endpoint, logger, func(connection net.Conn) {
+				defer connection.Close()
+				// The sidecar shares the host network namespace, so this reaches the host's own
+				// loopback. The configured host is passed to the resolver exactly as written, so
+				// localhost resolves as it would for host Codex.
+				target, err := config.dial(ctx, endpoint)
 				if err != nil {
+					logger.Printf("relay dial %s failed: %v", endpoint, err)
 					return
 				}
-				go func() {
-					defer connection.Close()
-					// The sidecar shares the host network namespace, so this reaches the host's own
-					// loopback. The configured host is passed to the resolver exactly as written, so
-					// localhost resolves as it would for host Codex.
-					target, err := config.dial(ctx, endpoint)
-					if err != nil {
-						logger.Printf("relay dial %s failed: %v", endpoint, err)
-						return
-					}
-					defer target.Close()
-					logger.Printf("relay connected to %s", endpoint)
-					mcpchannel.Pipe(connection, target)
-					logger.Printf("relay closed a connection to %s", endpoint)
-				}()
-			}
+				defer target.Close()
+				logger.Printf("relay connected to %s", endpoint)
+				mcpchannel.Pipe(connection, target)
+				logger.Printf("relay closed a connection to %s", endpoint)
+			})
 		}(index, listener)
+	}
+}
+
+// acceptLoop serves one listener until it is closed, handling each connection in its own goroutine.
+//
+// A closed listener is the expected end and stops the loop silently. A temporary error -- file-
+// descriptor pressure is the realistic one -- must not permanently disable an endpoint that is still
+// bound and still reported ready, so the loop backs off briefly and continues rather than returning.
+func acceptLoop(listener net.Listener, label string, logger *log.Logger, handle func(net.Conn)) {
+	const (
+		backoffStart = 5 * time.Millisecond
+		backoffMax   = time.Second
+	)
+	backoff := backoffStart
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			if temporary, ok := err.(interface{ Temporary() bool }); ok && temporary.Temporary() {
+				logger.Printf("relay accept on %s failed temporarily, retrying in %s: %v", label, backoff, err)
+				time.Sleep(backoff)
+				if backoff *= 2; backoff > backoffMax {
+					backoff = backoffMax
+				}
+				continue
+			}
+			logger.Printf("relay accept on %s stopped: %v", label, err)
+			return
+		}
+		backoff = backoffStart
+		go handle(connection)
 	}
 }

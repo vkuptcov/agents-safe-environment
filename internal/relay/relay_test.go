@@ -1,7 +1,6 @@
 package relay_test
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -42,13 +41,17 @@ func newSentinel(t *testing.T) *sentinel {
 			if err != nil {
 				return
 			}
+			server.dialed.Add(1)
 			go func() {
 				defer connection.Close()
-				line, err := bufio.NewReader(connection).ReadString('\n')
+				// Read to EOF, not to a newline: the reply is written only after the peer half-closes,
+				// so a forwarder that failed to propagate the half-close would hang here and the
+				// round trip would time out. This is what makes the half-close assertable.
+				request, err := io.ReadAll(connection)
 				if err != nil {
 					return
 				}
-				_, _ = fmt.Fprintf(connection, "echo:%s", line)
+				_, _ = fmt.Fprintf(connection, "echo:%s", strings.TrimSpace(string(request)))
 			}()
 		}
 	}()
@@ -161,29 +164,64 @@ func TestRelayCopiesBytesBothWaysWithHalfClose(t *testing.T) {
 	require.NoError(t, <-done, "lease EOF ends the relay cleanly")
 }
 
-// control.sock cannot exist while the endpoint set is partial: that is what makes it a truthful
-// readiness signal.
-func TestRelayBindsControlSocketLastAndPartialFailureRemovesTheRest(t *testing.T) {
-	generationDir := generation(t)
+// A partial bind must remove the endpoint sockets it already bound, and control.sock must never be
+// published.
+//
+// The failure is injected at control.sock's bind, not before it: the generation directory is sized
+// so e0.sock (7 characters) fits inside the 108-byte sockaddr_un limit but control.sock (12
+// characters) overflows it. e0.sock therefore binds successfully and must then be removed when
+// control.sock fails, which is the "remove what was bound" path -- and it is a real failure the
+// launcher's own path-length preflight exists to prevent.
+func TestRelayPartialBindRemovesWhatItBoundAndNeverPublishesControl(t *testing.T) {
+	root, err := os.MkdirTemp("", "cs")
+	require.NoError(t, err, "the short root must be created")
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 
-	// Occupy the second endpoint's path with a non-socket, so its bind fails.
-	blocked := filepath.Join(generationDir, mcpchannel.SocketName(1))
-	require.NoError(t, os.Mkdir(blocked, 0o700), "the blocking entry must be created")
+	// Size the generation directory so dir/e0.sock (len 7) stays under 108 while dir/control.sock
+	// (len 12) reaches it. len(dir) must be in [95, 99]; target the top of that window.
+	const generationLength = 99
+	pad := generationLength - len(root) - 1 // minus the separator before the generation name
+	require.Greater(t, pad, 0, "the temp root is unexpectedly long: %d", len(root))
+	generationDir := filepath.Join(root, "g"+strings.Repeat("x", pad-1))
+	require.Len(t, generationDir, generationLength, "the generation path must be sized exactly")
+	require.NoError(t, os.Mkdir(generationDir, 0o700), "the sized generation directory must be created")
 
-	err := relay.Run(context.Background(), relay.Config{
+	require.Less(t, len(filepath.Join(generationDir, mcpchannel.SocketName(0))), 108,
+		"e0.sock must fit the limit")
+	require.GreaterOrEqual(t, len(controlPath(generationDir)), 108, "control.sock must overflow the limit")
+
+	err = relay.Run(context.Background(), relay.Config{
 		Generation:          generationDir,
-		Endpoints:           []string{"127.0.0.1:1", "127.0.0.1:2"},
+		Endpoints:           []string{"127.0.0.1:1"},
 		InitialLeaseTimeout: testBound,
 		Log:                 log.New(io.Discard, "", 0),
 	})
 	require.Error(t, err, "a partial bind must exit nonzero")
+	require.Contains(t, err.Error(), "control socket", "the failure is the control-socket bind")
 
 	require.NoFileExists(t, filepath.Join(generationDir, mcpchannel.SocketName(0)),
-		"a partial bind removes the sockets it already bound")
-	require.NoFileExists(t, controlPath(generationDir),
-		"control.sock is never published when the endpoint set is partial")
+		"the endpoint socket that did bind must be removed when the attempt fails")
+	require.NoFileExists(t, controlPath(generationDir), "control.sock is never published on a partial bind")
 	require.DirExists(t, generationDir, "a failed attempt preserves the generation directory")
-	require.DirExists(t, blocked, "an unexpected non-socket entry is never removed")
+}
+
+// A non-socket entry where an endpoint socket belongs fails startup and is never removed, because a
+// live session's directory is bind-mounted here and deleting an unrecognized entry is not the
+// relay's call.
+func TestRelayRefusesToRemoveANonSocketEntry(t *testing.T) {
+	generationDir := generation(t)
+	intruder := filepath.Join(generationDir, mcpchannel.SocketName(0))
+	require.NoError(t, os.Mkdir(intruder, 0o700), "a non-socket entry must occupy the endpoint path")
+
+	err := relay.Run(context.Background(), relay.Config{
+		Generation:          generationDir,
+		Endpoints:           []string{"127.0.0.1:1"},
+		InitialLeaseTimeout: testBound,
+		Log:                 log.New(io.Discard, "", 0),
+	})
+	require.Error(t, err, "an unexpected non-socket entry must fail startup")
+	require.Contains(t, err.Error(), "non-socket", "the diagnostic names the unexpected entry")
+	require.DirExists(t, intruder, "the relay never removes an entry it does not recognize")
 }
 
 func TestRelayProbeReportsNotReadyUntilTheLeaseExists(t *testing.T) {

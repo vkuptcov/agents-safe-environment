@@ -1,7 +1,6 @@
 package container
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -63,11 +62,13 @@ func newFakeSidecar(t *testing.T) *fakeSidecar {
 			}
 			go func() {
 				defer connection.Close()
-				line, err := bufio.NewReader(connection).ReadString('\n')
+				// Read to EOF, not to a newline, so a forwarder that dropped the half-close would hang
+				// here instead of replying: that is what makes half-close propagation assertable.
+				request, err := io.ReadAll(connection)
 				if err != nil {
 					return
 				}
-				_, _ = fmt.Fprintf(connection, "relayed:%s", line)
+				_, _ = fmt.Fprintf(connection, "relayed:%s", strings.TrimSpace(string(request)))
 			}()
 		}
 	}()
@@ -196,19 +197,24 @@ func TestHostMCPFailsWhenAnExplicitListenerCannotBind(t *testing.T) {
 }
 
 // The localhost legs are derived rather than requested, so one unavailable family is survivable.
-func TestHostMCPLocalhostBindsOneLegWhenTheOtherFamilyIsUnavailable(t *testing.T) {
+//
+// 240.0.0.1 is unassignable and its bind fails with "cannot assign requested address", the same
+// class of error addressFamilyUnavailable matches for a missing IPv6 stack, so it stands in for a
+// loopback leg whose family the container lacks. The skip must be logged, and the available leg must
+// still bind and serve.
+func TestHostMCPLocalhostSkipsAnUnavailableLegAndLogsIt(t *testing.T) {
 	sidecar := newFakeSidecar(t)
 	port := freePort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 240.0.0.1 is unassignable here, standing in for a loopback leg whose family the container
-	// lacks. The IPv4 leg must still bind and serve.
+	var logs strings.Builder
+	logger := log.New(&logs, "", 0)
 	endpoint := mcpchannel.Endpoint{
 		Listen: []string{net.JoinHostPort("127.0.0.1", port), net.JoinHostPort("240.0.0.1", port)},
 		Socket: sidecar.socket,
 	}
-	channel, err := startHostMCP(ctx, ctx, []mcpchannel.Endpoint{endpoint}, discardLog())
+	channel, err := startHostMCP(ctx, ctx, []mcpchannel.Endpoint{endpoint}, logger)
 	if err != nil {
 		t.Fatalf("a derived leg that cannot bind must be skipped, not fail serve: %v", err)
 	}
@@ -216,11 +222,73 @@ func TestHostMCPLocalhostBindsOneLegWhenTheOtherFamilyIsUnavailable(t *testing.T
 	if len(channel.listeners) != 1 {
 		t.Fatalf("listeners = %d, want only the available leg", len(channel.listeners))
 	}
+	if !strings.Contains(logs.String(), "skipping") || !strings.Contains(logs.String(), "240.0.0.1") {
+		t.Fatalf("the skipped leg must be logged, got %q", logs.String())
+	}
 	connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", port), testBound)
 	if err != nil {
 		t.Fatalf("the surviving leg must serve: %v", err)
 	}
 	_ = connection.Close()
+}
+
+// A localhost endpoint with both loopback families available binds both and forwards on each, which
+// is the ordinary case the skip above is the exception to.
+func TestHostMCPLocalhostBindsBothLoopbackLegs(t *testing.T) {
+	if !ipv6LoopbackAvailable(t) {
+		t.Skip("this host has no usable [::1], so the dual-bind case cannot be exercised")
+	}
+	sidecar := newFakeSidecar(t)
+	port := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	endpoint := mcpchannel.Endpoint{
+		Listen: []string{net.JoinHostPort("127.0.0.1", port), net.JoinHostPort("::1", port)},
+		Socket: sidecar.socket,
+	}
+	channel, err := startHostMCP(ctx, ctx, []mcpchannel.Endpoint{endpoint}, discardLog())
+	if err != nil {
+		t.Fatalf("both loopback legs must bind: %v", err)
+	}
+	defer channel.close()
+	if len(channel.listeners) != 2 {
+		t.Fatalf("listeners = %d, want both loopback legs", len(channel.listeners))
+	}
+	// Both concrete addresses must reach the one socket for this endpoint.
+	for _, address := range []string{net.JoinHostPort("127.0.0.1", port), net.JoinHostPort("::1", port)} {
+		connection, err := net.DialTimeout("tcp", address, testBound)
+		if err != nil {
+			t.Fatalf("leg %s must serve: %v", address, err)
+		}
+		_ = connection.Close()
+	}
+}
+
+// An explicit literal binds only itself, never a second family.
+func TestHostMCPLiteralBindsOnlyItself(t *testing.T) {
+	sidecar := newFakeSidecar(t)
+	port := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	endpoint := mcpchannel.Endpoint{Listen: []string{net.JoinHostPort("127.0.0.1", port)}, Socket: sidecar.socket}
+	channel, err := startHostMCP(ctx, ctx, []mcpchannel.Endpoint{endpoint}, discardLog())
+	if err != nil {
+		t.Fatalf("a literal endpoint must bind: %v", err)
+	}
+	defer channel.close()
+	if len(channel.listeners) != 1 {
+		t.Fatalf("a literal endpoint binds exactly one listener, got %d", len(channel.listeners))
+	}
+}
+
+func ipv6LoopbackAvailable(t *testing.T) bool {
+	t.Helper()
+	listener, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
 }
 
 // If no leg binds at all there is nothing to forward, and that is a launch failure.
@@ -260,8 +328,10 @@ func TestHostMCPInitialLeaseIsBoundedByTheBootstrapDeadline(t *testing.T) {
 	if !strings.Contains(err.Error(), "open host MCP lease") {
 		t.Fatalf("the diagnostic must name the lease, got %v", err)
 	}
-	if elapsed := time.Since(started); elapsed > testBound {
-		t.Fatalf("the initial lease must be bounded, waited %s", elapsed)
+	// The bound is the deadline itself, not merely "eventually". An implementation that ignored
+	// cancellation for several seconds must fail this, so allow only a small margin over 150ms.
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("the initial lease must return close to its 150ms deadline, waited %s", elapsed)
 	}
 }
 
@@ -287,12 +357,43 @@ func TestHostMCPReopensTheLeaseAfterTheSidecarDies(t *testing.T) {
 		if second == nil {
 			t.Fatal("the reopened lease must be a live connection")
 		}
-	case <-time.After(4 * leaseRetryInterval):
+	case <-time.After(4 * LeaseRetryInterval):
 		t.Fatal("serve must reopen the lease after the sidecar dies")
 	}
 
 	// Closing while the retry loop is live is the ordinary shutdown ordering.
 	channel.close()
+}
+
+// Closing the channel must terminate the lease retry loop even while every reconnect is failing --
+// which is exactly what happens once the sidecar has removed control.sock. Before the done signal,
+// the inner loop consulted only the parent context and would retry every 2s forever.
+func TestHostMCPCloseTerminatesLeaseRetry(t *testing.T) {
+	dir := shortRoot(t)
+	// No sidecar exists, so every attach the retry loop makes will fail.
+	channel := &hostMCPChannel{log: discardLog(), done: make(chan struct{})}
+
+	// Prime the loop with a lease that is already closed, so it drops straight into the failing
+	// retry loop rather than blocking on a live read.
+	local, remote := net.Pipe()
+	_ = remote.Close()
+	channel.lease = local
+
+	returned := make(chan struct{})
+	go func() {
+		channel.holdLease(context.Background(), filepath.Join(dir, mcpchannel.SocketName(0)))
+		close(returned)
+	}()
+
+	// Let it reach the failing retry loop, then close the channel.
+	time.Sleep(50 * time.Millisecond)
+	channel.close()
+
+	select {
+	case <-returned:
+	case <-time.After(4 * LeaseRetryInterval):
+		t.Fatal("close() must terminate the lease retry loop, not leave it spinning")
+	}
 }
 
 // An empty set is the zero-cost path.

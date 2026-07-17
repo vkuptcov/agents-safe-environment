@@ -21,19 +21,21 @@ const (
 	// value is the zero-cost path: no listener, no lease, and `serve` starts exactly as before.
 	hostMCPEnv = "CODEX_SAFE_HOST_MCP"
 
-	// leaseRetryInterval is how long `serve` waits between lease attempts. It must stay well below
+	// LeaseRetryInterval is how long `serve` waits between lease attempts. It must stay well below
 	// the sidecar's initial-lease timeout, or a replacement sidecar gives up before the session's
-	// next attempt and recovery livelocks.
-	leaseRetryInterval = 2 * time.Second
+	// next attempt and recovery livelocks. It is exported so the launcher can assert the design's
+	// timeout inequality across both packages in one place.
+	LeaseRetryInterval = 2 * time.Second
 
-	// preLeaseDeadline bounds account reconciliation, filesystem preparation, and the first lease
+	// PreLeaseDeadline bounds account reconciliation, filesystem preparation, and the first lease
 	// together.
 	//
 	// It is what makes the design's timeout ordering real rather than decorative. Nothing on this
 	// path is otherwise bounded, so without it a slow useradd or visudo could outlast the sidecar's
 	// initial-lease timeout, and no finite value on the sidecar side could prevent the session from
-	// never being leased.
-	preLeaseDeadline = 20 * time.Second
+	// never being leased. It is the session's half of the cold-start bound; the launcher's
+	// session-create timeout is the other half.
+	PreLeaseDeadline = 20 * time.Second
 )
 
 // hostMCPEndpointsFromEnvironment decodes the forwarded endpoint set. A missing or empty variable
@@ -67,6 +69,11 @@ func hostMCPEndpointsFromEnvironment(lookup func(string) (string, bool)) ([]mcpc
 type hostMCPChannel struct {
 	listeners []net.Listener
 	log       *log.Logger
+
+	// done is closed by close(). The retry loop selects on it during every wait and every failed
+	// attach, so closing the channel terminates recovery even when reconnection keeps failing --
+	// which it always does once the sidecar has removed control.sock.
+	done chan struct{}
 
 	mutex  sync.Mutex
 	lease  net.Conn
@@ -112,9 +119,11 @@ func startHostMCP(
 	if len(endpoints) == 0 {
 		return nil, nil
 	}
-	channel := &hostMCPChannel{log: logger}
+	channel := &hostMCPChannel{log: logger, done: make(chan struct{})}
 	for _, endpoint := range endpoints {
-		if err := channel.listen(sessionContext, endpoint); err != nil {
+		// The bind honours the bootstrap deadline; the accept loops it starts run for the session's
+		// life under sessionContext.
+		if err := channel.listen(bootstrapContext, sessionContext, endpoint); err != nil {
 			channel.close()
 			return nil, err
 		}
@@ -139,11 +148,18 @@ func startHostMCP(
 // they are derived rather than requested, so at least one must bind and a leg whose address family
 // the container lacks is logged and skipped. Failing there would let an unrelated host setting break
 // every session for a user whose only mistake was writing the most natural form of the URL.
-func (channel *hostMCPChannel) listen(ctx context.Context, endpoint mcpchannel.Endpoint) error {
+func (channel *hostMCPChannel) listen(
+	bindContext context.Context,
+	serveContext context.Context,
+	endpoint mcpchannel.Endpoint,
+) error {
 	derived := len(endpoint.Listen) > 1
 	bound := 0
+	var config net.ListenConfig
 	for _, address := range endpoint.Listen {
-		listener, err := net.Listen("tcp", address)
+		// The bind observes the bootstrap deadline; a resolver or bind that would otherwise block
+		// past it is interrupted rather than allowed to outlast the cold-start bound.
+		listener, err := config.Listen(bindContext, "tcp", address)
 		if err != nil {
 			if derived && addressFamilyUnavailable(err) {
 				channel.log.Printf("host MCP: skipping %s, its address family is unavailable here", address)
@@ -153,7 +169,7 @@ func (channel *hostMCPChannel) listen(ctx context.Context, endpoint mcpchannel.E
 		}
 		channel.listeners = append(channel.listeners, listener)
 		bound++
-		go channel.forward(ctx, listener, endpoint.Socket, address)
+		go channel.forward(serveContext, listener, endpoint.Socket, address)
 	}
 	if bound == 0 {
 		return fmt.Errorf("no host MCP listener could bind for %s", strings.Join(endpoint.Listen, ", "))
@@ -173,15 +189,36 @@ func addressFamilyUnavailable(err error) bool {
 		strings.Contains(message, "cannot assign requested address")
 }
 
-// forward accepts on one container address and pipes each connection to this endpoint's socket. A
-// dial failure affects only the connection that caused it, so a host MCP server that restarts is
-// reachable again on the next connection without restarting the container.
+// forward accepts on one container address and pipes each connection to this endpoint's socket.
+//
+// A dial failure affects only the connection that caused it, so a host MCP server that restarts is
+// reachable again on the next connection without restarting the container. A closed listener ends
+// the loop; a temporary accept error backs off and continues rather than silently disabling a
+// listener that is still bound.
 func (channel *hostMCPChannel) forward(ctx context.Context, listener net.Listener, socket, address string) {
+	const (
+		backoffStart = 5 * time.Millisecond
+		backoffMax   = time.Second
+	)
+	backoff := backoffStart
 	for {
 		connection, err := listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			if temporary, ok := err.(interface{ Temporary() bool }); ok && temporary.Temporary() {
+				channel.log.Printf("host MCP: accept on %s failed temporarily, retrying in %s: %v", address, backoff, err)
+				time.Sleep(backoff)
+				if backoff *= 2; backoff > backoffMax {
+					backoff = backoffMax
+				}
+				continue
+			}
+			channel.log.Printf("host MCP: accept on %s stopped: %v", address, err)
 			return
 		}
+		backoff = backoffStart
 		go func() {
 			defer connection.Close()
 			var dialer net.Dialer
@@ -215,7 +252,7 @@ func dialLease(ctx context.Context, endpointSocket string, logger *log.Logger) (
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("open host MCP lease on %s: %w (last attempt: %v)", control, ctx.Err(), last)
-		case <-time.After(leaseRetryInterval):
+		case <-time.After(LeaseRetryInterval):
 		}
 	}
 }
@@ -250,12 +287,17 @@ func (channel *hostMCPChannel) holdLease(ctx context.Context, endpointSocket str
 		if ctx.Err() != nil {
 			return
 		}
-		channel.log.Printf("host MCP: lease lost; retrying every %s", leaseRetryInterval)
+		channel.log.Printf("host MCP: lease lost; retrying every %s", LeaseRetryInterval)
 		for {
+			// close() is checked on every wait, not only after a successful attach. Once the channel
+			// is closing, the sidecar has removed control.sock, so every attach below would fail and
+			// this loop would otherwise retry forever.
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(leaseRetryInterval):
+			case <-channel.done:
+				return
+			case <-time.After(LeaseRetryInterval):
 			}
 			connection, err := attachLease(ctx, control)
 			if err != nil {
@@ -275,11 +317,18 @@ func (channel *hostMCPChannel) close() {
 		return
 	}
 	channel.mutex.Lock()
+	alreadyClosed := channel.closed
 	channel.closed = true
 	lease := channel.lease
 	channel.lease = nil
 	channel.mutex.Unlock()
+	if alreadyClosed {
+		return
+	}
 
+	// Signal the retry loop before closing the lease, so a loop woken by the lease closing sees the
+	// channel is done rather than trying to reconnect to a sidecar that is gone.
+	close(channel.done)
 	if lease != nil {
 		_ = lease.Close()
 	}

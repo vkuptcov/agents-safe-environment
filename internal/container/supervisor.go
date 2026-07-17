@@ -75,7 +75,7 @@ func (supervisor *Supervisor) Serve(ctx context.Context) error {
 	// initial-lease timeout when Docker creates it, so an unbounded bootstrap could outlast that
 	// timeout and leave the session permanently unleased. This deadline is the session's half of the
 	// design's cold-start bound; the launcher bounds container creation as the other half.
-	bootstrapContext, cancelBootstrap := context.WithTimeout(ctx, preLeaseDeadline)
+	bootstrapContext, cancelBootstrap := context.WithTimeout(ctx, PreLeaseDeadline)
 	defer cancelBootstrap()
 	if err := reconcileContainerAccount(bootstrapContext, supervisor.config, supervisor.commands); err != nil {
 		return fmt.Errorf("reconcile container account: %w", err)
