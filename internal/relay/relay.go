@@ -302,35 +302,10 @@ func (bound *channel) serveEndpoints(ctx context.Context, config Config, logger 
 					}
 					defer target.Close()
 					logger.Printf("relay connected to %s", endpoint)
-					copyBothWays(connection, target)
+					mcpchannel.Pipe(connection, target)
 					logger.Printf("relay closed a connection to %s", endpoint)
 				}()
 			}
 		}(index, listener)
-	}
-}
-
-// copyBothWays moves bytes until each side closes, propagating a half-close rather than tearing the
-// peer down, so a request/response exchange completes in both directions. It never interprets what
-// it copies.
-func copyBothWays(first, second net.Conn) {
-	done := make(chan struct{}, 2)
-	go func() {
-		_, _ = io.Copy(first, second)
-		closeWrite(first)
-		done <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(second, first)
-		closeWrite(second)
-		done <- struct{}{}
-	}()
-	<-done
-	<-done
-}
-
-func closeWrite(connection net.Conn) {
-	if half, ok := connection.(interface{ CloseWrite() error }); ok {
-		_ = half.CloseWrite()
 	}
 }

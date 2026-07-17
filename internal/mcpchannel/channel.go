@@ -7,7 +7,11 @@
 // two ends cannot drift apart.
 package mcpchannel
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+	"net"
+)
 
 // ControlSocketName is bound last and removed first. Its existence is a truthful signal that the
 // whole endpoint set is bound, which is why nothing else may be named this.
@@ -42,4 +46,35 @@ type Endpoint struct {
 	Listen []string `json:"listen"`
 	// Socket is the absolute path, inside the session container, of this endpoint's socket.
 	Socket string `json:"socket"`
+}
+
+// Pipe moves bytes between the two hops of the channel until each side closes, propagating a
+// half-close rather than tearing the peer down, so a request/response exchange completes in both
+// directions.
+//
+// Both forwarders are byte pipes. Neither parses HTTP, MCP frames, or TLS, which is what lets
+// streamable HTTP, Server-Sent Events, and long-lived MCP sessions pass through unchanged and with
+// no timeout of their own.
+func Pipe(first, second net.Conn) {
+	done := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(first, second)
+		CloseWrite(first)
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(second, first)
+		CloseWrite(second)
+		done <- struct{}{}
+	}()
+	<-done
+	<-done
+}
+
+// CloseWrite half-closes a connection that supports it, so the peer sees EOF on its read side while
+// this side can still receive.
+func CloseWrite(connection net.Conn) {
+	if half, ok := connection.(interface{ CloseWrite() error }); ok {
+		_ = half.CloseWrite()
+	}
 }

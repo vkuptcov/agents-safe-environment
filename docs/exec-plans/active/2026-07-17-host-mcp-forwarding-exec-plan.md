@@ -165,7 +165,7 @@ Done when: `codex-safe-session relay` binds, leases, serves bytes, and cleans up
 
 ### Phase 5: Container Forwarders and Lease
 Purpose: Make the unmodified URL resolve inside the container and tie the sidecar's lifetime to `serve`.
-Status: to be done
+Status: done
 Done when: `serve` binds one listener per concrete address and holds the lease for the session's life.
 
 1. Implement the forwarders in `internal/container/`: listen, dial the endpoint socket, copy with half-close.
