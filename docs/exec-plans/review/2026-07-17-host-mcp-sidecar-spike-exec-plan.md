@@ -49,7 +49,8 @@ environment blocker, not a PASS or a product FAIL.
 
 - Harness ownership: use a temporary Go test in the existing `tests/smoke` module and its current Moby dependency.
 - Helper: add a temporary standard-library-only binary with relay, lease-client, socket-client, and launcher-helper
-  modes; do not change either Go module's dependency files.
+  modes; do not change either Go module's dependency files. The review pass added a fifth mode, `dial-check`, for
+  the requirement 1 control described under `Decisions Taken During Execution`.
 - Image fidelity: build a uniquely tagged throwaway image from `codex-safe-mvp:local` with the helper installed and a
   spike-only Tini-plus-helper entrypoint. Supply no default command, so each spike container selects its helper mode
   through its Docker command without changing the production Dockerfile.
@@ -59,9 +60,10 @@ environment blocker, not a PASS or a product FAIL.
 - Isolation: label every resource with `codex-safe.host-mcp-spike=<run-id>` and register cleanup before it starts.
 - Synchronization: use channels, sockets, container events, and bounded polling; never use an unverified sleep as a
   correctness barrier.
-- Timing evidence: measure elapsed durations with the host orchestrator's monotonic clock. Give each awaited lifecycle
-  transition a 60-second spike-only watchdog so a hung experiment terminates; these watchdogs are failure bounds, not
-  proposed production timeout values.
+- Timing evidence: measure elapsed durations with the host orchestrator's monotonic clock, except for Docker's own
+  `die`/`destroy` events, which use the daemon's timestamp for the reason given under `Decisions Taken During
+  Execution`. Give each awaited lifecycle transition a 60-second spike-only watchdog so a hung experiment
+  terminates; these watchdogs are failure bounds, not proposed production timeout values.
 - Evidence: keep raw logs temporary; record environment facts, seven result rows, image IDs, inode values, timings,
   cleanup results, and the final verdict in `Progress Notes` and the existing design review.
 - Disposal: remove the temporary test/helper sources and throwaway image after evidence is recorded. No spike code
@@ -315,7 +317,9 @@ helper that fails the spike on a negative duration rather than printing one.
   generation was created and proven to serve while the old cleanup was pending. On release, only the old generation
   disappeared: the newer generation, its sidecar, its parent, and its two-hop nonce path all survived.
 
-Timings, all measured on the host orchestrator's monotonic clock (raw, not proposed production values):
+Timings, all raw host-side measurements and none of them a proposed production value. The orchestrator's clock times
+its own calls and the relay's reported transitions; the Docker daemon's event timestamp times its own `die` and
+`destroy`, because those had already occurred by the time the orchestrator could read them.
 
 | Interval | Observed |
 | --- | --- |
@@ -340,7 +344,7 @@ exists to protect, and it is why the feature execution plan must derive its valu
 ### 2026-07-17: Verdict — PASS
 
 1. Host-loopback reachability — PASS. A confined host-network sidecar running as uid 1000 reached a sentinel bound
-   to `127.0.0.1` only.
+   to `127.0.0.1` only, while the identical container on the default bridge network could not.
 2. Shared socket ownership — PASS. A host `0600` socket owned by `1000:1000` was seen inside Sysbox as
    `srw------- 1 1000 1000`, and the nonce crossed both hops.
 3. Concurrent-create arbitration — PASS. Two racing launchers left exactly one session, one sidecar, one generation.
@@ -357,21 +361,11 @@ All seven requirements pass, so the design permits the feature execution plan. T
 [design review](../../reviews/feature-review/2026-07-17-host-mcp-forwarding-design-review.md). No assumption was
 falsified, so the detached host relay fallback is not needed and the design needs no revision.
 
-### 2026-07-17: Disposal and Final Gates
-
-- Spike sources deleted: `tests/smoke/host_mcp_sidecar_spike_test.go` and `tests/smoke/cmd/host-mcp-sidecar-spike/`.
-- `docker ps -a --filter label=codex-safe.host-mcp-spike --quiet` and
-  `docker images --filter label=codex-safe.host-mcp-spike --quiet` -> both print nothing.
-- The run-specific tag and every `cs-mcp-spike-*` runtime directory under `XDG_RUNTIME_DIR` are gone.
-- `git diff -- go.mod go.sum tests/smoke/go.mod tests/smoke/go.sum` -> empty; the helper used only the standard
-  library and the harness only the smoke module's existing Moby and Testify dependencies.
-- `make test`, `make check-docs`, and `git diff --check` -> pass after removal.
-
 ### 2026-07-17: Review Pass and Re-Run
 
-The spike was reviewed after its first disposal, the harness was restored from git history, three measurement
-defects were fixed, and the spike was re-run end to end. All seven requirements still pass, so the verdict is
-unchanged; the numbers above are the corrected ones. What changed:
+The spike was reviewed after its first disposal, the harness was restored from git history, four evidence defects
+were fixed, and the spike was re-run end to end. All seven requirements still pass, so the verdict is unchanged;
+every number above is from the corrected run. What changed:
 
 - Docker lifecycle events were timestamped when the test read them, not when the daemon recorded them.
   `ContainerStop` returns only after the container has died, so the `die` event was already buffered and every
@@ -390,9 +384,27 @@ unchanged; the numbers above are the corrected ones. What changed:
 Nothing about the verdict rests on the corrected values: the requirements were decided by observed lifecycle events
 and byte-path assertions, not by their durations.
 
+### 2026-07-17: Disposal and Final Gates
+
+The corrected harness is preserved in this branch's history, so the recorded verdict stays reproducible, and the
+working tree keeps none of it.
+
+- Spike sources deleted: `tests/smoke/host_mcp_sidecar_spike_test.go` and `tests/smoke/cmd/host-mcp-sidecar-spike/`.
+- `docker ps -a --filter label=codex-safe.host-mcp-spike --quiet` and
+  `docker images --filter label=codex-safe.host-mcp-spike --quiet` -> both print nothing.
+- The run-specific tag and every `cs-mcp-spike-*` runtime directory under `XDG_RUNTIME_DIR` are gone.
+- `git diff -- go.mod go.sum tests/smoke/go.mod tests/smoke/go.sum` -> empty; the helper used only the standard
+  library and the harness only the smoke module's existing Moby and Testify dependencies.
+- `make test`, `make check-docs`, and `git diff --check` -> pass after removal.
+
 ### Deviations from the plan
 
 - Phase 1 also produced the phase 2-4 orchestration, because one opt-in test function owns all seven requirements;
   the later phases contributed evidence and the timing-harness fix rather than new files.
 - The plan's decision list gained an `Implementation Decisions` subsection for choices it did not cover, notably the
   host event sink. Those are declared there rather than left implicit.
+- Disposal happened twice. Phase 5 deleted the harness, the review pass restored it from history to fix the evidence
+  defects, and the final disposal followed the re-run. The plan assumed a single pass and did not anticipate a
+  review that changes recorded numbers.
+- The spike gained one check the plan did not ask for: the requirement 1 bridge-network control. It was added
+  because a lone success could not distinguish host-namespace reach from a sentinel that was never loopback-only.
