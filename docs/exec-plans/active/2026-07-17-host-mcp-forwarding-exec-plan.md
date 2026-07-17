@@ -101,7 +101,7 @@ The pieces this plan must change:
 
 ### Phase 1: Endpoint Discovery
 Purpose: Turn the base `mcp_servers` table into a validated endpoint set with no Docker involved.
-Status: to be done
+Status: done
 Done when: discovery selects, deduplicates, expands, and rejects endpoints exactly as the design's Test Plan states.
 
 1. Add `github.com/BurntSushi/toml` to `go.mod`, recording the owner approval already in the design.
