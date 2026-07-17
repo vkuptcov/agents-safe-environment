@@ -87,6 +87,12 @@ The pieces this plan must change:
   absent tag; Phase 3 corrects that sentence in the design.
 - Sidecar parent mount target `/run/codex-safe-mcp/`: the design names only the session container's
   `/run/codex-safe-host-mcp/`. A distinct target keeps the two roles' paths from being confused.
+- Two packages the design's code map does not name, added because the container image builds from
+  `cmd/codex-safe-session` plus a fixed list of internal directories and so cannot import launcher code:
+  - `internal/mcpchannel/`: the socket names and one-byte control protocol shared by all three processes, with no
+    dependencies, so the two ends of one private protocol cannot drift.
+  - `internal/relay/`: the relay itself, leaving `cmd/codex-safe-session/` the `relay` mode the design names, exactly
+    as `serve` there delegates to `internal/container/`.
 - Generation identifier: 16 hex characters from `crypto/rand`. With a 24-character project key this keeps the
   deepest host socket path near 80 bytes, inside the 108-byte `sockaddr_un` limit, which preflight still validates.
 - Control protocol bytes: `L` lease, `P` probe, answered by `R` ready or `N` not ready. The design fixes the
@@ -146,7 +152,7 @@ unchanged default `serve` command. Creating both containers from that ID is Phas
 
 ### Phase 4: Relay Sidecar
 Purpose: Serve the channel sockets and reach host loopback from a confined container.
-Status: to be done
+Status: done
 Done when: `codex-safe-session relay` binds, leases, serves bytes, and cleans up exactly as the design states.
 
 1. Add the `relay` subcommand to `cmd/codex-safe-session/`, parsing its endpoint set and generation.

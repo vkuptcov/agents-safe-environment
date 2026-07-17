@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/vkuptcov/agents-safe-environment/internal/mcpchannel"
 )
 
 // AbsentLabel is the codex-safe.host-mcp value recorded for a launch that forwards nothing. It
@@ -53,10 +55,11 @@ func (endpoint Endpoint) Listen() []string {
 	return []string{endpoint.Address()}
 }
 
-// SocketName is the endpoint's socket file name, indexed over the sorted endpoint set. Neither side
-// derives a socket name from an address, so no escaping rule has to agree across the mount.
+// SocketName is the endpoint's socket file name, indexed over the sorted endpoint set. It delegates
+// to the shared wire contract so the launcher and the relay cannot disagree about a path they both
+// depend on across the mount.
 func SocketName(index int) string {
-	return fmt.Sprintf("e%d.sock", index)
+	return mcpchannel.SocketName(index)
 }
 
 // Set is one launch's canonical, sorted, collision-free endpoint set.

@@ -45,6 +45,9 @@ both the module paths and document links.
 | `internal/launcher/dockercli/` | Typed adapter for the host Docker CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `cmd/codex-safe-session/` | Container CLI. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/container/` | Container bootstrap. | [Session manager](docs/design-docs/go-session-manager.md) |
+| `internal/launcher/hostmcp/` | MCP endpoint discovery. | [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) |
+| `internal/mcpchannel/` | MCP channel wire contract. | [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) |
+| `internal/relay/` | Host MCP relay sidecar. | [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) |
 | `internal/session/` | Command lifecycle. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/terminal/` | Terminal detection. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `container/` | Container image and shell defaults. | [Safe environment](docs/design-docs/codex-safe.md) |

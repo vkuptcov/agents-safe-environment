@@ -9,7 +9,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/vkuptcov/agents-safe-environment/internal/relay"
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
@@ -194,5 +196,87 @@ func unusedApplication() application {
 		run: func(context.Context, session.CommandConfig) error {
 			return errors.New("unexpected run")
 		},
+		relay: func(context.Context, relay.Config) error {
+			return errors.New("unexpected relay")
+		},
+	}
+}
+
+// The relay sidecar selects this mode through its Docker command, so the endpoint order on the
+// command line is the launch's sorted order and fixes each endpoint's socket index.
+func TestRunCLIForwardsRelayConfiguration(t *testing.T) {
+	var stderr bytes.Buffer
+	var captured relay.Config
+	app := unusedApplication()
+	app.relay = func(_ context.Context, config relay.Config) error {
+		captured = config
+		return nil
+	}
+
+	got := runCLI(
+		context.Background(),
+		[]string{
+			"relay",
+			"--generation", "/run/codex-safe-mcp/g-0123456789abcdef",
+			"--endpoint", "127.0.0.1:8080",
+			"--endpoint", "localhost:64342",
+			"--initial-lease-timeout", "60s",
+		},
+		strings.NewReader(""),
+		io.Discard,
+		&stderr,
+		app,
+	)
+	if got != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%q", got, stderr.String())
+	}
+	if captured.Generation != "/run/codex-safe-mcp/g-0123456789abcdef" {
+		t.Fatalf("generation = %q", captured.Generation)
+	}
+	if !reflect.DeepEqual(captured.Endpoints, []string{"127.0.0.1:8080", "localhost:64342"}) {
+		t.Fatalf("endpoints = %#v, want the command-line order preserved", captured.Endpoints)
+	}
+	if captured.InitialLeaseTimeout != 60*time.Second {
+		t.Fatalf("initial lease timeout = %s, want 60s", captured.InitialLeaseTimeout)
+	}
+	if captured.Log == nil {
+		t.Fatal("the relay must receive a logger for endpoint and connection diagnostics")
+	}
+}
+
+func TestRunCLIRejectsUnknownRelayArguments(t *testing.T) {
+	var stderr bytes.Buffer
+	got := runCLI(
+		context.Background(),
+		[]string{"relay", "--generation", "/run/g", "--endpoint", "127.0.0.1:1", "stray"},
+		strings.NewReader(""),
+		io.Discard,
+		&stderr,
+		unusedApplication(),
+	)
+	if got != 2 {
+		t.Fatalf("exit code = %d, want 2 for a usage error; stderr=%q", got, stderr.String())
+	}
+}
+
+func TestRunCLIReportsRelayFailure(t *testing.T) {
+	var stderr bytes.Buffer
+	app := unusedApplication()
+	app.relay = func(context.Context, relay.Config) error {
+		return errors.New("no session lease within 60s")
+	}
+	got := runCLI(
+		context.Background(),
+		[]string{"relay", "--generation", "/run/g", "--endpoint", "127.0.0.1:1"},
+		strings.NewReader(""),
+		io.Discard,
+		&stderr,
+		app,
+	)
+	if got != 1 {
+		t.Fatalf("exit code = %d, want 1", got)
+	}
+	if !strings.Contains(stderr.String(), "no session lease") {
+		t.Fatalf("stderr = %q, want the relay's own diagnostic", stderr.String())
 	}
 }
