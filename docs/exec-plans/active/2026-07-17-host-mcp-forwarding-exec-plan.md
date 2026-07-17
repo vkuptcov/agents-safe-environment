@@ -204,7 +204,7 @@ Done when: a cold launch forwards a loopback endpoint and an empty set behaves e
 
 ### Phase 7: Command Interface
 Purpose: Give the user the one control the design specifies, consistently across both binaries.
-Status: to be done
+Status: done
 Done when: `--no-host-mcp` skips discovery entirely, both binaries document it, and its diagnostic names the
 narrowing case.
 

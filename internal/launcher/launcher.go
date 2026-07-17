@@ -55,9 +55,6 @@ type DockerLauncher struct {
 	LookupEnv func(string) (string, bool)
 	// CodexHomePolicy controls how a missing Codex home is handled.
 	CodexHomePolicy CodexHomePolicy
-	// NoHostMCP skips host MCP discovery entirely: no config.toml read, no forwarders, no mount, and
-	// no relay. It selects creation-time state, so it cannot narrow a session that already forwards.
-	NoHostMCP bool
 
 	// resolveUserMounts overrides host user-mount resolution in tests. Production launchers leave it
 	// nil and resolve from the filesystem; see resolveMounts.
@@ -74,6 +71,8 @@ type launchAttempt struct {
 	image         string
 	containerName string
 	projectKey    string
+	// noHostMCP skips discovery entirely for this launch.
+	noHostMCP bool
 	// hostMCP is this attempt's forwarding decision. Its zero value forwards nothing, which is the
 	// zero-cost path through every lifecycle step.
 	hostMCP hostMCPPlan
@@ -246,6 +245,7 @@ func (docker *DockerLauncher) Launch(
 	plan launchplan.Plan,
 	image string,
 	command []string,
+	options launchplan.Options,
 ) error {
 	if err := docker.validateConfiguration(); err != nil {
 		return err
@@ -267,6 +267,7 @@ func (docker *DockerLauncher) Launch(
 		image:         image,
 		containerName: ProjectContainerName(docker.HostUID, plan.ProjectRoot),
 		projectKey:    ProjectKey(docker.HostUID, plan.ProjectRoot),
+		noHostMCP:     options.NoHostMCP,
 	}
 
 	// Discovery runs during preflight, before a container is created or reused, and its channel must

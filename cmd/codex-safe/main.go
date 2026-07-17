@@ -14,10 +14,13 @@ import (
 
 const defaultImage = "codex-safe-mvp:local"
 
-const usage = `Usage: codex-safe [--project PATH] [--image REF] [-- CODEX ARG...]
+const usage = `Usage: codex-safe [--project PATH] [--image REF] [--no-host-mcp] [-- CODEX ARG...]
 
 Run interactive Codex for the current Git project inside an ephemeral Sysbox container.
-Arguments after -- are forwarded to Codex; the launcher never runs another executable.`
+Arguments after -- are forwarded to Codex; the launcher never runs another executable.
+
+  --no-host-mcp  Do not forward host MCP servers into the container. By default a loopback
+                 MCP server in the base config.toml is reached through a confined relay.`
 
 // config returns the codex-safe launcher configuration. It is a function so tests can drive the
 // same command policy the binary uses.

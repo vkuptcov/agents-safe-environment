@@ -72,7 +72,8 @@ func sidecarName(projectKey string, channel hostmcp.Channel) string {
 // Codex home both reduce to an empty set with no separate resolution path. An empty set allocates
 // nothing: no directory, no environment variable, no mount, no relay, and no banner line.
 func (attempt *launchAttempt) planHostMCP(resolution userMountResolution) error {
-	if attempt.docker.NoHostMCP {
+	if attempt.noHostMCP {
+		// --no-host-mcp performs no config.toml read: discovery does not run at all.
 		return nil
 	}
 	codexHome := resolution.mounts.CodexHome

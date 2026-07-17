@@ -233,6 +233,42 @@ func TestBuildCreateRequestAddsHostMCPForANonEmptySet(t *testing.T) {
 	}
 }
 
+// planHostMCP with --no-host-mcp must not read config.toml at all: a malformed one that would fail
+// discovery is proof the read never happened.
+func TestPlanHostMCPWithNoHostMCPPerformsNoConfigRead(t *testing.T) {
+	t.Parallel()
+	codexHome := writeCodexHome(t, "this is not valid TOML [[[")
+	attempt := &launchAttempt{
+		docker:     hostLauncher(1000, 1000, "/home/developer", ""),
+		plan:       testPlan(),
+		projectKey: "key",
+		noHostMCP:  true,
+	}
+	resolution := userMountResolution{mounts: UserMounts{CodexHome: codexHome, PersonalSkills: PersonalSkillsAbsent}}
+	if err := attempt.planHostMCP(resolution); err != nil {
+		t.Fatalf("--no-host-mcp must skip discovery entirely, but got %v", err)
+	}
+	if !attempt.hostMCP.set.Empty() {
+		t.Fatal("--no-host-mcp must resolve an empty set")
+	}
+}
+
+// Without the flag, the same malformed config.toml must fail the launch, proving the flag is what
+// suppressed the read above rather than discovery silently ignoring the file.
+func TestPlanHostMCPWithoutFlagReadsConfig(t *testing.T) {
+	t.Parallel()
+	codexHome := writeCodexHome(t, "this is not valid TOML [[[")
+	attempt := &launchAttempt{
+		docker:     hostLauncher(1000, 1000, "/home/developer", ""),
+		plan:       testPlan(),
+		projectKey: "key",
+	}
+	resolution := userMountResolution{mounts: UserMounts{CodexHome: codexHome, PersonalSkills: PersonalSkillsAbsent}}
+	if err := attempt.planHostMCP(resolution); err == nil {
+		t.Fatal("a malformed config.toml must fail discovery when the flag is absent")
+	}
+}
+
 func writeCodexHome(t *testing.T, config string) string {
 	t.Helper()
 	dir := t.TempDir()

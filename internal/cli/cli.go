@@ -17,7 +17,7 @@ import (
 
 // Launcher runs a command in the managed container described by a launch plan.
 type Launcher interface {
-	Launch(ctx context.Context, plan launchplan.Plan, image string, command []string) error
+	Launch(ctx context.Context, plan launchplan.Plan, image string, command []string, options launchplan.Options) error
 }
 
 // Dependencies contains the project discovery and container-launching operations used by Run.
@@ -49,6 +49,8 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 	flags.SetOutput(io.Discard)
 	projectPath := flags.String("project", ".", "Git project path")
 	image := flags.String("image", cfg.DefaultImage, "container image")
+	noHostMCP := flags.Bool("no-host-mcp", false,
+		"disable host MCP forwarding: no config.toml read, no forwarders, no relay, no mount")
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -77,7 +79,8 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return 1
 	}
-	if err := dependencies.Launcher.Launch(ctx, plan, *image, command); err != nil {
+	options := launchplan.Options{NoHostMCP: *noHostMCP}
+	if err := dependencies.Launcher.Launch(ctx, plan, *image, command, options); err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return errorExitCode(err)
 	}

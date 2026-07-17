@@ -25,6 +25,11 @@ func TestConfigHelp(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Usage: codex-safe") {
 		t.Errorf("stdout = %q, want usage", stdout.String())
 	}
+	// The usage is hand-written, not generated from the flag set, so it must advertise the flag or
+	// --help would describe an incomplete interface.
+	if !strings.Contains(stdout.String(), "--no-host-mcp") {
+		t.Errorf("usage must document --no-host-mcp, got %q", stdout.String())
+	}
 	if stderr.Len() != 0 {
 		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
