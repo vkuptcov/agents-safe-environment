@@ -130,7 +130,7 @@ Done when: requirements 1 and 2 have observed results and the inspected sidecar 
 
 ### Phase 3: Creation Arbitration and Launcher-Independent Lifetime
 Purpose: Prove candidate cleanup and lifetime behavior before destructive shutdown scenarios.
-Status: to be done
+Status: done
 Done when: requirements 3 and 4 show one settled session/sidecar pair that survives its creating launcher.
 
 1. Start two child launcher-helper processes against one deterministic session name, synchronized before create.
@@ -277,3 +277,16 @@ reported a negative `replacement-start-to-first-successful-lease`. Relay event l
 and the replacement sidecar reused the original's label, so recovery matched the *previous* relay's lease event. The
 relay's event instance is now independent of its container name, and every measured interval is now taken through a
 helper that fails the spike on a negative duration rather than printing one.
+
+### 2026-07-17: Phase 3 — Requirements 3 and 4
+
+- R3 PASS: two child launcher processes, released together by a TCP barrier, each created its own generation and
+  candidate sidecar and then raced for one deterministic session name. Exactly one reported `winner` and one
+  reported `loser`. The loser stopped and awaited only its own sidecar and removed only its own generation
+  directory; it adopted nothing. Once both returned, exactly one session container was running, exactly one sidecar
+  remained — the winner's — only the winner's generation existed, and its channel still served the nonce.
+- R4 PASS: a child launcher created the generation, sidecar and session, probed the channel ready, and exited. After
+  its exit, both containers were still `running`, the readiness probe still reported the lease held, and the session
+  container still reached the host sentinel through both hops.
+- The design's claim that the session container name is the sole arbiter is what the evidence supports: both
+  candidate sidecar creates succeeded, because each attempt's generation makes its sidecar name distinct.
