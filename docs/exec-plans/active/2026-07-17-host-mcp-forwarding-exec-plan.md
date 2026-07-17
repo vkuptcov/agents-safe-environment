@@ -5,7 +5,8 @@
 - Design: [`docs/design-docs/host-mcp-forwarding.md`](../../design-docs/host-mcp-forwarding.md)
 - Scope:
   - `internal/launcher/hostmcp/`, `internal/launcher/`, `internal/launcher/dockercli/`
-  - `internal/container/`, `cmd/codex-safe-session/`, `internal/cli/`
+  - `internal/container/`, `cmd/codex-safe-session/`
+  - `internal/cli/`, `cmd/codex-safe/`, `cmd/agents-safe/`, `internal/testutil/clitest/`
   - `container/Dockerfile`
   - `tests/smoke/`
   - `go.mod`, `go.sum` (one owner-approved dependency)
@@ -59,15 +60,31 @@ The pieces this plan must change:
   timeout out of the cold-start budget, which would otherwise force every downstream timeout above it.
 - Neither the lease nor the listeners need `dockerd`: the lease dials a Unix socket and the listeners bind the
   container's own loopback, so this placement costs nothing.
-- Intervals, derived below and satisfying `max(30s, 2s) < 60s < 90s`:
+- The cold-start bound is enforced, not assumed. Nothing between sidecar creation and the first lease is bounded
+  today, so the design's inequality would be decorative: a slow `usermod` or `visudo` would let the sidecar give up
+  while `serve` was still starting, and no finite initial-lease timeout could prevent it. This plan therefore
+  creates two real deadlines and derives the bound from them:
+  - Session-container create/start deadline: 20s, enforced by the launcher on that Docker call.
+  - `serve` pre-lease deadline: 20s, covering account reconcile, filesystem prep, and first lease acquisition.
+    Expiry fails bootstrap with that diagnostic, which the design already requires of a lease that cannot open.
+  - Cold sidecar-create-to-first-lease bound: 40s, the sum of the two, and now a fact rather than a hope.
+- Intervals, satisfying `max(40s, 2s) < 60s < 90s` with a 20s margin:
   - `serve` lease retry interval: 2s.
-  - Cold sidecar-create-to-first-lease budget: 30s.
   - Sidecar initial-lease timeout: 60s.
   - Launcher readiness timeout: 90s.
-- Budget rationale: no hard bound exists today on container create, account reconcile, or filesystem prep, so the
-  30s budget is an explicit allowance, not a composition of existing bounds. The spike measured 314-386 ms for
-  create-to-lease with a trivial bootstrap; real bootstrap adds account and filesystem work. 30s is roughly a
-  10-70x margin, and a smoke test asserts the real cold start stays well inside it.
+- Sidecar creation happens after user-mount materialization, immediately before the session create.
+  `materializeUserMounts` can block on an interactive Codex-home prompt, so a sidecar created before it would burn
+  its initial-lease timeout waiting for a human. The design only requires the sidecar to precede the session
+  container, which this satisfies.
+- Name-release bound on recovery: reuse the existing `containerStateTimeout` of 20s, which the spike's measured
+  30 ms release clears by three orders of magnitude. It precedes the readiness probe and is not inside the 90s
+  readiness deadline.
+- Readiness probing watches liveness, not just the socket. The launcher fails as soon as the session or sidecar
+  stops or disappears, surfacing that container's diagnostic instead of waiting out 90s and blaming readiness.
+- Preflight pulls an absent image. `Preflight` already runs `docker image inspect` and fails on a missing image, so
+  a pull placed later in the MCP branch would be unreachable. The design's stated rationale for the pull — that
+  `docker run` performs it implicitly today — is false about this code, verified by running the launcher against an
+  absent tag; Phase 3 corrects that sentence in the design.
 - Sidecar parent mount target `/run/codex-safe-mcp/`: the design names only the session container's
   `/run/codex-safe-host-mcp/`. A distinct target keeps the two roles' paths from being confused.
 - Generation identifier: 16 hex characters from `crypto/rand`. With a 24-character project key this keeps the
@@ -95,27 +112,36 @@ Done when: discovery selects, deduplicates, expands, and rejects endpoints exact
 6. Implement the fail-closed launch errors: unreadable file, TOML parse error, unparsable URL, invalid port.
 7. Add unit tests for every Discovery test in the design's Test Plan.
 
-### Phase 2: Typed Create Request
-Purpose: Let one typed request express both the session container and the confined sidecar.
+### Phase 2: Typed Create Request and Container Lifecycle
+Purpose: Let one typed client express both containers and perform the sidecar lifecycle Phase 6 needs.
 Status: to be done
-Done when: `BuildCreateArgs` can emit both create requests and no session container can lose its explicit runtime.
+Done when: `BuildCreateArgs` can emit both create requests, no session container can lose its explicit runtime, and
+the client can stop a sidecar and await its removal.
 
 1. Add `Command`, `User`, `NetworkMode`, `ReadOnlyRootfs`, `CapDrop`, `SecurityOpt` to `CreateRequest`.
 2. Relax `BuildCreateArgs` to accept an empty `Runtime` and `WorkingDir`, emitting the flags only when set.
 3. Append `Command` after the image, preserving argument order.
 4. Keep the explicit-runtime invariant at the session request builder and cover it with a test.
-5. Add unit tests for argv order, the sidecar's full flag set, and the session request's unchanged output.
+5. Add typed `Stop` and bounded `WaitRemoved` operations, which the client has today for neither the race loser's
+   sidecar nor the asynchronous `--rm` name release.
+6. Add unit tests for argv order, the sidecar's full flag set, the session request's unchanged output, and both
+   lifecycle operations against a fake runner.
 
 ### Phase 3: Image Identity and Entrypoint Split
-Purpose: Give both containers one immutable image ID and let the sidecar select `relay` through the image.
+Purpose: Make an image reference resolvable to one immutable ID and let the sidecar select `relay` through the image.
 Status: to be done
-Done when: a mutable tag resolves once to an ID both containers are created from, and `tini` still owns PID 1.
+Done when: an absent reference is pulled and resolves to an immutable ID, and `tini` still owns PID 1 with an
+unchanged default `serve` command. Creating both containers from that ID is Phase 6's outcome, not this phase's.
 
 1. Split `container/Dockerfile` into `ENTRYPOINT [tini, --, codex-safe-session]` and `CMD ["serve"]`.
-2. Add `Client.Pull` and image-ID resolution to `dockercli`, pulling only when the reference is absent locally.
-3. Add the inspected container image ID to `ContainerInspection`.
-4. Add unit tests for pull-then-resolve, resolve-only when present, and the inspected `.Image` on reuse.
-5. Run `make docker-build` and confirm the session container's effective process is unchanged.
+2. Make `Preflight` pull an absent image instead of failing, since its existing `docker image inspect` would
+   otherwise reject a fresh host before any later pull could run.
+3. Add image-ID resolution to `dockercli`, returning the immutable content ID of a local reference.
+4. Add the inspected container image ID to `ContainerInspection`.
+5. Correct the design's `Image identity` rationale, which claims `docker run` performs the pull implicitly today;
+   the launcher actually fails preflight on an absent reference.
+6. Add unit tests for pull-then-resolve, resolve-only when present, and the inspected `.Image` on reuse.
+7. Run `make docker-build` and confirm the session container's effective process is unchanged.
 
 ### Phase 4: Relay Sidecar
 Purpose: Serve the channel sockets and reach host loopback from a confined container.
@@ -138,10 +164,14 @@ Done when: `serve` binds one listener per concrete address and holds the lease f
 1. Implement the forwarders in `internal/container/`: listen, dial the endpoint socket, copy with half-close.
 2. Apply the `localhost` rule: at least one leg must bind; an unavailable address family is logged and skipped.
 3. Fail `serve` when an explicitly configured listener cannot bind.
-4. Implement the lease client with the 2s retry interval, retrying in the background after loss.
-5. Wire both into `Serve` after `prepareContainerUserFilesystem` and before `startDockerDaemon`.
-6. Parse `CODEX_SAFE_HOST_MCP`, treating an absent or empty value as no lease and no listener.
-7. Add unit tests for the forwarder and serve-lease tests in the design's Test Plan.
+4. Acquire the initial lease synchronously under the 20s pre-lease deadline, retrying every 2s inside it so a
+   sidecar that has not yet bound `control.sock` is tolerated. Expiry fails bootstrap with that diagnostic.
+5. Enter the background 2s retry loop only after an established lease is lost, never for the initial acquisition.
+6. Wire both into `Serve` after `prepareContainerUserFilesystem` and before `startDockerDaemon`, with the pre-lease
+   deadline covering account reconcile, filesystem prep, and the first lease together.
+7. Parse `CODEX_SAFE_HOST_MCP`, treating an absent or empty value as no lease and no listener.
+8. Add unit tests for the forwarder and serve-lease tests in the design's Test Plan, including a bootstrap that
+   exceeds the pre-lease deadline and one whose sidecar never binds.
 
 ### Phase 6: Launcher Wiring
 Purpose: Create the channel, the sidecar, and the session in the design's order, and print the boundary widening.
@@ -150,24 +180,34 @@ Done when: a cold launch forwards a loopback endpoint and an empty set behaves e
 
 1. Create the `0700` generation directory under `XDG_RUNTIME_DIR` before either container, validating ownership
    and the 108-byte socket-path budget.
-2. Build the sidecar create request with its deterministic name, labels, single mount, and `relay` command.
-3. Add `CODEX_SAFE_HOST_MCP`, the generation mount, and both host-MCP labels to the session create request.
-4. Probe `control.sock` until ready with the 90s readiness timeout, then print the forwarded endpoints.
-5. Implement reuse: compare `codex-safe.host-mcp`, adopt `codex-safe.host-mcp-channel`, remove the candidate.
-6. Implement recovery: recreate a missing sidecar from the session's inspected image ID, awaiting name release
-   boundedly and retrying create exactly once.
-7. Implement loser cleanup: stop and await only this attempt's sidecar, remove only its generation.
-8. Add unit tests for every Launcher contract test in the design's Test Plan.
+2. Create the sidecar after `materializeUserMounts` and immediately before the session create, so no interactive
+   prompt can sit inside its initial-lease window.
+3. Build the sidecar create request with its deterministic name, labels, single mount, and `relay` command, from
+   the image ID resolved once for this launch.
+4. Add `CODEX_SAFE_HOST_MCP`, the generation mount, and both host-MCP labels to the session create request, and
+   bound the session create/start call at 20s.
+5. Probe `control.sock` until ready under the 90s readiness timeout while watching both containers, failing at once
+   with their diagnostic if either stops or disappears; then print the forwarded endpoints.
+6. Implement reuse: compare `codex-safe.host-mcp`, adopt `codex-safe.host-mcp-channel`, remove the candidate.
+7. Implement recovery: adopt a running sidecar; for a non-running one await name release within 20s and retry
+   create exactly once, from the session's inspected image ID.
+8. Implement loser cleanup: stop and await only this attempt's sidecar, remove only its generation.
+9. Add unit tests for every Launcher contract test in the design's Test Plan, plus the three sidecar-name branches
+   and a session that dies during readiness probing.
 
 ### Phase 7: Command Interface
-Purpose: Give the user the one control the design specifies.
+Purpose: Give the user the one control the design specifies, consistently across both binaries.
 Status: to be done
-Done when: `--no-host-mcp` skips discovery entirely and its diagnostic names the narrowing case.
+Done when: `--no-host-mcp` skips discovery entirely, both binaries document it, and its diagnostic names the
+narrowing case.
 
-1. Add `--no-host-mcp` to `internal/cli/` and thread it to the launcher.
-2. Prove the flag performs no `config.toml` read.
-3. Report the narrowing diagnostic when the flag meets a live forwarding session.
-4. Add unit tests for the flag and both diagnostics.
+1. Add `--no-host-mcp` to `internal/cli/` and choose the launch-options shape that carries it to the launcher.
+2. Extend the `Launcher` interface and the `clitest` recording double for that shape.
+3. Update the hard-coded usage text in `cmd/codex-safe/` and `cmd/agents-safe/`, which is not generated from the
+   flag set and would otherwise advertise an incomplete interface.
+4. Prove the flag performs no `config.toml` read.
+5. Report the narrowing diagnostic when the flag meets a live forwarding session.
+6. Add unit tests for the flag, both usage strings, and both diagnostics.
 
 ### Phase 8: Real-Host Proof and Documentation
 Purpose: Prove the feature on real Sysbox and leave the docs true.
@@ -176,7 +216,8 @@ Done when: the design's Sysbox integration tests and security gate pass, and the
 
 1. Add the Sysbox integration tests from the design's Test Plan to `tests/smoke/`.
 2. Add the security-review gate assertions for both containers.
-3. Assert the real cold start stays inside the 30s budget.
+3. Record the real cold start against the 40s bound as evidence, not as the proof that the bound holds; the
+   deterministic deadline tests are that proof.
 4. Update `docs/dependencies.md` with the TOML approval record.
 5. Set the design's `Status` and update `ARCHITECTURE.md` if module ownership changed.
 6. Run `make test`, `make test-smoke-go`, and `make check-docs`.
@@ -190,8 +231,14 @@ Done when: the design's Sysbox integration tests and security gate pass, and the
 - `docker image inspect codex-safe-mvp:local --format '{{json .Config.Cmd}}'` reports `["serve"]` and the entrypoint
   no longer contains `serve`.
 - `go test ./internal/container ./cmd/codex-safe-session` covers the relay, forwarder, and serve-lease tests.
-- `rg -n 'no-host-mcp' internal/cli internal/launcher` shows the flag reaches discovery.
-- A test asserts `retry(2s) < initialLease(60s) < readiness(90s)` and `coldStartBudget(30s) < initialLease(60s)`.
+- `rg -n 'no-host-mcp' internal/cli internal/launcher cmd/codex-safe cmd/agents-safe` shows the flag reaches
+  discovery and both usage strings.
+- A test asserts `retry(2s) < initialLease(60s) < readiness(90s)` and `coldStart(40s) < initialLease(60s)`, where
+  40s is the sum of the two enforced deadlines rather than an assumed allowance.
+- Deterministic tests, not a performance measurement, prove each deadline fires: a pre-lease bootstrap held past
+  20s fails `serve` with its own diagnostic, and a session create held past 20s fails the launch.
+- A test proves the launcher abandons readiness the moment the session or sidecar stops, reporting that
+  container's diagnostic rather than a readiness timeout.
 - `make test-smoke-go` passes on a Sysbox host, including a real loopback MCP endpoint answered inside the container
   and the same sentinel unreachable under `--no-host-mcp`.
 - `git diff -- go.mod go.sum` adds only `github.com/BurntSushi/toml` and no transitive dependency.
@@ -206,6 +253,9 @@ Done when: the design's Sysbox integration tests and security gate pass, and the
   request is built.
 - The spike's numbers are throwaway and measured on one host; the intervals above are derived with explicit margin
   and must not be tuned down to match a measurement.
+- The design's inequality only means something while both cold-start components stay enforced. Removing either
+  deadline, or moving work in front of the lease that neither covers, silently returns the sidecar to giving up on
+  a session that was still starting.
 - `--rm` removal is asynchronous, so a same-name sidecar create can conflict legitimately. The spike observed this
   at 30 ms; the bounded wait and single retry are required, not optional.
 - Discovery runs in the launcher's fail-closed preflight over a user-authored file. A parser panic or a permissive
