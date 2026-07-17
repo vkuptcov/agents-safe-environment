@@ -128,8 +128,8 @@ Five decisions carry the design, and each one closes a class of failure rather t
 Both forwarders are Go code in the image this project already ships and already trusts. No `socat`, no shell, and no
 new image package participates in the data path.
 
-This shape is contingent on the spike in [Open Questions](#open-questions). It is specified fully so the spike has
-something exact to falsify.
+This shape was contingent on a Linux/Sysbox spike, which passed on 2026-07-17. It was specified fully so the spike
+had something exact to falsify; the verdict and its tested environment are in [Open Questions](#open-questions).
 
 ### Success Criteria
 
@@ -984,30 +984,53 @@ Docker client and neither depends on the other being installed.
 
 ## Open Questions
 
-The sidecar shape is specified above but not yet proven on a real host. A focused Linux/Sysbox spike must pass before
-the feature execution plan is written, because the design rests on assumptions about namespaces, ID mapping, and
-lease behavior that only a real host can settle. The spike is a throwaway proof, not Phase 1 of implementation. If it
-needs tracked execution, it gets a separate, narrowly scoped spike plan whose output is evidence and a design verdict.
+None. The Linux/Sysbox spike this design was contingent on ran on 2026-07-17 and passed on every requirement, so the
+feature execution plan is authorized. The verdict below is the record of that gate.
 
-It must demonstrate:
+### Spike verdict: PASS (2026-07-17)
 
-1. Host-loopback reachability: a `--network=host` container with `--cap-drop=ALL` and a non-root UID dials a host
-   service bound to `127.0.0.1` only.
-2. Shared socket ownership: a socket created by the sidecar under the invoking UID is connectable from inside the
-   Sysbox session container through its ID-shifted mount, and the `0600` mode survives both mappings.
-3. Concurrent-create arbitration: two launchers racing settle on one session container, and the loser stops its own
-   candidate sidecar and removes only its own candidate directory, leaving one sidecar once both have returned.
-4. Launcher-death survival: the sidecar and its lease outlive the launcher that created them while a command runs.
-5. Lease closure: `docker kill` of the session container closes the lease promptly, and the sidecar exits and removes
-   its generation directory with no Docker socket of its own.
-6. Sidecar restart: stopping the sidecar during a live session preserves the generation inode; a later launcher uses
-   the session's immutable image ID and restores MCP under the same deterministic name and bind mount, and the lease
-   arrives before the replacement's initial-lease timeout.
-7. Generation cleanup: a stopped session's sidecar never removes a newer generation's directory.
+The sidecar shape rested on assumptions about namespaces, ID mapping, and lease behavior that only a real host could
+settle. A throwaway Go/Moby harness tested all seven on real Docker and Sysbox under
+[the spike plan](../exec-plans/review/2026-07-17-host-mcp-sidecar-spike-exec-plan.md), which holds the full evidence,
+raw timings, and disposal record. Nothing from it became production or permanent smoke coverage.
 
-If the spike falsifies 1, 2, or 5, the sidecar loses its advantage over the detached host relay process described in
-[Boundaries and Non-Goals](#boundaries-and-non-goals), which remains the fallback. Any failure returns to this design.
-Only a passing spike permits the feature execution plan to be written.
+Tested environment, which is the exact scope of this verdict:
+
+| Fact | Value |
+| --- | --- |
+| Kernel | `6.17.0-122035-tuxedo` (x86_64) |
+| Docker server | `28.3.3`, API `1.51`, default runtime `runc` |
+| Sysbox | `sysbox-runc` Community Edition `0.7.0` |
+| Host identity and runtime dir | `uid=1000`, `XDG_RUNTIME_DIR=/run/user/1000` at mode `0700` |
+| Image | `codex-safe-mvp:local` = `sha256:d22fbfd34f1d` |
+
+All seven requirements passed:
+
+1. Host-loopback reachability: a `--network=host --cap-drop=ALL --read-only` sidecar running as uid 1000 reached a
+   sentinel bound to `127.0.0.1` only.
+2. Shared socket ownership: the sidecar's `0600` socket appeared inside the Sysbox session as `1000:1000`, and the
+   nonce crossed both hops.
+3. Concurrent-create arbitration: two racing launchers left exactly one session, one sidecar, and one generation.
+4. Launcher-death survival: the session, sidecar, lease, and data path all survived the creating launcher's exit.
+5. Lease closure: `docker kill` closed the lease in 20 ms, and the sidecar cleaned up and exited with no Docker
+   access of its own.
+6. Sidecar restart: the generation inode survived, and the replacement recovered under the same deterministic name
+   from the session's immutable image ID.
+7. Generation cleanup: a departing sidecar removed only its own generation while a newer sibling kept serving.
+
+Three results carry consequences beyond a passing row, and the execution plan must respect them:
+
+- Sysbox ID-shifts the bind mount as the design assumed: a socket owned by host `1000:1000` is presented to the
+  session container as `1000:1000`, so the numeric host user connects and the `0600` mode survives both mappings.
+  Requirements 1, 2 and 5 all held, so the detached host relay fallback in
+  [Boundaries and Non-Goals](#boundaries-and-non-goals) is not needed.
+- The same-name replacement create really does conflict. Docker's asynchronous `--rm` removal held the name after the
+  `die` event; the single permitted retry succeeded once `destroy` arrived, 23 ms later. The bounded-wait-and-retry
+  rule in [Identity and single instance](#identity-and-single-instance) is load-bearing, not defensive.
+- Recovery time is dominated by `serve`'s lease retry interval, not by Docker. The replacement bound its sockets long
+  before the session's next attempt, so the retry gap set the observed 810 ms from start to lease. This is exactly
+  the dependency the timeout inequality protects; the execution plan must derive its values from measured bounds plus
+  an explicit safety margin rather than copying the spike's throwaway numbers.
 
 ## Related Design
 

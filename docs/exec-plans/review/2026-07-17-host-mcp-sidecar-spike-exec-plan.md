@@ -1,6 +1,6 @@
 # Exec Plan: Host MCP Relay Sidecar Linux/Sysbox Spike
 
-- Status: active
+- Status: in review
 - Created: 2026-07-17
 - Design: [`docs/design-docs/host-mcp-forwarding.md`](../../design-docs/host-mcp-forwarding.md)
 - Scope:
@@ -175,7 +175,7 @@ Done when: requirements 5 through 7 have decisive cleanup, recovery, inode, imag
 
 ### Phase 5: Verdict, Cleanup, and Design Handoff
 Purpose: Convert the throwaway experiment into a durable design decision with zero runtime residue.
-Status: to be done
+Status: done
 Done when: the design records a PASS or FAIL verdict, temporary assets are gone, and the plan is ready for review.
 
 1. Add a seven-row evidence table to `Progress Notes` and the existing design review, including environment facts and
@@ -323,3 +323,40 @@ Timings, all measured on the host orchestrator's monotonic clock (raw, not propo
 The recovery lease is dominated by the helper's 1-second retry gap, not by Docker: the replacement bound its
 sockets long before the session's next attempt. That is exactly the dependency the design's timeout inequality
 exists to protect, and it is why the feature execution plan must derive its values rather than copy these.
+
+### 2026-07-17: Verdict — PASS
+
+1. Host-loopback reachability — PASS. A confined host-network sidecar running as uid 1000 reached a sentinel bound
+   to `127.0.0.1` only.
+2. Shared socket ownership — PASS. A host `0600` socket owned by `1000:1000` was seen inside Sysbox as
+   `srw------- 1 1000 1000`, and the nonce crossed both hops.
+3. Concurrent-create arbitration — PASS. Two racing launchers left exactly one session, one sidecar, one generation.
+4. Launcher-death survival — PASS. The session, sidecar, lease, and data path survived the launcher's exit.
+5. Lease closure — PASS. The lease closed 20 ms after `docker kill`, and the sidecar cleaned up and exited with no
+   Docker access.
+6. Sidecar restart — PASS. The generation stayed at `device=78 inode=1617`, and the replacement recovered under the
+   same name from the session's image ID.
+7. Generation cleanup — PASS. A departing sidecar removed only its own generation while the newer sibling kept
+   serving.
+
+All seven requirements pass, so the design permits the feature execution plan. The verdict is recorded in
+[`host-mcp-forwarding.md`](../../design-docs/host-mcp-forwarding.md) and in the
+[design review](../../reviews/feature-review/2026-07-17-host-mcp-forwarding-design-review.md). No assumption was
+falsified, so the detached host relay fallback is not needed and the design needs no revision.
+
+### 2026-07-17: Disposal and Final Gates
+
+- Spike sources deleted: `tests/smoke/host_mcp_sidecar_spike_test.go` and `tests/smoke/cmd/host-mcp-sidecar-spike/`.
+- `docker ps -a --filter label=codex-safe.host-mcp-spike --quiet` and
+  `docker images --filter label=codex-safe.host-mcp-spike --quiet` -> both print nothing.
+- The run-specific tag and every `cs-mcp-spike-*` runtime directory under `XDG_RUNTIME_DIR` are gone.
+- `git diff -- go.mod go.sum tests/smoke/go.mod tests/smoke/go.sum` -> empty; the helper used only the standard
+  library and the harness only the smoke module's existing Moby and Testify dependencies.
+- `make test`, `make check-docs`, and `git diff --check` -> pass after removal.
+
+### Deviations from the plan
+
+- Phase 1 also produced the phase 2-4 orchestration, because one opt-in test function owns all seven requirements;
+  the later phases contributed evidence and the timing-harness fix rather than new files.
+- The plan's decision list gained an `Implementation Decisions` subsection for choices it did not cover, notably the
+  host event sink. Those are declared there rather than left implicit.
