@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Create starts one detached container. Conflict is true when its deterministic name is already in use.
@@ -29,6 +31,11 @@ func (client *Client) Create(ctx context.Context, request CreateRequest) (contai
 }
 
 // BuildCreateArgs encodes a typed create request as Docker CLI argv.
+//
+// Runtime and WorkingDir are optional so this one builder can encode the relay sidecar, which takes
+// the Docker default runtime and has no project directory. That relaxation removes the mechanism
+// that previously made a session container falling off sysbox-runc impossible, so the session's own
+// creation path enforces the explicit-runtime invariant instead.
 func BuildCreateArgs(request CreateRequest) ([]string, error) {
 	if strings.TrimSpace(request.Image) == "" {
 		return nil, errors.New("container image is required")
@@ -36,20 +43,26 @@ func BuildCreateArgs(request CreateRequest) ([]string, error) {
 	if request.Name == "" {
 		return nil, errors.New("container name is required")
 	}
-	if request.Runtime == "" {
-		return nil, errors.New("container runtime is required")
-	}
-	if request.WorkingDir == "" {
-		return nil, errors.New("container working directory is required")
-	}
 
-	args := []string{
-		"run",
-		"--detach",
-		"--rm",
-		"--runtime=" + request.Runtime,
-		"--name",
-		request.Name,
+	args := []string{"run", "--detach", "--rm"}
+	if request.Runtime != "" {
+		args = append(args, "--runtime="+request.Runtime)
+	}
+	args = append(args, "--name", request.Name)
+	if request.User != "" {
+		args = append(args, "--user", request.User)
+	}
+	if request.NetworkMode != "" {
+		args = append(args, "--network="+request.NetworkMode)
+	}
+	if request.ReadOnlyRootfs {
+		args = append(args, "--read-only")
+	}
+	for _, capability := range request.CapDrop {
+		args = append(args, "--cap-drop="+capability)
+	}
+	for _, option := range request.SecurityOpt {
+		args = append(args, "--security-opt="+option)
 	}
 	for _, label := range request.Labels {
 		args = append(args, "--label", label.Key+"="+label.Value)
@@ -57,11 +70,33 @@ func BuildCreateArgs(request CreateRequest) ([]string, error) {
 	for _, environment := range request.Environment {
 		args = append(args, "--env", environment.Key+"="+environment.Value)
 	}
-	args = append(args, "--workdir", request.WorkingDir)
+	if request.WorkingDir != "" {
+		args = append(args, "--workdir", request.WorkingDir)
+	}
 	for _, mount := range request.Mounts {
 		args = append(args, "--mount", bindMountArg(mount))
 	}
-	return append(args, request.Image), nil
+	args = append(args, request.Image)
+	// An empty command preserves the image's default; the sidecar sets it to select relay.
+	return append(args, request.Command...), nil
+}
+
+// Stop requests graceful termination of a container and waits for Docker to report it stopped. A
+// container Docker no longer knows about is already stopped, so that is success rather than an
+// error: the caller wanted it gone and it is.
+func (client *Client) Stop(ctx context.Context, name string, timeout time.Duration) error {
+	seconds := int(timeout.Round(time.Second).Seconds())
+	if seconds < 0 {
+		seconds = 0
+	}
+	output, err := client.combinedOutput(ctx, "stop", "--timeout", strconv.Itoa(seconds), name)
+	if err != nil {
+		if isContainerNotFound(output, err) {
+			return nil
+		}
+		return commandFailure(fmt.Sprintf("stop container %q", name), output, err)
+	}
+	return nil
 }
 
 func bindMountArg(mount Mount) string {

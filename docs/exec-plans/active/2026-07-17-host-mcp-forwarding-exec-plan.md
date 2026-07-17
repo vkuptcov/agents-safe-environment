@@ -114,7 +114,7 @@ Done when: discovery selects, deduplicates, expands, and rejects endpoints exact
 
 ### Phase 2: Typed Create Request and Container Lifecycle
 Purpose: Let one typed client express both containers and perform the sidecar lifecycle Phase 6 needs.
-Status: to be done
+Status: done
 Done when: `BuildCreateArgs` can emit both create requests, no session container can lose its explicit runtime, and
 the client can stop a sidecar and await its removal.
 
@@ -122,10 +122,11 @@ the client can stop a sidecar and await its removal.
 2. Relax `BuildCreateArgs` to accept an empty `Runtime` and `WorkingDir`, emitting the flags only when set.
 3. Append `Command` after the image, preserving argument order.
 4. Keep the explicit-runtime invariant at the session request builder and cover it with a test.
-5. Add typed `Stop` and bounded `WaitRemoved` operations, which the client has today for neither the race loser's
-   sidecar nor the asynchronous `--rm` name release.
-6. Add unit tests for argv order, the sidecar's full flag set, the session request's unchanged output, and both
-   lifecycle operations against a fake runner.
+5. Add a typed `Stop`, which the client lacks and the race loser's sidecar needs. The bounded wait for the
+   asynchronous `--rm` name release stays launcher policy built on `Inspect`, matching the existing
+   `waitForReusableOrReleased`, so no polling enters the transport.
+6. Add unit tests for argv order, the sidecar's full flag set, the session request's unchanged output, and `Stop`
+   against a fake runner, including an already-removed container.
 
 ### Phase 3: Image Identity and Entrypoint Split
 Purpose: Make an image reference resolvable to one immutable ID and let the sidecar select `relay` through the image.

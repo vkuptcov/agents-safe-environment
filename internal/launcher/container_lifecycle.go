@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -91,6 +92,10 @@ func waitForContainerPoll(ctx context.Context) error {
 	}
 }
 
+// createContainer creates the session container. It is the only path that does so, which is why the
+// explicit-runtime invariant is enforced here: BuildCreateArgs now accepts an empty runtime so the
+// relay sidecar can take the Docker default, and the launcher must never compensate for missing
+// Sysbox by silently falling back to it.
 func (attempt *launchAttempt) createContainer(
 	ctx context.Context,
 	userMounts UserMounts,
@@ -100,6 +105,9 @@ func (attempt *launchAttempt) createContainer(
 	)
 	if err != nil {
 		return "", false, err
+	}
+	if request.Runtime == "" {
+		return "", false, errors.New("session container must be created with an explicit runtime")
 	}
 	return attempt.cli.Create(ctx, request)
 }
