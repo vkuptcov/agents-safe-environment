@@ -67,11 +67,33 @@ environment blocker, not a PASS or a product FAIL.
 - Disposal: remove the temporary test/helper sources and throwaway image after evidence is recorded. No spike code
   becomes production or permanent smoke coverage.
 
+### Decisions Taken During Execution
+
+Recorded on 2026-07-17 because they are not derivable from the plan above or from the design.
+
+- Event sink over host loopback: the sidecar reports each lifecycle transition to the orchestrator, which timestamps
+  arrival on its own monotonic clock. Reporting beats polling for closure timing, and withholding the acknowledgement
+  gives requirement 7 a real barrier instead of a sleep.
+- Helper role split: the session container's main process runs `lease-client`, and every data-path assertion runs
+  `socket-client` through `docker exec`. The session container has no host namespace, so it cannot report events.
+- `launcher-helper` drives the host Docker CLI: it matches the product launcher's transport and keeps the helper
+  free of dependencies, since `tests/smoke`'s Moby client is not importable from a standard-library-only binary.
+- Throwaway image built through `docker build` over a generated context: parsing the daemon's build stream would add
+  harness risk without adding evidence.
+- Sidecar mount target `/run/codex-safe-host-mcp-parent/`: the design names only the session container's
+  `/run/codex-safe-host-mcp/` target, so the sidecar's runtime-parent target is a spike-local name.
+- Control protocol bytes: `L` lease, `P` probe, answered by `R` ready or `N` not ready. The design fixes the
+  one-byte role framing but not the values.
+- Mutable-tag retarget points at the base `codex-safe-mvp:local` image ID: it is an existing local image, so adding
+  and removing a run-specific tag never alters the project's own tag.
+- Observed lease retry gap read from `docker logs` timestamps: the host daemon applies them as it reads the
+  container stream, so the measurement stays host-side without giving the session container a host channel.
+
 ## Phases
 
 ### Phase 1: Environment Preflight and Disposable Harness
 Purpose: Establish a qualified host and a self-cleaning prototype without changing production code.
-Status: to be done
+Status: done
 Done when: the helper image is runnable, every resource has a unique label, and preflight evidence proves the host can
 execute a meaningful Sysbox spike.
 
