@@ -376,6 +376,9 @@ func runLeaseClient(args []string) error {
 		return errors.New("lease-client requires --control")
 	}
 	for {
+		// Each attempt is logged before it is made so the orchestrator can measure the retry gap
+		// from the host daemon's own log timestamps.
+		logf("lease attempt")
 		connection, err := net.Dial("unix", *control)
 		if err != nil {
 			logf("lease attempt failed: %v", err)

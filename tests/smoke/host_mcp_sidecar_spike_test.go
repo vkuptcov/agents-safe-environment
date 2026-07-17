@@ -233,7 +233,6 @@ func (s *spikeEventSink) requireAbsent(instance, name string) {
 type spikeFixture struct {
 	t           *testing.T
 	ctx         context.Context
-	cancel      context.CancelFunc
 	docker      *client.Client
 	runID       string
 	label       string
@@ -262,7 +261,6 @@ func newSpikeFixture(t *testing.T) *spikeFixture {
 	fixture := &spikeFixture{
 		t:        t,
 		ctx:      ctx,
-		cancel:   cancel,
 		docker:   docker,
 		runID:    spikeNonce(),
 		identity: fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
@@ -292,6 +290,18 @@ func (f *spikeFixture) fact(format string, args ...any) {
 func (f *spikeFixture) timing(format string, args ...any) {
 	f.timings = append(f.timings, fmt.Sprintf(format, args...))
 	f.t.Logf("TIMING %s", fmt.Sprintf(format, args...))
+}
+
+// elapsed records one measured interval. It rejects a negative result outright: a duration that runs
+// backwards means the harness matched the wrong event, and a spike that reports such a number is
+// reporting a harness bug as evidence.
+func (f *spikeFixture) elapsed(label string, from, to time.Time) time.Duration {
+	f.t.Helper()
+	measured := to.Sub(from)
+	require.GreaterOrEqual(f.t, measured, time.Duration(0),
+		"%s measured %s: the harness matched an event that predates its own start point", label, measured)
+	f.timing("%s: %s", label, measured.Round(time.Millisecond))
+	return measured
 }
 
 func (f *spikeFixture) pass(id, observation string) {
@@ -510,8 +520,18 @@ func (f *spikeFixture) newGeneration() string {
 // createSidecar builds the relay's create request exactly as the design specifies it: host network
 // only, the recreated host identity, read-only root, no capability, no-new-privileges, the Docker
 // default runtime, --rm, and the project runtime parent as its single mount.
-func (f *spikeFixture) createSidecar(name, generation, imageID string) (string, time.Time) {
+//
+// instance is the relay's event label and is deliberately independent of the container name, because
+// recovery deliberately reuses one deterministic name for two successive relay processes and their
+// events must stay distinguishable.
+func (f *spikeFixture) createSidecar(name, instance, generation, imageID string) (string, time.Time) {
 	f.t.Helper()
+	created, err := f.tryCreateSidecar(name, instance, generation, imageID)
+	require.NoError(f.t, err, "sidecar %q must be created", name)
+	return created, time.Now()
+}
+
+func (f *spikeFixture) tryCreateSidecar(name, instance, generation, imageID string) (string, error) {
 	config := &container.Config{
 		Image: imageID,
 		User:  f.identity,
@@ -520,7 +540,7 @@ func (f *spikeFixture) createSidecar(name, generation, imageID string) (string, 
 			"--generation", filepath.Join(spikeParentTarget, generation),
 			"--endpoint", f.sentinel.address(),
 			"--events", f.events.address(),
-			"--instance", name,
+			"--instance", instance,
 			"--initial-lease-timeout", spikeWatchdog.String(),
 		},
 		Labels: map[string]string{spikeLabelKey: f.runID, spikeRoleKey: "sidecar"},
@@ -534,9 +554,10 @@ func (f *spikeFixture) createSidecar(name, generation, imageID string) (string, 
 		Mounts:         []mount.Mount{{Type: mount.TypeBind, Source: f.parent, Target: spikeParentTarget}},
 	}
 	created, err := f.docker.ContainerCreate(f.ctx, config, hostConfig, nil, nil, name)
-	require.NoError(f.t, err, "sidecar %q must be created", name)
-	at := time.Now()
-	return created.ID, at
+	if err != nil {
+		return "", err
+	}
+	return created.ID, nil
 }
 
 func (f *spikeFixture) createSession(name, generation, imageID string) (string, time.Time) {
@@ -581,7 +602,7 @@ func (f *spikeFixture) startPair(prefix string) (generation, sidecarName, sideca
 	sidecarName = "codex-safe-mcp-" + prefix + "-" + generation
 	sessionName = "codex-safe-session-" + prefix + "-" + f.runID
 
-	sidecarID, createdAt := f.createSidecar(sidecarName, generation, f.imageID)
+	sidecarID, createdAt := f.createSidecar(sidecarName, sidecarName, generation, f.imageID)
 	f.start(sidecarID, "sidecar "+sidecarName)
 	f.events.await(sidecarName, "bound")
 
@@ -589,7 +610,7 @@ func (f *spikeFixture) startPair(prefix string) (generation, sidecarName, sideca
 	f.start(sessionID, "session "+sessionName)
 
 	leased := f.events.await(sidecarName, "lease-established")
-	f.timing("%s cold sidecar-create-to-first-successful-lease: %s", prefix, leased.at.Sub(createdAt).Round(time.Millisecond))
+	f.elapsed(prefix+" cold sidecar-create-to-first-successful-lease", createdAt, leased.at)
 	f.requireReady(generation)
 	return generation, sidecarName, sidecarID, sessionName, sessionID
 }
@@ -767,14 +788,15 @@ func (f *spikeFixture) logs(containerID string) string {
 	return out.String() + errOut.String()
 }
 
-// leaseRetryGap reports the interval the helper actually waited between two lease attempts. The
+// leaseRetryGap reports the widest interval the helper actually let pass between two steps of its
+// lease loop after `since` -- losing the lease, or an attempt failing, and the next attempt. The
 // timestamps are applied by the host Docker daemon as it reads the container's stream, so this stays
-// a host-side measurement.
-func (f *spikeFixture) leaseRetryGap(containerID string) (time.Duration, int) {
+// a host-side measurement even though the session container has no host channel of its own.
+func (f *spikeFixture) leaseRetryGap(containerID string, since time.Time) (time.Duration, int) {
 	f.t.Helper()
 	var stamps []time.Time
 	for _, line := range strings.Split(f.logs(containerID), "\n") {
-		if !strings.Contains(line, "lease attempt failed") {
+		if !strings.Contains(line, "lease attempt") && !strings.Contains(line, "lease lost") {
 			continue
 		}
 		stamp, _, found := strings.Cut(strings.TrimSpace(line), " ")
@@ -782,7 +804,7 @@ func (f *spikeFixture) leaseRetryGap(containerID string) (time.Duration, int) {
 			continue
 		}
 		parsed, err := time.Parse(time.RFC3339Nano, stamp)
-		if err != nil {
+		if err != nil || !parsed.After(since) {
 			continue
 		}
 		stamps = append(stamps, parsed)
@@ -869,7 +891,7 @@ func (f *spikeFixture) phaseReachabilityAndOwnership() {
 	f.t.Helper()
 	generation := f.newGeneration()
 	sidecarName := "codex-safe-mcp-reach-" + generation
-	sidecarID, createdAt := f.createSidecar(sidecarName, generation, f.imageID)
+	sidecarID, createdAt := f.createSidecar(sidecarName, sidecarName, generation, f.imageID)
 	f.start(sidecarID, "reachability sidecar")
 	f.events.await(sidecarName, "bound")
 
@@ -919,7 +941,7 @@ func (f *spikeFixture) phaseReachabilityAndOwnership() {
 	sessionID, _ := f.createSession(sessionName, generation, f.imageID)
 	f.start(sessionID, "reachability session")
 	leased := f.events.await(sidecarName, "lease-established")
-	f.timing("cold sidecar-create-to-first-successful-lease: %s", leased.at.Sub(createdAt).Round(time.Millisecond))
+	f.elapsed("cold sidecar-create-to-first-successful-lease", createdAt, leased.at)
 	f.requireReady(generation)
 
 	sessionInspection := f.inspect(sessionID)
@@ -988,7 +1010,6 @@ func (f *spikeFixture) arbitration(helper string) {
 
 	reportDir := f.t.TempDir()
 	attempts := []string{"a", "b"}
-	processes := make([]*exec.Cmd, 0, len(attempts))
 	reports := make([]string, 0, len(attempts))
 	generations := make([]string, 0, len(attempts))
 	sidecars := make([]string, 0, len(attempts))
@@ -1017,13 +1038,11 @@ func (f *spikeFixture) arbitration(helper string) {
 		require.NoError(f.t, process.Start(), "launcher attempt %q must start", attempt)
 		done := make(chan error, 1)
 		go func() { done <- process.Wait() }()
-		processes = append(processes, process)
 		reports = append(reports, report)
 		generations = append(generations, generation)
 		sidecars = append(sidecars, sidecar)
 		waits = append(waits, done)
 	}
-	_ = processes
 
 	// Release both attempts only once both have reached the barrier.
 	held := make([]net.Conn, 0, len(attempts))
@@ -1169,8 +1188,8 @@ func (f *spikeFixture) leaseClosure() {
 	f.awaitGone(sidecarName)
 	f.awaitGone(sessionName)
 
-	f.timing("kill-to-lease-EOF: %s", closedAt.Sub(killedAt).Round(time.Millisecond))
-	f.timing("lease-EOF-to-sidecar-exit: %s", diedAt.Sub(closedAt).Round(time.Millisecond))
+	closure := f.elapsed("kill-to-lease-EOF", killedAt, closedAt)
+	exit := f.elapsed("lease-EOF-to-sidecar-exit", closedAt, diedAt)
 
 	require.NoDirExists(f.t, f.generationPath(generation), "lease EOF must remove the sidecar's own generation")
 	require.DirExists(f.t, f.generationPath(sibling), "lease EOF must not touch an unrelated generation")
@@ -1178,7 +1197,7 @@ func (f *spikeFixture) leaseClosure() {
 
 	f.pass("R5", fmt.Sprintf(
 		"docker kill of the session closed the lease in %s; the sidecar exited %s later, Docker removed it through --rm, and only its own generation %s disappeared",
-		closedAt.Sub(killedAt).Round(time.Millisecond), diedAt.Sub(closedAt).Round(time.Millisecond), generation))
+		closure.Round(time.Millisecond), exit.Round(time.Millisecond), generation))
 }
 
 // sidecarRecovery proves a replacement sidecar reattaches to a live session under the same name, from
@@ -1206,25 +1225,30 @@ func (f *spikeFixture) sidecarRecovery() {
 	cancel, messages, errs := f.subscribe(sidecarID)
 	defer cancel()
 
+	stoppedAt := time.Now()
 	require.NoError(f.t, f.docker.ContainerStop(f.ctx, sidecarID, container.StopOptions{}),
 		"the sidecar must stop gracefully")
 	diedAt := f.awaitDockerEvent(messages, errs, "die")
 	f.events.await(sidecarName, "signal-after-lease")
 
+	// The replacement is a second relay process under one deterministic container name, so it reports
+	// under its own event instance and this scenario cannot match the first relay's transitions.
+	replacementInstance := sidecarName + "#replacement"
+
 	// Immediately attempt to create, but not start, the replacement under the same name. A name
 	// conflict here is Docker's asynchronous --rm removal, not a competing owner.
 	firstOutcome := "created without a name conflict"
-	replacementID, createdAt := "", time.Time{}
-	created, err := f.tryCreateSidecar(sidecarName, generation, sessionImageID)
+	replacementID, err := f.tryCreateSidecar(sidecarName, replacementInstance, generation, sessionImageID)
 	if err != nil {
 		require.True(f.t, isSpikeNameConflict(err), "only a name conflict may fail the first replacement create: %v", err)
-		firstOutcome = "name conflict, retried once after destroy"
+		firstOutcome = "conflicted on the name still held by the departing sidecar, then created on the single permitted retry after its destroy event"
 		f.awaitDockerEvent(messages, errs, "destroy")
-		created, err = f.tryCreateSidecar(sidecarName, generation, sessionImageID)
+		replacementID, err = f.tryCreateSidecar(sidecarName, replacementInstance, generation, sessionImageID)
 		require.NoError(f.t, err, "the single permitted retry must create the replacement")
 	}
-	replacementID, createdAt = created, time.Now()
-	f.timing("sidecar die-to-name-creatable: %s (%s)", createdAt.Sub(diedAt).Round(time.Millisecond), firstOutcome)
+	createdAt := time.Now()
+	f.elapsed("sidecar die-to-name-creatable", diedAt, createdAt)
+	f.fact("first same-name replacement create: %s", firstOutcome)
 
 	// The generation must be intact and unpolluted before the replacement starts.
 	require.NoFileExists(f.t, f.controlPath(generation), "a signalled sidecar removes control.sock")
@@ -1234,10 +1258,10 @@ func (f *spikeFixture) sidecarRecovery() {
 	require.Equal(f.t, beforeInode, afterInode, "the generation inode must survive the sidecar restart")
 
 	startedAt := f.start(replacementID, "replacement sidecar")
-	leased := f.events.await(sidecarName, "lease-established")
+	leased := f.events.await(replacementInstance, "lease-established")
 	f.requireReady(generation)
-	restoredAt := time.Now()
 	f.requireNonceFromSession(sessionID, "the live session after sidecar recovery")
+	restoredAt := time.Now()
 
 	replacement := f.inspect(replacementID)
 	require.Equal(f.t, sessionImageID, replacement.Image, "the replacement sidecar uses the session's immutable image ID")
@@ -1249,47 +1273,23 @@ func (f *spikeFixture) sidecarRecovery() {
 	require.Equal(f.t, beforeDevice, stillDevice, "the generation device is unchanged after recovery")
 	require.Equal(f.t, beforeInode, stillInode, "the generation inode is unchanged after recovery")
 
-	gap, attempts := f.leaseRetryGap(sessionID)
-	f.timing("observed lease retry gap: %s over %d recorded attempts", gap.Round(time.Millisecond), attempts)
-	f.timing("replacement-create-to-start: %s", startedAt.Sub(createdAt).Round(time.Millisecond))
-	f.timing("replacement-start-to-first-successful-lease: %s", leased.at.Sub(startedAt).Round(time.Millisecond))
-	f.timing("replacement-create-to-first-successful-lease: %s", leased.at.Sub(createdAt).Round(time.Millisecond))
-	f.timing("lease-to-restored-data-path: %s", restoredAt.Sub(leased.at).Round(time.Millisecond))
+	f.elapsed("replacement-create-to-start", createdAt, startedAt)
+	sinceLease := f.elapsed("replacement-start-to-first-successful-lease", startedAt, leased.at)
+	f.elapsed("replacement-create-to-first-successful-lease", createdAt, leased.at)
+	f.elapsed("lease-to-restored-data-path", leased.at, restoredAt)
+
+	// The replacement waits on a lease only the long-running session can open, so the retry gap the
+	// session actually observed is the interval the design's inequality must dominate.
+	gap, steps := f.leaseRetryGap(sessionID, stoppedAt)
+	require.GreaterOrEqual(f.t, steps, 2, "the session must have recorded a lease loss and its retry")
+	f.timing("observed lease retry gap: %s across %d recorded lease-loop steps", gap.Round(time.Millisecond), steps)
+	require.Less(f.t, gap, spikeWatchdog, "the observed retry gap must fall inside the replacement's initial-lease bound")
 	f.timing("initial-lease failure bound used by the replacement: %s (spike-only watchdog)", spikeWatchdog)
 
 	f.pass("R6", fmt.Sprintf(
-		"a graceful stop preserved generation %s at device=%d inode=%d and removed only its sockets; the replacement was %s under the same name from image %s, was leased %s after start, and restored the data path with no session replacement",
+		"a graceful stop preserved generation %s at device=%d inode=%d and removed only its sockets; the replacement %s, ran under the same name from the session's image %s, was leased %s after start and well inside the %s bound, and restored the data path without replacing the session",
 		generation, beforeDevice, beforeInode, firstOutcome, spikeShortID(sessionImageID),
-		leased.at.Sub(startedAt).Round(time.Millisecond)))
-}
-
-func (f *spikeFixture) tryCreateSidecar(name, generation, imageID string) (string, error) {
-	config := &container.Config{
-		Image: imageID,
-		User:  f.identity,
-		Cmd: []string{
-			"relay",
-			"--generation", filepath.Join(spikeParentTarget, generation),
-			"--endpoint", f.sentinel.address(),
-			"--events", f.events.address(),
-			"--instance", name,
-			"--initial-lease-timeout", spikeWatchdog.String(),
-		},
-		Labels: map[string]string{spikeLabelKey: f.runID, spikeRoleKey: "sidecar"},
-	}
-	hostConfig := &container.HostConfig{
-		NetworkMode:    "host",
-		ReadonlyRootfs: true,
-		CapDrop:        strslice.StrSlice{"ALL"},
-		SecurityOpt:    []string{"no-new-privileges"},
-		AutoRemove:     true,
-		Mounts:         []mount.Mount{{Type: mount.TypeBind, Source: f.parent, Target: spikeParentTarget}},
-	}
-	created, err := f.docker.ContainerCreate(f.ctx, config, hostConfig, nil, nil, name)
-	if err != nil {
-		return "", err
-	}
-	return created.ID, nil
+		sinceLease.Round(time.Millisecond), spikeWatchdog))
 }
 
 func isSpikeNameConflict(err error) bool {

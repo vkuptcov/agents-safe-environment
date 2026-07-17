@@ -113,7 +113,7 @@ execute a meaningful Sysbox spike.
 
 ### Phase 2: Host Reachability and Sysbox Socket Ownership
 Purpose: Prove the network and ID-mapping properties on which the two-hop channel depends.
-Status: to be done
+Status: done
 Done when: requirements 1 and 2 have observed results and the inspected sidecar matches its security contract.
 
 1. Start a host echo server on `127.0.0.1:0` and retain a random request/response nonce.
@@ -245,6 +245,35 @@ Done when: the design records a PASS or FAIL verdict, temporary assets are gone,
 
 ## Progress Notes
 
-- Add dated execution notes before moving the plan to `review/`.
-- Record the tested environment, requirement 1-7 evidence table, raw monotonic timing measurements, overall PASS/FAIL
-  verdict, deviations, and cleanup query results.
+### 2026-07-17: Tested Environment
+
+The verdict below applies to exactly this environment and to no other.
+
+| Fact | Value |
+| --- | --- |
+| Kernel | `6.17.0-122035-tuxedo` (x86_64) |
+| Docker server | `28.3.3`, API `1.51`, default runtime `runc` |
+| Sysbox | `sysbox-runc` registered, Community Edition `0.7.0` |
+| Host identity | `uid=1000 gid=1000` |
+| `XDG_RUNTIME_DIR` | `/run/user/1000`, mode `0700`, owner `1000:1000` |
+| Base image | `codex-safe-mvp:local` = `sha256:d22fbfd34f1d` |
+| Throwaway image | `codex-safe-host-mcp-spike:<run>` = `sha256:8253730511ce` |
+| Deepest host socket path | 71 bytes, inside the 108-byte `sockaddr_un` limit |
+
+### 2026-07-17: Phase 2 — Requirements 1 and 2
+
+- Sidecar inspection matched the design's contract exactly: `NetworkMode=host` with no PID/UTS/IPC host share,
+  `User=1000:1000`, `CapDrop=[ALL]` with no `CapAdd`, read-only rootfs, `no-new-privileges`, not privileged,
+  `AutoRemove`, runtime resolved to `runc` (never `sysbox-runc`), and one mount — the project runtime parent, with
+  no Docker socket anywhere.
+- R1 PASS: that sidecar dialed a sentinel bound to `127.0.0.1:0` only, and the response nonce came back.
+- R2 PASS: `e0.sock` is `type=socket mode=0600 owner=1000:1000` on the host, and Sysbox presented it inside the
+  session container as `srw------- 1 1000 1000`. The numeric host user connected through the ID-shifted mount and
+  the nonce crossed both hops.
+- Cold sidecar-create-to-first-successful-lease: 349 ms.
+
+Harness correction made during this phase, recorded because it changed what the evidence means: the first run
+reported a negative `replacement-start-to-first-successful-lease`. Relay event lookups matched by instance label,
+and the replacement sidecar reused the original's label, so recovery matched the *previous* relay's lease event. The
+relay's event instance is now independent of its container name, and every measured interval is now taken through a
+helper that fails the spike on a negative duration rather than printing one.
