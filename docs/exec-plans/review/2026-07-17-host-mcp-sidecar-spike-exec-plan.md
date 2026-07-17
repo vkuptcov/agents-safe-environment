@@ -88,6 +88,12 @@ Recorded on 2026-07-17 because they are not derivable from the plan above or fro
   and removing a run-specific tag never alters the project's own tag.
 - Observed lease retry gap read from `docker logs` timestamps: the host daemon applies them as it reads the
   container stream, so the measurement stays host-side without giving the session container a host channel.
+- Docker `die`/`destroy` intervals use the daemon's event timestamp, not the orchestrator's monotonic clock. The
+  plan's rule exists to keep container clocks out of the evidence; the daemon runs on the tested host, so its
+  timestamp meets that intent, and reading `time.Now()` on an already-buffered event does not.
+- Requirement 1 is decided by a two-armed control, not a single success. A `dial-check` helper mode runs the same
+  image, command, identity and confinement on the host network and on the default bridge network; R1 passes only if
+  the first reaches the sentinel and the second cannot.
 
 ## Phases
 
@@ -266,11 +272,15 @@ The verdict below applies to exactly this environment and to no other.
   `User=1000:1000`, `CapDrop=[ALL]` with no `CapAdd`, read-only rootfs, `no-new-privileges`, not privileged,
   `AutoRemove`, runtime resolved to `runc` (never `sysbox-runc`), and one mount — the project runtime parent, with
   no Docker socket anywhere.
-- R1 PASS: that sidecar dialed a sentinel bound to `127.0.0.1:0` only, and the response nonce came back.
+- R1 PASS: that sidecar dialed a sentinel bound to `127.0.0.1:0` only, and the response nonce came back. Controlled
+  against the negative case: the identical image, command, identity and confinement on the default bridge network
+  failed to reach the sentinel (exit 1) while the host-network container succeeded (exit 0), so the reach is
+  attributable to the host network namespace and not to a sentinel that was never loopback-only.
 - R2 PASS: `e0.sock` is `type=socket mode=0600 owner=1000:1000` on the host, and Sysbox presented it inside the
   session container as `srw------- 1 1000 1000`. The numeric host user connected through the ID-shifted mount and
   the nonce crossed both hops.
-- Cold sidecar-create-to-first-successful-lease: 349 ms.
+- Sidecar-create-to-first-successful-lease over this phase's window: 369 ms, an upper bound that includes the
+  inspection and host-probe work above rather than a clean cold-start figure.
 
 Harness correction made during this phase, recorded because it changed what the evidence means: the first run
 reported a negative `replacement-start-to-first-successful-lease`. Relay event lookups matched by instance label,
@@ -294,11 +304,11 @@ helper that fails the spike on a negative duration rather than printing one.
 ### 2026-07-17: Phase 4 — Requirements 5 through 7
 
 - R5 PASS: `docker kill` of the session closed the lease in 20 ms. The sidecar removed only its own generation and
-  exited 135 ms later, and Docker removed it through `--rm`. It held one mount and no Docker socket throughout, so
+  exited 46 ms later, and Docker removed it through `--rm`. It held one mount and no Docker socket throughout, so
   cleanup needed no daemon access. An unrelated sibling generation was untouched.
-- R6 PASS: a graceful `docker stop` left the generation at `device=78 inode=1617`, unchanged before and after
+- R6 PASS: a graceful `docker stop` left the generation at `device=78 inode=1658`, unchanged before and after
   recovery, and removed only `control.sock` and `e0.sock`. The first same-name create **conflicted** on the name the
-  departing sidecar still held; the single permitted retry succeeded after its `destroy` event, 23 ms after `die`.
+  departing sidecar still held; the single permitted retry succeeded after its `destroy` event, 27 ms after `die`.
   The replacement ran under the same name from the session's image ID while the run-specific mutable tag pointed at
   a different image, and it restored the data path with no session replacement.
 - R7 PASS: a departing sidecar was held at lease EOF by withholding its event acknowledgement. A newer sibling
@@ -309,16 +319,19 @@ Timings, all measured on the host orchestrator's monotonic clock (raw, not propo
 
 | Interval | Observed |
 | --- | --- |
-| Cold sidecar-create-to-first-successful-lease | 322-363 ms across four pairs |
+| Cold sidecar-create-to-first-successful-lease | 333-350 ms across three uninterrupted pairs |
 | Kill-to-lease-EOF | 20 ms |
-| Lease-EOF-to-sidecar-exit | 135 ms |
-| Sidecar die-to-name-creatable | 23 ms (after one name conflict and one retry) |
-| Replacement-create-to-start | 116 ms |
-| Replacement-start-to-first-successful-lease | 810 ms |
-| Replacement-create-to-first-successful-lease | 926 ms |
-| Lease-to-restored-data-path | 63 ms |
+| Lease-EOF-to-sidecar-exit | 46 ms |
+| Sidecar die-to-name-creatable | 27 ms (after one name conflict and one retry) |
+| Replacement-create-to-start | 91 ms |
+| Replacement-start-to-first-successful-lease | 831 ms |
+| Replacement-create-to-first-successful-lease | 922 ms |
+| Lease-to-restored-data-path | 83 ms |
 | Observed lease retry gap | 1 s (the helper's configured interval, across 2 lease-loop steps) |
 | Spike-only watchdog | 60 s, the replacement's initial-lease failure bound |
+
+A fourth cold-start sample, 369 ms, is excluded from the range above: its window deliberately contains the phase 2
+security inspection and host probe, so it is an upper bound rather than a cold-start measurement.
 
 The recovery lease is dominated by the helper's 1-second retry gap, not by Docker: the replacement bound its
 sockets long before the session's next attempt. That is exactly the dependency the design's timeout inequality
@@ -334,7 +347,7 @@ exists to protect, and it is why the feature execution plan must derive its valu
 4. Launcher-death survival — PASS. The session, sidecar, lease, and data path survived the launcher's exit.
 5. Lease closure — PASS. The lease closed 20 ms after `docker kill`, and the sidecar cleaned up and exited with no
    Docker access.
-6. Sidecar restart — PASS. The generation stayed at `device=78 inode=1617`, and the replacement recovered under the
+6. Sidecar restart — PASS. The generation stayed at `device=78 inode=1658`, and the replacement recovered under the
    same name from the session's image ID.
 7. Generation cleanup — PASS. A departing sidecar removed only its own generation while the newer sibling kept
    serving.
@@ -353,6 +366,29 @@ falsified, so the detached host relay fallback is not needed and the design need
 - `git diff -- go.mod go.sum tests/smoke/go.mod tests/smoke/go.sum` -> empty; the helper used only the standard
   library and the harness only the smoke module's existing Moby and Testify dependencies.
 - `make test`, `make check-docs`, and `git diff --check` -> pass after removal.
+
+### 2026-07-17: Review Pass and Re-Run
+
+The spike was reviewed after its first disposal, the harness was restored from git history, three measurement
+defects were fixed, and the spike was re-run end to end. All seven requirements still pass, so the verdict is
+unchanged; the numbers above are the corrected ones. What changed:
+
+- Docker lifecycle events were timestamped when the test read them, not when the daemon recorded them.
+  `ContainerStop` returns only after the container has died, so the `die` event was already buffered and every
+  interval measured from it was wrong. `die-to-name-creatable` was understated as 23 ms and is really 27 ms, and
+  `lease-EOF-to-sidecar-exit` was overstated as 135 ms and is really 46 ms. Both now use the daemon's `TimeNano`.
+- The phase 2 cold-start window silently included the harness's own security inspection and host probe, so a
+  polluted 349 ms sample was being averaged with clean ones. It is now labelled an upper bound and excluded from the
+  cold-start range.
+- The generation's device and inode after recovery were asserted equal to the originals but never recorded. Both are
+  now facts in the evidence.
+- R1 rested on a single success, which would look identical if the sentinel had never been loopback-only. The review
+  added a `dial-check` helper mode and a control container: the same image, command, identity and confinement now
+  runs in both network namespaces, and R1 is recorded only because the host one reached the sentinel and the bridge
+  one did not.
+
+Nothing about the verdict rests on the corrected values: the requirements were decided by observed lifecycle events
+and byte-path assertions, not by their durations.
 
 ### Deviations from the plan
 
