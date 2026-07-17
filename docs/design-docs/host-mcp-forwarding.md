@@ -994,7 +994,7 @@ feature execution plan is authorized. The verdict below is the record of that ga
 
 The sidecar shape rested on assumptions about namespaces, ID mapping, and lease behavior that only a real host could
 settle. A throwaway Go/Moby harness tested all seven on real Docker and Sysbox under
-[the spike plan](../exec-plans/review/2026-07-17-host-mcp-sidecar-spike-exec-plan.md), which holds the full evidence,
+[the spike plan](../exec-plans/completed/2026-07-17-host-mcp-sidecar-spike-exec-plan.md), which holds the full evidence,
 raw timings, and disposal record. Nothing from it became production or permanent smoke coverage.
 
 Tested environment, which is the exact scope of this verdict:

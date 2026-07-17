@@ -1,6 +1,6 @@
 # Exec Plan: Host MCP Relay Sidecar Linux/Sysbox Spike
 
-- Status: in review
+- Status: completed
 - Created: 2026-07-17
 - Design: [`docs/design-docs/host-mcp-forwarding.md`](../../design-docs/host-mcp-forwarding.md)
 - Scope:
@@ -371,8 +371,8 @@ exists to protect, and it is why the feature execution plan must derive its valu
 
 All seven requirements pass, so the design permits the feature execution plan. The verdict is recorded in
 [`host-mcp-forwarding.md`](../../design-docs/host-mcp-forwarding.md) and in the
-[design review](../../reviews/feature-review/2026-07-17-host-mcp-forwarding-design-review.md). No assumption was
-falsified, so the detached host relay fallback is not needed and the design needs no revision.
+ignored feature-review artifact `docs/reviews/feature-review/2026-07-17-host-mcp-forwarding-design-review.md`.
+No assumption was falsified, so the detached host relay fallback is not needed and the design needs no revision.
 
 ### 2026-07-17: Review Pass and Re-Run
 
@@ -450,3 +450,7 @@ working tree keeps none of it.
   review that changes recorded numbers.
 - The spike gained one check the plan did not ask for: the requirement 1 bridge-network control. It was added
   because a lone success could not distinguish host-namespace reach from a sentinel that was never loopback-only.
+
+### 2026-07-17: Accepted
+
+The owner accepted the finished spike and its recorded PASS verdict. This plan moves to `completed/`.

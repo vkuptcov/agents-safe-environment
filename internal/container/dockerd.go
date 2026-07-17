@@ -161,11 +161,11 @@ func waitForDockerReady(
 
 	var lastErr error
 	for {
-		if err := ping(readyContext, socketPath); err == nil {
+		err := ping(readyContext, socketPath)
+		if err == nil {
 			return nil
-		} else {
-			lastErr = err
 		}
+		lastErr = err
 		select {
 		case <-daemon.done:
 			return fmt.Errorf("dockerd exited before readiness: %v", daemon.Err())
