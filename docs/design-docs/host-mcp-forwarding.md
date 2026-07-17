@@ -1,6 +1,6 @@
 # Host MCP Access from codex-safe Containers
 
-Status: Proposed
+Status: Implemented
 
 Scope:
 

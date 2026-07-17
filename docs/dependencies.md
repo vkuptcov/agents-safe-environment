@@ -9,6 +9,16 @@ Ask for explicit owner approval before adding a runtime, build, test, container,
 - Explain the ownership, security, and maintenance reason for every new module.
 - Run `go mod tidy` only when the dependency graph intentionally changes, then review the complete diff.
 
+### Approved Modules
+
+- `github.com/BurntSushi/toml` — approved by the owner on 2026-07-17 for
+  [Host MCP Access](design-docs/host-mcp-forwarding.md). It parses the user-authored `config.toml`
+  during launcher preflight, where a hand-rolled scanner over dotted keys, inline tables, and
+  multi-line strings would be a correctness liability. It is a TOML 1.1.0 parser with no transitive
+  dependencies, chosen over the faster `pelletier/go-toml/v2` because it is the smaller parser and
+  this code runs once per launch in the launcher's trusted computing base. The smoke module carries
+  it as an indirect dependency because it imports the launcher packages that use it.
+
 ## Container Dependencies
 
 Pin base images and downloaded binaries as required by the owning design. Preserve checksum verification for remote

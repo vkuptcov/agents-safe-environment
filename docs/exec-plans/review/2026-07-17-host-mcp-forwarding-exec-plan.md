@@ -1,6 +1,6 @@
 # Exec Plan: Host MCP Forwarding
 
-- Status: active
+- Status: in review
 - Created: 2026-07-17
 - Design: [`docs/design-docs/host-mcp-forwarding.md`](../../design-docs/host-mcp-forwarding.md)
 - Scope:
@@ -218,7 +218,7 @@ narrowing case.
 
 ### Phase 8: Real-Host Proof and Documentation
 Purpose: Prove the feature on real Sysbox and leave the docs true.
-Status: to be done
+Status: done
 Done when: the design's Sysbox integration tests and security gate pass, and the docs match the implementation.
 
 1. Add the Sysbox integration tests from the design's Test Plan to `tests/smoke/`.
@@ -281,4 +281,58 @@ Done when: the design's Sysbox integration tests and security gate pass, and the
 
 ## Progress Notes
 
-- Add dated execution notes before moving this plan to `review/`.
+### 2026-07-17: Implementation complete
+
+All eight phases are implemented and committed, one commit per phase, plus a correction pass. The
+feature works end to end on real Sysbox: a loopback MCP server in the base `config.toml` answers
+inside the container at the address its URL names, and `--no-host-mcp` leaves it unreachable with no
+sidecar.
+
+- Discovery, the typed create request, the entrypoint split and image-ID resolution, the relay
+  sidecar, the container forwarders and lease, the launcher wiring, and `--no-host-mcp` each landed
+  in their own phase with unit tests covering the design's Test Plan.
+- Two packages the design's code map did not name were added, because the container image builds
+  from a fixed directory list and cannot import launcher code: `internal/mcpchannel` (the shared
+  socket and control-protocol contract, no dependencies) and `internal/relay`.
+- The launch options travel as a `launchplan.Options` value through the `Launcher` interface rather
+  than as launcher state, so `--no-host-mcp` is per-launch.
+
+### 2026-07-17: Codex review of phases 4-5
+
+An independent Codex review (`gpt-5.6-sol`, effort `xhigh`) of the relay and serve-side channel
+returned REQUEST CHANGES with seven findings, all accepted and fixed:
+
+- A non-EOF lease read error was treated as clean EOF and would have deleted a live session's
+  generation directory; only clean EOF now permits removal.
+- `close()` closed endpoint listeners before `control.sock`, inverting the "control removed first"
+  rule and leaving a false-ready window; a shutdown flag and the corrected order fix it.
+- The lease retry loop ignored channel close and could spin forever; it now selects on a done signal.
+- Accept loops died on transient errors; they now back off and treat `net.ErrClosed` as the end.
+- Listener binds now honour the bootstrap deadline; the account commands that were the real
+  cold-start risk already used `CommandContext`.
+- Several tests were weak or vacuous (a partial-bind test that never bound, an uncounted dial
+  counter, a half-close witness that returned before EOF) and were rebuilt to be mutation-resistant.
+- Generation removal now refuses a path with no named child.
+
+The plan-level Codex review before implementation also caught that the cold-start "budget" was not
+an enforced bound; the two 20-second deadlines that make it a fact were added before Phase 5.
+
+### 2026-07-17: Real-host evidence
+
+`CODEX_SAFE_RUN_SYSBOX_SMOKE=1 make test-smoke-go` on the recorded host:
+
+- `TestSysboxHostMCPForwardsLoopbackServer` PASS: the container reached the loopback sentinel through
+  both hops and received its nonce; the sidecar inspection matched the full confinement contract and
+  carried no `codex-safe.managed` label; the session container stayed under Sysbox with no host
+  namespace.
+- `TestSysboxHostMCPNoHostMCPMakesSentinelUnreachable` PASS: `--no-host-mcp` left the sentinel
+  unreachable and created no sidecar.
+- No labelled container or `codex-safe` runtime directory remained after the run.
+
+The relay was also proven directly: the production image's `relay` mode, run `--network=host
+--cap-drop=ALL --read-only` as uid 1000, published `0600` sockets and carried bytes to a
+loopback-only sentinel and back. The race detector is clean on `internal/relay`, `internal/container`,
+and `internal/launcher`.
+
+Only `github.com/BurntSushi/toml` was added; the smoke module carries it as an indirect dependency
+because it imports the launcher packages that use it.
