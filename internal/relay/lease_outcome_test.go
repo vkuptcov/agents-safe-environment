@@ -67,7 +67,7 @@ func TestHandleControlClassifiesLeaseEnd(t *testing.T) {
 
 			select {
 			case outcome := <-ended:
-				if !errors.Is(outcome.err, testCase.wantErr) && outcome.err != testCase.wantErr {
+				if !errors.Is(outcome.err, testCase.wantErr) {
 					t.Fatalf("lease outcome err = %v, want %v", outcome.err, testCase.wantErr)
 				}
 			default:

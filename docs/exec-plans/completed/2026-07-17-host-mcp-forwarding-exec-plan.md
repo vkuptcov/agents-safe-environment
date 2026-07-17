@@ -1,6 +1,6 @@
 # Exec Plan: Host MCP Forwarding
 
-- Status: in review
+- Status: completed
 - Created: 2026-07-17
 - Design: [`docs/design-docs/host-mcp-forwarding.md`](../../design-docs/host-mcp-forwarding.md)
 - Scope:
@@ -36,7 +36,7 @@ and covered by the design's Test Plan.
 ## Current Baseline
 
 The design is accepted and its Linux/Sysbox spike passed on 2026-07-17
-([verdict](../review/2026-07-17-host-mcp-sidecar-spike-exec-plan.md)), so this plan is authorized. No feature code
+([verdict](2026-07-17-host-mcp-sidecar-spike-exec-plan.md)), so this plan is authorized. No feature code
 exists: there is no `internal/launcher/hostmcp/`, no `relay` mode, no `--no-host-mcp`, and no TOML dependency.
 
 The pieces this plan must change:
@@ -336,3 +336,7 @@ and `internal/launcher`.
 
 Only `github.com/BurntSushi/toml` was added; the smoke module carries it as an indirect dependency
 because it imports the launcher packages that use it.
+
+### 2026-07-17: Accepted
+
+The owner accepted the implemented and real-host-validated forwarding feature. This plan moves to `completed/`.

@@ -9,6 +9,23 @@ Ask for explicit owner approval before adding a runtime, build, test, container,
 - Explain the ownership, security, and maintenance reason for every new module.
 - Run `go mod tidy` only when the dependency graph intentionally changes, then review the complete diff.
 
+## Go Tooling Dependencies
+
+- Keep Go developer tools in the nested `tools` module so their dependency graphs do not affect the application
+  module.
+- Add tools with a pinned version through `go get -tool -modfile=tools/go.mod <package>@<version>`.
+- Install all declared tools into the ignored project-local `bin/` directory with `make install-tools`.
+- Run tools through repository Make targets backed by `bin/`; do not require or prefer a global installation.
+- If the tooling graph needs normalization, run `go -C tools mod tidy`; do not run root-level `go mod tidy` with
+  the tools modfile because it resolves application packages as though they belonged to the tooling module.
+- Do not update a tool's transitive dependencies independently of its pinned release.
+
+### Approved Tools
+
+- `github.com/golangci/golangci-lint/v2/cmd/golangci-lint` v2.12.2 — approved by the owner on 2026-07-17 for the
+  repository-wide Go lint gate. Its dependency graph is isolated under `tools/` because it is build-time tooling,
+  not an application dependency.
+
 ### Approved Modules
 
 - `github.com/BurntSushi/toml` — approved by the owner on 2026-07-17 for

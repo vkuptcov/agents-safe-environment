@@ -92,7 +92,8 @@ func RunCommand(ctx context.Context, config CommandConfig) error {
 	}
 	defer registration.Close()
 
-	command := exec.CommandContext(ctx, config.Command[0], config.Command[1:]...)
+	// Running the caller-supplied command is the purpose of this session wrapper.
+	command := exec.CommandContext(ctx, config.Command[0], config.Command[1:]...) //nolint:gosec
 	command.Stdin = config.Stdin
 	command.Stdout = config.Stdout
 	command.Stderr = config.Stderr
@@ -223,7 +224,7 @@ func commandWaitError(err error) error {
 	var exitError *exec.ExitError
 	if errors.As(err, &exitError) {
 		exitCode = exitError.ExitCode()
-		if waitStatus, ok := exitError.ProcessState.Sys().(syscall.WaitStatus); ok && waitStatus.Signaled() {
+		if waitStatus, ok := exitError.Sys().(syscall.WaitStatus); ok && waitStatus.Signaled() {
 			exitCode = 128 + int(waitStatus.Signal())
 		}
 	}

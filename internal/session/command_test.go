@@ -235,7 +235,7 @@ func TestRunCommandDoesNotWaitOnUnacknowledgedShutdownSocket(t *testing.T) {
 	}
 }
 
-func TestRunnerHelperProcess(t *testing.T) {
+func TestRunnerHelperProcess(_ *testing.T) {
 	if os.Getenv(helperEnvironment) != "1" {
 		return
 	}

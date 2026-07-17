@@ -5,8 +5,11 @@ AGENTS_BINARY := bin/agents-safe
 SESSION_BINARY := bin/codex-safe-session
 IMAGE := codex-safe-mvp:local
 SMOKE_DIR := tests/smoke
+GOLANGCI_LINT_MODFILE := tools/go.mod
+TOOLS_BIN_DIR := bin
+GOLANGCI_LINT_BINARY := $(TOOLS_BIN_DIR)/golangci-lint
 
-.PHONY: build docker-build test test-smoke-go check-docs check-doc-links check-mermaid
+.PHONY: build docker-build install-tools lint lint-n-fix test test-smoke-go check-docs check-doc-links check-mermaid
 
 build:
 	mkdir -p $(dir $(CODEX_BINARY))
@@ -16,6 +19,18 @@ build:
 
 docker-build:
 	$(DOCKER) build -t $(IMAGE) -f container/Dockerfile .
+
+install-tools: $(GOLANGCI_LINT_BINARY)
+
+$(GOLANGCI_LINT_BINARY): $(GOLANGCI_LINT_MODFILE) tools/go.sum
+	mkdir -p $(TOOLS_BIN_DIR)
+	GOBIN=$(CURDIR)/$(TOOLS_BIN_DIR) $(GO) install -modfile=$(GOLANGCI_LINT_MODFILE) tool
+
+lint: $(GOLANGCI_LINT_BINARY)
+	$(GOLANGCI_LINT_BINARY) run ./...
+
+lint-n-fix: $(GOLANGCI_LINT_BINARY)
+	$(GOLANGCI_LINT_BINARY) run --fix ./...
 
 test:
 	$(GO) test ./...

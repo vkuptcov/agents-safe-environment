@@ -198,9 +198,9 @@ func TestInspectUserMountsCanonicalizesSymlinkedCodexHome(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	mkdir(t, filepath.Join(home, ".codex"))
-	real := mkdir(t, filepath.Join(t.TempDir(), "real codex"))
+	realCodexHome := mkdir(t, filepath.Join(t.TempDir(), "real codex"))
 	link := filepath.Join(t.TempDir(), "link-codex")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realCodexHome, link); err != nil {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
@@ -211,8 +211,8 @@ func TestInspectUserMountsCanonicalizesSymlinkedCodexHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspectExistingUserMounts() error = %v", err)
 	}
-	if state.CodexHome != evalPath(t, real) {
-		t.Errorf("CodexHome = %q, want symlink target %q", state.CodexHome, evalPath(t, real))
+	if state.CodexHome != evalPath(t, realCodexHome) {
+		t.Errorf("CodexHome = %q, want symlink target %q", state.CodexHome, evalPath(t, realCodexHome))
 	}
 }
 

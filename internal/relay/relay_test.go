@@ -26,7 +26,6 @@ const testBound = 10 * time.Second
 type sentinel struct {
 	listener net.Listener
 	dialed   atomic.Int64
-	lastHost atomic.Value
 }
 
 func newSentinel(t *testing.T) *sentinel {
@@ -181,7 +180,7 @@ func TestRelayPartialBindRemovesWhatItBoundAndNeverPublishesControl(t *testing.T
 	// (len 12) reaches it. len(dir) must be in [95, 99]; target the top of that window.
 	const generationLength = 99
 	pad := generationLength - len(root) - 1 // minus the separator before the generation name
-	require.Greater(t, pad, 0, "the temp root is unexpectedly long: %d", len(root))
+	require.Positive(t, pad, "the temp root is unexpectedly long: %d", len(root))
 	generationDir := filepath.Join(root, "g"+strings.Repeat("x", pad-1))
 	require.Len(t, generationDir, generationLength, "the generation path must be sized exactly")
 	require.NoError(t, os.Mkdir(generationDir, 0o700), "the sized generation directory must be created")

@@ -8,12 +8,13 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Review
 
-- [Host MCP Relay Sidecar Linux/Sysbox Spike](review/2026-07-17-host-mcp-sidecar-spike-exec-plan.md): PASS verdict;
-  the feature execution plan is authorized.
-- [Host MCP Forwarding](review/2026-07-17-host-mcp-forwarding-exec-plan.md): implemented and proven on real Sysbox.
+- No plans are awaiting review or owner acceptance.
 
 ## Completed
 
+- [GolangCI-Lint Integration](completed/2026-07-17-golangci-lint-exec-plan.md)
+- [Host MCP Relay Sidecar Linux/Sysbox Spike](completed/2026-07-17-host-mcp-sidecar-spike-exec-plan.md)
+- [Host MCP Forwarding](completed/2026-07-17-host-mcp-forwarding-exec-plan.md)
 - [codex-safe Infrastructure MVP](completed/2026-07-13-codex-safe-mvp-exec-plan.md)
 - [Go Session Manager](completed/2026-07-14-go-session-manager-exec-plan.md)
 - [Run Codex Inside the Container](completed/2026-07-15-codex-launch-exec-plan.md)
