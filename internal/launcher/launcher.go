@@ -55,6 +55,9 @@ type DockerLauncher struct {
 	LookupEnv func(string) (string, bool)
 	// CodexHomePolicy controls how a missing Codex home is handled.
 	CodexHomePolicy CodexHomePolicy
+	// NoHostMCP skips host MCP discovery entirely: no config.toml read, no forwarders, no mount, and
+	// no relay. It selects creation-time state, so it cannot narrow a session that already forwards.
+	NoHostMCP bool
 
 	// resolveUserMounts overrides host user-mount resolution in tests. Production launchers leave it
 	// nil and resolve from the filesystem; see resolveMounts.
@@ -70,6 +73,13 @@ type launchAttempt struct {
 	plan          launchplan.Plan
 	image         string
 	containerName string
+	projectKey    string
+	// hostMCP is this attempt's forwarding decision. Its zero value forwards nothing, which is the
+	// zero-cost path through every lifecycle step.
+	hostMCP hostMCPPlan
+	// hostMCPImageID pins both containers to one immutable image, because they implement one private
+	// protocol and a compatible tag is not enough.
+	hostMCPImageID string
 }
 
 // NewDockerLauncher creates a launcher backed by the host Docker CLI and current process streams.
@@ -119,6 +129,14 @@ func NewDockerLauncher(codexHomePolicy CodexHomePolicy) (*DockerLauncher, error)
 		CodexHomePolicy: codexHomePolicy,
 	}
 	return docker, nil
+}
+
+// lookupEnv returns this launcher's environment reader, defaulting to the process environment.
+func (docker *DockerLauncher) lookupEnv() func(string) (string, bool) {
+	if docker.LookupEnv != nil {
+		return docker.LookupEnv
+	}
+	return os.LookupEnv
 }
 
 // resolveMounts resolves this launch's user mounts through the test seam when one is injected, and
@@ -248,10 +266,21 @@ func (docker *DockerLauncher) Launch(
 		plan:          plan,
 		image:         image,
 		containerName: ProjectContainerName(docker.HostUID, plan.ProjectRoot),
+		projectKey:    ProjectKey(docker.HostUID, plan.ProjectRoot),
+	}
+
+	// Discovery runs during preflight, before a container is created or reused, and its channel must
+	// exist before either container because it is a bind mount.
+	if err := attempt.planHostMCP(resolution); err != nil {
+		return err
 	}
 
 	containerID, userMounts, err := attempt.acquireContainer(ctx, resolution)
 	if err != nil {
+		// A candidate this attempt allocated and never used is this attempt's to clean up.
+		if removeErr := attempt.hostMCP.removeCandidate(); removeErr != nil {
+			return errors.Join(err, removeErr)
+		}
 		return err
 	}
 

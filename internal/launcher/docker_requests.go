@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
@@ -19,6 +20,7 @@ func (docker *DockerLauncher) buildCreateRequest(
 	image string,
 	containerName string,
 	userMounts UserMounts,
+	forwarding hostMCPPlan,
 ) (dockercli.CreateRequest, error) {
 	if strings.TrimSpace(image) == "" {
 		return dockercli.CreateRequest{}, errors.New("container image is required")
@@ -30,7 +32,7 @@ func (docker *DockerLauncher) buildCreateRequest(
 		return dockercli.CreateRequest{}, errors.New("resolved Codex home is required")
 	}
 
-	mounts := make([]dockercli.Mount, 0, len(plan.Mounts)+3)
+	mounts := make([]dockercli.Mount, 0, len(plan.Mounts)+4)
 	if docker.HostGitConfig != "" {
 		mounts = append(mounts, dockercli.Mount{
 			Source:   docker.HostGitConfig,
@@ -44,27 +46,53 @@ func (docker *DockerLauncher) buildCreateRequest(
 	for _, mount := range userMountBindMounts(docker.HostHome, userMounts) {
 		mounts = append(mounts, dockercli.Mount(mount))
 	}
+
+	labels := []dockercli.KeyValue{
+		{Key: managedLabel, Value: managedLabelValue},
+		{Key: projectPathLabel, Value: plan.ProjectRoot},
+		{Key: hostUIDLabel, Value: strconv.Itoa(docker.HostUID)},
+		{Key: managerProtocolLabel, Value: session.ProtocolVersion},
+		{Key: codexHomeLabel, Value: userMounts.codexHomeLabel()},
+		{Key: personalSkillsLabel, Value: userMounts.personalSkillsLabel()},
+		// Compared on reuse. It records `absent` for a session created with an empty set, which is
+		// what distinguishes "forwards nothing" from "predates this feature".
+		{Key: hostMCPLabel, Value: forwarding.set.Label()},
+	}
+	environment := []dockercli.KeyValue{
+		{Key: "CODEX_SAFE_HOST_UID", Value: strconv.Itoa(docker.HostUID)},
+		{Key: "CODEX_SAFE_HOST_GID", Value: strconv.Itoa(docker.HostGID)},
+		{Key: "CODEX_SAFE_HOST_USER", Value: docker.HostUser},
+		{Key: "CODEX_SAFE_HOST_GROUP", Value: docker.HostGroup},
+		{Key: "CODEX_SAFE_HOST_HOME", Value: docker.HostHome},
+	}
+
+	// An empty endpoint set is the zero-cost path: no environment variable, no mount, and no channel
+	// label. A user with no local MCP servers sees the launcher behave exactly as it did before.
+	if !forwarding.set.Empty() {
+		encoded, err := forwarding.set.Environment()
+		if err != nil {
+			return dockercli.CreateRequest{}, err
+		}
+		environment = append(environment, dockercli.KeyValue{Key: hostMCPEnv, Value: encoded})
+		mounts = append(mounts, dockercli.Mount{
+			Source: forwarding.channel.Generation,
+			Target: hostmcp.SessionTarget,
+		})
+		// Read on reuse, never compared: it locates the channel this session's sidecar serves.
+		labels = append(labels, dockercli.KeyValue{
+			Key:   hostMCPChannelLabel,
+			Value: forwarding.channel.Generation,
+		})
+	}
+
 	return dockercli.CreateRequest{
-		Image:      image,
-		Name:       containerName,
-		Runtime:    sysboxRuntime,
-		WorkingDir: plan.WorkingDir,
-		Labels: []dockercli.KeyValue{
-			{Key: managedLabel, Value: managedLabelValue},
-			{Key: projectPathLabel, Value: plan.ProjectRoot},
-			{Key: hostUIDLabel, Value: strconv.Itoa(docker.HostUID)},
-			{Key: managerProtocolLabel, Value: session.ProtocolVersion},
-			{Key: codexHomeLabel, Value: userMounts.codexHomeLabel()},
-			{Key: personalSkillsLabel, Value: userMounts.personalSkillsLabel()},
-		},
-		Environment: []dockercli.KeyValue{
-			{Key: "CODEX_SAFE_HOST_UID", Value: strconv.Itoa(docker.HostUID)},
-			{Key: "CODEX_SAFE_HOST_GID", Value: strconv.Itoa(docker.HostGID)},
-			{Key: "CODEX_SAFE_HOST_USER", Value: docker.HostUser},
-			{Key: "CODEX_SAFE_HOST_GROUP", Value: docker.HostGroup},
-			{Key: "CODEX_SAFE_HOST_HOME", Value: docker.HostHome},
-		},
-		Mounts: mounts,
+		Image:       image,
+		Name:        containerName,
+		Runtime:     sysboxRuntime,
+		WorkingDir:  plan.WorkingDir,
+		Labels:      labels,
+		Environment: environment,
+		Mounts:      mounts,
 	}, nil
 }
 

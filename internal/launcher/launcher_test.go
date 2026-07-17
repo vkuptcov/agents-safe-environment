@@ -50,6 +50,8 @@ func TestBuildDockerRunArgsUsesDetachedSysboxAndIdentityLabels(t *testing.T) {
 		"codex-safe.codex-home=/home/developer/.codex",
 		"--label",
 		"codex-safe.personal-skills=absent",
+		"--label",
+		"codex-safe.host-mcp=absent",
 		"--env",
 		"CODEX_SAFE_HOST_UID=1000",
 		"--env",

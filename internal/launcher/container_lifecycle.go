@@ -24,6 +24,10 @@ const (
 	containerStateTimeout   = 20 * time.Second
 	containerPollInterval   = 50 * time.Millisecond
 	containerCreateAttempts = 5
+
+	// containerStopTimeout is how long Docker waits for a container to stop gracefully before
+	// killing it. A relay sidecar has only sockets to release, so it needs no more.
+	containerStopTimeout = 10 * time.Second
 )
 
 func (attempt *launchAttempt) acquireContainer(
@@ -39,6 +43,9 @@ func (attempt *launchAttempt) acquireContainer(
 			if err := attempt.validateResolvedRunningUserMounts(inspection, resolution); err != nil {
 				return "", UserMounts{}, err
 			}
+			if err := attempt.reuseHostMCP(ctx, inspection); err != nil {
+				return "", UserMounts{}, err
+			}
 			return inspection.ID, resolution.mounts, nil
 		}
 		containerID, err := attempt.waitForReusableOrReleased(ctx, resolution)
@@ -46,6 +53,9 @@ func (attempt *launchAttempt) acquireContainer(
 			return "", UserMounts{}, err
 		}
 		if containerID != "" {
+			if err := attempt.reuseHostMCPAfterWait(ctx); err != nil {
+				return "", UserMounts{}, err
+			}
 			return containerID, resolution.mounts, nil
 		}
 	}
@@ -53,23 +63,37 @@ func (attempt *launchAttempt) acquireContainer(
 	if err := attempt.cli.Preflight(ctx, sysboxRuntime, attempt.image); err != nil {
 		return "", UserMounts{}, err
 	}
+	// materializeUserMounts can block on an interactive Codex-home prompt, so nothing that starts a
+	// clock may precede it. The sidecar is created after this, immediately before the session, or it
+	// would burn its initial-lease timeout waiting for a human.
 	userMounts, err := attempt.docker.materializeUserMounts(attempt.plan, resolution)
 	if err != nil {
 		return "", UserMounts{}, err
 	}
+	if err := attempt.resolveHostMCPImage(ctx); err != nil {
+		return "", UserMounts{}, err
+	}
 	for count := 0; count < containerCreateAttempts; count++ {
-		containerID, conflict, err := attempt.createContainer(ctx, userMounts)
+		containerID, conflict, err := attempt.createSessionWithHostMCP(ctx, userMounts)
 		if err != nil {
 			return "", UserMounts{}, err
 		}
 		if !conflict {
 			return containerID, userMounts, nil
 		}
+		// This attempt lost the session-name race. Its candidate sidecar is transient by
+		// construction: stop and await only this attempt's own, and remove only its generation.
+		if err := attempt.discardHostMCPCandidate(ctx); err != nil {
+			return "", UserMounts{}, err
+		}
 		containerID, err = attempt.waitForReusableOrReleased(ctx, userMountResolution{mounts: userMounts})
 		if err != nil {
 			return "", UserMounts{}, err
 		}
 		if containerID != "" {
+			if err := attempt.reuseHostMCPAfterWait(ctx); err != nil {
+				return "", UserMounts{}, err
+			}
 			return containerID, userMounts, nil
 		}
 		if err := waitForContainerPoll(ctx); err != nil {
@@ -101,10 +125,14 @@ func (attempt *launchAttempt) createContainer(
 	userMounts UserMounts,
 ) (string, bool, error) {
 	request, err := attempt.docker.buildCreateRequest(
-		attempt.plan, attempt.image, attempt.containerName, userMounts,
+		attempt.plan, attempt.image, attempt.containerName, userMounts, attempt.hostMCP,
 	)
 	if err != nil {
 		return "", false, err
+	}
+	// Both containers must come from one immutable image, so a resolved ID supersedes the reference.
+	if attempt.hostMCPImageID != "" {
+		request.Image = attempt.hostMCPImageID
 	}
 	if request.Runtime == "" {
 		return "", false, errors.New("session container must be created with an explicit runtime")

@@ -182,7 +182,7 @@ Done when: `serve` binds one listener per concrete address and holds the lease f
 
 ### Phase 6: Launcher Wiring
 Purpose: Create the channel, the sidecar, and the session in the design's order, and print the boundary widening.
-Status: to be done
+Status: done
 Done when: a cold launch forwards a loopback endpoint and an empty set behaves exactly as today.
 
 1. Create the `0700` generation directory under `XDG_RUNTIME_DIR` before either container, validating ownership
