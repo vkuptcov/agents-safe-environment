@@ -129,8 +129,19 @@ interactive Codex behaves as it does on the host.
 The generic command interface is:
 
 ```text
+agents-safe init [--project PATH]
 agents-safe [--project PATH] [--image REF] [--] COMMAND [ARG...]
 ```
+
+Prepare an inactive project-environment template from anywhere inside a Git worktree:
+
+```bash
+./bin/agents-safe init
+```
+
+This creates `.agents-safe/Dockerfile.sample` at the worktree root without contacting Docker. Edit the sample, then
+rename it to `.agents-safe/Dockerfile` to activate automatic project-image builds. The command never overwrites an
+existing sample. Use `./bin/agents-safe -- init` when `init` is the container command you intend to execute.
 
 For example, open Bash inside the environment for the current Git project:
 

@@ -115,6 +115,7 @@ The user-facing interface is:
 
 ```text
 codex-safe [launcher options] [-- codex arguments]
+agents-safe init [--project path]
 agents-safe [launcher options] [--] command [argument ...]
 ```
 
@@ -139,6 +140,10 @@ command name that starts with a hyphen. The command and every argument remain se
 through the session wrapper. For example, `agents-safe bash` runs image-provided Bash, and
 `agents-safe bash -c 'make test'` passes the script to that Bash. `agents-safe` does not invoke a shell implicitly.
 It can execute only programs available in the image or explicitly mounted project paths.
+
+`agents-safe init` is the only host-side subcommand. It creates an inactive project-environment sample as specified
+by [Project-Specific Agent Environments](project-environments.md) and returns without initializing Docker. Because a
+leading `init` is reserved for that operation, `agents-safe -- init` executes a container command named `init`.
 
 Both commands use the same project discovery, mount plan, image selection, session-reuse validation, terminal
 attachment, and exit-code propagation. The lower-level session wrapper remains command-agnostic for container-local

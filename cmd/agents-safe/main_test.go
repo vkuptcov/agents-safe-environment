@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -125,5 +126,155 @@ func TestConfigRequiresCommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "command is required") {
 		t.Errorf("stderr = %q, want missing-command diagnostic", stderr.String())
+	}
+}
+
+func TestRunInitCreatesSampleWithoutConstructingLauncher(t *testing.T) {
+	t.Parallel()
+	wantProject := gitproject.Project{RequestedDir: "/project/nested", WorktreeRoot: "/project"}
+	var discoverPath string
+	var initializedRoot string
+	dependencies := panicCommandDependencies()
+	dependencies.discover = func(_ context.Context, path string) (gitproject.Project, error) {
+		discoverPath = path
+		return wantProject, nil
+	}
+	dependencies.createSample = func(root string) (string, error) {
+		initializedRoot = root
+		return "/project/.agents-safe/Dockerfile.sample", nil
+	}
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+
+	exitCode := run(
+		context.Background(),
+		[]string{"init", "--project", "/project/nested"},
+		stdout,
+		stderr,
+		dependencies,
+	)
+
+	if exitCode != 0 {
+		t.Fatalf("run() = %d, want 0; stderr = %q", exitCode, stderr.String())
+	}
+	if discoverPath != "/project/nested" {
+		t.Errorf("discover path = %q, want /project/nested", discoverPath)
+	}
+	if initializedRoot != wantProject.WorktreeRoot {
+		t.Errorf("initialized root = %q, want %q", initializedRoot, wantProject.WorktreeRoot)
+	}
+	if !strings.Contains(stdout.String(), "/project/.agents-safe/Dockerfile.sample") {
+		t.Errorf("stdout = %q, want created sample path", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRunInitHelpDoesNotUseRuntimeDependencies(t *testing.T) {
+	t.Parallel()
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+
+	exitCode := run(
+		context.Background(),
+		[]string{"init", "--help"},
+		stdout,
+		stderr,
+		panicCommandDependencies(),
+	)
+
+	if exitCode != 0 {
+		t.Fatalf("run() = %d, want 0", exitCode)
+	}
+	if !strings.Contains(stdout.String(), "Usage: agents-safe init") {
+		t.Errorf("stdout = %q, want init usage", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRunInitRejectsArgumentsBeforeDiscovery(t *testing.T) {
+	t.Parallel()
+	stderr := new(bytes.Buffer)
+
+	exitCode := run(
+		context.Background(),
+		[]string{"init", "unexpected"},
+		new(bytes.Buffer),
+		stderr,
+		panicCommandDependencies(),
+	)
+
+	if exitCode != 2 {
+		t.Fatalf("run() = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "positional arguments are not supported") {
+		t.Errorf("stderr = %q, want positional-argument diagnostic", stderr.String())
+	}
+}
+
+func TestRunSeparatorPreservesContainerInitCommand(t *testing.T) {
+	t.Parallel()
+	recordingLauncher := &clitest.RecordingLauncher{}
+	dependencies := commandDependencies{
+		discover:        func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		buildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) { return launchplan.Plan{}, nil },
+		createSample:    func(string) (string, error) { panic("CreateSample should not be called") },
+		newLauncher:     func() (cli.Launcher, error) { return recordingLauncher, nil },
+	}
+
+	exitCode := run(
+		context.Background(),
+		[]string{"--", "init"},
+		new(bytes.Buffer),
+		new(bytes.Buffer),
+		dependencies,
+	)
+
+	if exitCode != 0 {
+		t.Fatalf("run() = %d, want 0", exitCode)
+	}
+	if !reflect.DeepEqual(recordingLauncher.Command, []string{"init"}) {
+		t.Errorf("command = %#v, want [init]", recordingLauncher.Command)
+	}
+}
+
+func TestRunInitReportsCreationError(t *testing.T) {
+	t.Parallel()
+	dependencies := panicCommandDependencies()
+	dependencies.discover = func(context.Context, string) (gitproject.Project, error) {
+		return gitproject.Project{WorktreeRoot: "/project"}, nil
+	}
+	dependencies.createSample = func(string) (string, error) {
+		return "", errors.New("sample already exists")
+	}
+	stderr := new(bytes.Buffer)
+
+	exitCode := run(context.Background(), []string{"init"}, new(bytes.Buffer), stderr, dependencies)
+
+	if exitCode != 1 {
+		t.Fatalf("run() = %d, want 1", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "sample already exists") {
+		t.Errorf("stderr = %q, want creation error", stderr.String())
+	}
+}
+
+func panicCommandDependencies() commandDependencies {
+	return commandDependencies{
+		discover: func(context.Context, string) (gitproject.Project, error) {
+			panic("Discover should not be called")
+		},
+		buildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) {
+			panic("BuildLaunchPlan should not be called")
+		},
+		createSample: func(string) (string, error) {
+			panic("CreateSample should not be called")
+		},
+		newLauncher: func() (cli.Launcher, error) {
+			panic("NewLauncher should not be called")
+		},
 	}
 }

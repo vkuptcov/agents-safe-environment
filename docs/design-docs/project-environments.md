@@ -7,6 +7,7 @@ Decision: the owner accepted Dockerfile-as-consent and BuildKit-owned cache sema
 Scope:
 
 - project-owned system toolchains and packages needed inside `codex-safe` and `agents-safe` sessions;
+- initialization of an inactive `.agents-safe/Dockerfile.sample` template;
 - automatic host-side builds from `.agents-safe/Dockerfile`;
 - stable project-image naming, static compatibility checks, and active-session reuse;
 - precedence of the existing explicit `--image` override.
@@ -47,7 +48,25 @@ There is no additional launcher prompt or trust database.
 
 ## Contract
 
-### 1. Discovery and precedence
+### 1. Project initialization
+
+`agents-safe init [--project PATH]` discovers the selected Git worktree and creates:
+
+```text
+<canonical-worktree-root>/.agents-safe/Dockerfile.sample
+```
+
+Initialization is a host-side filesystem operation. It does not initialize Docker, inspect an image, build a project
+environment, or start a session. Invocation from a nested directory still writes to that worktree's root.
+
+The command creates `.agents-safe/` when absent, rejects that path when it is a symlink or non-directory, and never
+overwrites an existing `Dockerfile.sample`. Existing sibling files, including an active `Dockerfile`, are preserved.
+
+The sample is deliberately inactive. The user reviews and edits it, then renames it to `Dockerfile` to opt into the
+host-side build. A leading `init` selects this host subcommand; `agents-safe -- init` still launches a container
+command named `init`.
+
+### 2. Discovery and precedence
 
 The only project definition is:
 
@@ -66,7 +85,7 @@ Rules:
 Nested context traversal, `.dockerignore`, `COPY`, and layer invalidation use Docker's own build-context semantics. The
 launcher does not compute a competing digest over the context.
 
-### 2. Build and cache
+### 3. Build and cache
 
 The launcher first checks for a reusable deterministic session. Only the new-container path builds a project image.
 
@@ -93,7 +112,7 @@ Build progress and diagnostics use launcher stderr. Stdout remains reserved for 
 The build receives no secret mounts, SSH forwarding, host environment copy, host home, Codex home, or Docker socket.
 Private build credentials require a separate design.
 
-### 3. Derived-image compatibility
+### 4. Derived-image compatibility
 
 After a successful build, the launcher inspects the stable tag and selects its immutable image ID. It rejects a
 derived image that changes any static base-image contract:
@@ -109,7 +128,7 @@ or broken runtime binaries fail without a base-image fallback.
 
 Validation does not make a Dockerfile trustworthy. The project opted into executing it by tracking the definition.
 
-### 4. Active-session reuse
+### 5. Active-session reuse
 
 Image selection applies only when the deterministic session container is created. A compatible running session is
 reused without building or inspecting a project image, even when:
@@ -124,7 +143,7 @@ cold create builds the current Dockerfile or returns to the selected base image 
 The launcher never terminates active commands, rebuilds a running container, or installs packages through
 `docker exec`.
 
-### 5. Failure and concurrency
+### 6. Failure and concurrency
 
 The launcher fails without fallback when:
 
@@ -142,7 +161,7 @@ Concurrent cold callers may invoke duplicate builds against the same stable tag.
 container-name race still ensures that only one session container wins. Build serialization is an optimization, not
 a version-one host-state contract.
 
-### 6. Cache lifetime
+### 7. Cache lifetime
 
 The stable derived image and BuildKit layers remain in host Docker after a Sysbox session is removed. They consume
 disk until ordinary Docker cleanup removes them.
@@ -195,6 +214,8 @@ This design excludes:
 
 Focused tests prove:
 
+- initialization creates the exact inactive sample without constructing a Docker launcher;
+- initialization rejects existing samples and symlink context directories without overwriting project content;
 - absent, valid, and invalid discovery boundaries;
 - stable per-project image naming;
 - explicit `--image` bypass;
@@ -213,7 +234,8 @@ Real-host smoke proves:
 ## Where the code lives
 
 - `internal/cli/`: preserves whether `--image` was explicitly supplied.
-- `internal/launcher/projectenv/`: discovers the fixed context and names the stable image tag.
+- `cmd/agents-safe/`: dispatches the host-side `init` subcommand before Docker launcher construction.
+- `internal/launcher/projectenv/`: creates the sample, discovers the fixed context, and names the stable image tag.
 - `internal/launcher/`: runs build orchestration, validates the result, and selects its immutable ID.
 - `internal/launcher/dockercli/`: provides typed Docker build and image-inspection transport.
 - `tests/smoke/`: provides real Docker and Sysbox proof.

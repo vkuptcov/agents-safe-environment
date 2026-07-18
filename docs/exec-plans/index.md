@@ -8,6 +8,7 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Review
 
+- [agents-safe Project Initialization](review/2026-07-18-agents-safe-init-exec-plan.md)
 - [Project-Specific Agent Environments](review/2026-07-17-project-environments-exec-plan.md)
 - [Simplify Project Environments](review/2026-07-18-simplify-project-environments-exec-plan.md)
 
