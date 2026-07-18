@@ -69,6 +69,7 @@ type launchAttempt struct {
 	cli           *dockercli.Client
 	plan          launchplan.Plan
 	image         string
+	imageOverride bool
 	containerName string
 	projectKey    string
 	// noHostMCP skips discovery entirely for this launch.
@@ -256,20 +257,20 @@ func (docker *DockerLauncher) Launch(
 	if strings.TrimSpace(image) == "" {
 		return errors.New("container image is required")
 	}
-	resolution, err := docker.resolveMounts(plan)
-	if err != nil {
-		return err
-	}
 	attempt := &launchAttempt{
 		docker:        docker,
 		cli:           dockercli.New(docker.DockerBinary, docker.CommandRunner),
 		plan:          plan,
 		image:         image,
+		imageOverride: options.ImageOverride,
 		containerName: ProjectContainerName(docker.HostUID, plan.ProjectRoot),
 		projectKey:    ProjectKey(docker.HostUID, plan.ProjectRoot),
 		noHostMCP:     options.NoHostMCP,
 	}
-
+	resolution, err := docker.resolveMounts(plan)
+	if err != nil {
+		return err
+	}
 	// Discovery runs during preflight, before a container is created or reused, and its channel must
 	// exist before either container because it is a bind mount.
 	if err := attempt.planHostMCP(resolution); err != nil {

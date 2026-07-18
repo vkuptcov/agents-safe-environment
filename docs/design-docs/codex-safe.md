@@ -90,7 +90,8 @@ managed-container identity, label expectations, lifecycle, reuse, user mounts, a
   package metadata through the explicitly mounted Codex paths.
 - Home and Codex-state discovery uses operating-system APIs and `CODEX_HOME`, not platform-specific path literals.
 - A linked worktree remains a fully functional Git working tree inside the container.
-- `docker build`, `docker run`, and Docker Compose use a separate nested daemon.
+- `docker build` uses BuildKit through the Docker Buildx CLI plugin; `docker run` and Docker Compose use the same
+  separate nested daemon.
 - The agent cannot see the host daemon's socket, containers, images, or volumes.
 - The agent receives no host paths beyond the explicit mount set.
 - Concurrent invocations for the same worktree reuse one container until the last managed command finishes.
@@ -125,6 +126,8 @@ agents-safe [launcher options] [--] command [argument ...]
   personal-skills sources must also match before it is eligible for reuse.
 - When exactly one eligible container is running, the command executes there with the requested working directory.
 - `--image` selects an image only when creating a new container; it does not replace an active environment.
+- An explicit `--image` bypasses `.agents-safe/Dockerfile` discovery; otherwise project-image behavior is owned by
+  [Project-Specific Agent Environments](project-environments.md).
 - Interactive mode attaches stdin, stdout, stderr, and the terminal to the container process.
 - After successful environment setup, the Codex exit code becomes the `codex-safe` exit code.
 
@@ -152,6 +155,10 @@ Minimum launcher options:
 
 The project controls the default image and pins it by immutable digest. An image override intentionally expands the
 trusted computing base and is always displayed before launch.
+
+Automatic project-owned image derivation is specified by
+[`Project-Specific Agent Environments`](project-environments.md). That contract keeps the explicit `--image`
+override and adds `.agents-safe/Dockerfile` discovery only when no override was supplied.
 
 ### 2. Project Discovery
 

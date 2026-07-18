@@ -9,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/terminal"
 )
 
@@ -314,6 +316,114 @@ func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
 	assertWrappedRun(t, runner.runCalls, containerID, []string{"make", "test"})
 	if !containsSequence(runner.runCalls[0], "exec", "--interactive", "--tty") {
 		t.Fatalf("exec does not preserve TTY: %#v", runner.runCalls[0])
+	}
+}
+
+func TestDockerLaunchExplicitImageBypassesInvalidProjectEnvironment(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, projectenv.Directory), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing", filepath.Join(root, projectenv.Directory, projectenv.DockerfileName)); err != nil {
+		t.Fatal(err)
+	}
+	containerID := strings.Repeat("d", 64)
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+		{output: []byte(containerID + "\n")},
+	}}
+	plan := launchplan.Plan{ProjectRoot: root, WorkingDir: root, Mounts: []launchplan.BindMount{{Source: root, Target: root}}}
+	docker := testDocker(runner)
+	if err := docker.Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{ImageOverride: true}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+}
+
+func TestDockerLaunchRejectsInvalidProjectEnvironmentOnColdCreate(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, projectenv.Directory), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing", filepath.Join(root, projectenv.Directory, projectenv.DockerfileName)); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeCommandRunner{outputs: []commandResult{containerNotFound()}}
+	plan := launchplan.Plan{ProjectRoot: root, WorkingDir: root, Mounts: []launchplan.BindMount{{Source: root, Target: root}}}
+	err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{})
+	if err == nil || !strings.Contains(err.Error(), "project Dockerfile") {
+		t.Fatalf("Launch() error = %v, want project Dockerfile validation failure", err)
+	}
+	if len(runner.combinedCalls) != 1 || len(runner.runCalls) != 0 {
+		t.Fatalf("invalid context calls = combined %#v run %#v, want container inspect only", runner.combinedCalls, runner.runCalls)
+	}
+}
+
+func TestDockerLaunchBuildsProjectImageAndPinsCreate(t *testing.T) {
+	t.Parallel()
+	root, contextPath := writeProjectDefinition(t)
+	derivedID := "sha256:" + strings.Repeat("b", 64)
+	containerID := strings.Repeat("c", 64)
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+		{output: imageInspectionJSON(t, derivedID)},
+		{output: []byte(containerID + "\n")},
+	}}
+	docker := testDocker(runner)
+	docker.Stderr = new(bytes.Buffer)
+	plan := launchplan.Plan{ProjectRoot: root, WorkingDir: root, Mounts: []launchplan.BindMount{{Source: root, Target: root}}}
+	if err := docker.Launch(context.Background(), plan, "base:image", []string{"true"}, launchplan.Options{}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if len(runner.runCalls) != 2 {
+		t.Fatalf("Run calls = %#v, want build and exec", runner.runCalls)
+	}
+	build := runner.runCalls[0]
+	if !containsSequence(build, "build", "--tag") || build[len(build)-1] != contextPath {
+		t.Fatalf("project build call = %#v", build)
+	}
+	tag := projectenv.LocalImageName(ProjectKey(docker.HostUID, root))
+	if !containsSequence(build, "--tag", tag) {
+		t.Fatalf("project build call = %#v, want stable tag %q", build, tag)
+	}
+	create := runner.combinedCalls[len(runner.combinedCalls)-1]
+	if create[len(create)-1] != derivedID {
+		t.Fatalf("create image = %q, want immutable derived ID %q", create[len(create)-1], derivedID)
+	}
+}
+
+func TestDockerLaunchReusesRunningSessionWithoutRebuildingProjectImage(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, projectenv.Directory), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing", filepath.Join(root, projectenv.Directory, projectenv.DockerfileName)); err != nil {
+		t.Fatal(err)
+	}
+	containerID := strings.Repeat("c", 64)
+	runner := &fakeCommandRunner{outputs: []commandResult{{
+		output: inspectionJSON(t, containerID, true, "running", matchingLabels(root, 1000)),
+	}}}
+	docker := testDocker(runner)
+	plan := launchplan.Plan{
+		ProjectRoot: root,
+		WorkingDir:  root,
+		Mounts:      []launchplan.BindMount{{Source: root, Target: root}},
+	}
+	if err := docker.Launch(context.Background(), plan, "base:image", []string{"true"}, launchplan.Options{}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if len(runner.runCalls) != 1 {
+		t.Fatalf("Run calls = %#v, want exec only", runner.runCalls)
+	}
+	if len(runner.combinedCalls) != 1 {
+		t.Fatalf("CombinedOutput calls = %#v, want active-container inspect only", runner.combinedCalls)
 	}
 }
 
@@ -894,6 +1004,36 @@ func inspectionJSON(
 		t.Fatalf("marshal inspection: %v", err)
 	}
 	return data
+}
+
+func imageInspectionJSON(t *testing.T, imageID string) []byte {
+	t.Helper()
+	inspection := dockercli.ImageInspection{ID: imageID, Architecture: runtime.GOARCH}
+	inspection.Config.Entrypoint = []string{"/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session"}
+	inspection.Config.Command = []string{"serve"}
+	inspection.Config.Environment = []string{"DOCKER_HOST=unix:///var/run/docker.sock"}
+	data, err := json.Marshal([]dockercli.ImageInspection{inspection})
+	if err != nil {
+		t.Fatalf("marshal image inspection: %v", err)
+	}
+	return data
+}
+
+func writeProjectDefinition(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	contextPath := filepath.Join(root, projectenv.Directory)
+	if err := os.Mkdir(contextPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(contextPath, projectenv.DockerfileName), []byte("ARG AGENTS_SAFE_BASE\nFROM ${AGENTS_SAFE_BASE}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	discovered, err := projectenv.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, discovered
 }
 
 func containerNotFound() commandResult {

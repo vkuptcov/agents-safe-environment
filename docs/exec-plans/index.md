@@ -4,11 +4,12 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
-- No plans are currently in progress.
+- None.
 
 ## Review
 
-- No plans are awaiting review or owner acceptance.
+- [Project-Specific Agent Environments](review/2026-07-17-project-environments-exec-plan.md)
+- [Simplify Project Environments](review/2026-07-18-simplify-project-environments-exec-plan.md)
 
 ## Completed
 

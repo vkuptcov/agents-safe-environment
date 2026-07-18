@@ -71,6 +71,7 @@ RUN apt-get update \
         bash \
         bash-completion \
         ca-certificates \
+        docker-buildx \
         docker-compose-v2 \
         docker.io \
         git \
@@ -79,6 +80,7 @@ RUN apt-get update \
         ripgrep \
         sudo \
         tini \
+    && docker buildx version \
     && rm -rf /var/lib/apt/lists/*
 
 # The Go entrypoint reconciles the host account, prepares its home and sudo policy, starts the
@@ -104,6 +106,11 @@ RUN /usr/local/bin/crun --version \
 # Both Codex and nested containers use only the daemon socket created inside the outer
 # container. This path is not a bind mount of /var/run/docker.sock from the host.
 ENV DOCKER_HOST=unix:///var/run/docker.sock
+
+# Project environments and repository validation build images through the private Docker daemon.
+# Select BuildKit so Docker receives the architecture arguments this Dockerfile's multi-architecture
+# stages require; docker-buildx supplies the Docker CLI backend in the interactive runtime image.
+ENV DOCKER_BUILDKIT=1
 
 # Ubuntu's built-in C.UTF-8 locale lets Bash, readline, Git, and text tools treat Cyrillic input
 # and output as UTF-8 without generating or installing a language-specific locale.

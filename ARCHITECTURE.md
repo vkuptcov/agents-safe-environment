@@ -42,6 +42,7 @@ both the module paths and document links.
 | `internal/gitproject/` | Git discovery. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/launcher/` | Managed-container lifecycle and host launch orchestration. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/launcher/launchplan/` | Validated worktree and bind-mount launch contract. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `internal/launcher/projectenv/` | Discovers project Docker build contexts and names their stable images. | [Project environments](docs/design-docs/project-environments.md) |
 | `internal/launcher/dockercli/` | Typed adapter for the host Docker CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `cmd/codex-safe-session/` | Container CLI. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/container/` | Container bootstrap. | [Session manager](docs/design-docs/go-session-manager.md) |
@@ -69,6 +70,8 @@ both the module paths and document links.
 
 - Host discovery, mount, naming, reuse, or Docker argument changes belong to
   [Safe Environment for Running Codex Agents](docs/design-docs/codex-safe.md).
+- Project-image discovery, automatic builds, BuildKit caching, and compatibility validation belong to
+  [Project-Specific Agent Environments](docs/design-docs/project-environments.md).
 - Container startup, daemon supervision, registration, command wrapping, and idle shutdown changes belong to
   [Go Session Manager](docs/design-docs/go-session-manager.md).
 - Reaching host MCP servers that listen on loopback belongs to

@@ -60,7 +60,7 @@ func (attempt *launchAttempt) acquireContainer(
 		}
 	}
 
-	if err := attempt.cli.Preflight(ctx, sysboxRuntime, attempt.image); err != nil {
+	if err := attempt.prepareImage(ctx); err != nil {
 		return "", UserMounts{}, err
 	}
 	// materializeUserMounts can block on an interactive Codex-home prompt, so nothing that starts a

@@ -30,6 +30,9 @@ func TestConfigHelp(t *testing.T) {
 	if !strings.Contains(stdout.String(), "--no-host-mcp") {
 		t.Errorf("usage must document --no-host-mcp, got %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), ".agents-safe/Dockerfile") {
+		t.Errorf("usage must document project image selection, got %q", stdout.String())
+	}
 	if stderr.Len() != 0 {
 		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
@@ -71,6 +74,9 @@ func TestConfigDefaultsToInteractiveCodex(t *testing.T) {
 	if fakeLauncher.Image != defaultImage {
 		t.Errorf("image = %q, want %q", fakeLauncher.Image, defaultImage)
 	}
+	if fakeLauncher.Options.ImageOverride {
+		t.Error("default image without --image set ImageOverride")
+	}
 	if !reflect.DeepEqual(builtFor, wantProject) {
 		t.Errorf("BuildLaunchPlan project = %#v, want discovered %#v", builtFor, wantProject)
 	}
@@ -98,6 +104,9 @@ func TestConfigForwardsCodexArguments(t *testing.T) {
 	}
 	if fakeLauncher.Image != "test:image" {
 		t.Errorf("image = %q, want test:image", fakeLauncher.Image)
+	}
+	if !fakeLauncher.Options.ImageOverride {
+		t.Error("explicit image did not set ImageOverride")
 	}
 	wantCommand := []string{launcher.CodexBinaryPath, "--sandbox", "danger-full-access", "exec", "--model", "gpt-5"}
 	if !reflect.DeepEqual(fakeLauncher.Command, wantCommand) {

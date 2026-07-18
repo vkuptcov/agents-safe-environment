@@ -10,3 +10,5 @@ Use [README.md](README.md) for design-doc format and maintenance rules.
   supervision, command execution, and idle shutdown.
 - [Host MCP Access from codex-safe Containers](host-mcp-forwarding.md): discovery of loopback MCP servers, the
   Unix-socket channel and its two forwarding hops, the per-session host relay, and the widened network boundary.
+- [Project-Specific Agent Environments](project-environments.md): project-owned derived images, automatic builds,
+  BuildKit-owned caching, compatibility validation, and active-session reuse.

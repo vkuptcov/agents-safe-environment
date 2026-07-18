@@ -104,6 +104,28 @@ func (client *Client) ResolveImageID(ctx context.Context, image string) (string,
 	return imageID, nil
 }
 
+// InspectImage returns the config needed to validate a freshly built project image.
+func (client *Client) InspectImage(ctx context.Context, image string) (ImageInspection, error) {
+	if strings.TrimSpace(image) == "" {
+		return ImageInspection{}, errors.New("container image is required")
+	}
+	output, err := client.combinedOutput(ctx, "image", "inspect", image)
+	if err != nil {
+		return ImageInspection{}, commandFailure(fmt.Sprintf("inspect image %q", image), output, err)
+	}
+	var inspections []ImageInspection
+	if err := json.Unmarshal(output, &inspections); err != nil {
+		return ImageInspection{}, fmt.Errorf("parse image inspection: %w", err)
+	}
+	if len(inspections) != 1 {
+		return ImageInspection{}, fmt.Errorf("inspect image %q returned %d records", image, len(inspections))
+	}
+	if err := validateImageID(inspections[0].ID); err != nil {
+		return ImageInspection{}, fmt.Errorf("parse image inspection: %w", err)
+	}
+	return inspections[0], nil
+}
+
 // validateImageID rejects anything that is not a digest-form content ID, so a malformed value can
 // never be passed to a create as if it pinned the image.
 func validateImageID(imageID string) error {
