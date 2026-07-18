@@ -6,7 +6,7 @@ launch plan and delegates host Docker command encoding and execution to `dockerc
 Child packages:
 
 - `launchplan/` — builds the validated filesystem contract from Git-project discovery.
-- `projectenv/` — validates and hashes the fixed `.agents-safe/` build context.
+- `projectenv/` — discovers the fixed `.agents-safe/` build context and names its stable project image.
 - `dockercli/` — performs typed operations through the host Docker CLI.
 
 ## Non-test files

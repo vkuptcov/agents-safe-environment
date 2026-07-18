@@ -157,7 +157,7 @@ The project controls the default image and pins it by immutable digest. An image
 trusted computing base and is always displayed before launch.
 
 Automatic project-owned image derivation is specified by
-[`Project-Specific Agent Environments`](project-environments.md). That proposed contract keeps the explicit `--image`
+[`Project-Specific Agent Environments`](project-environments.md). That contract keeps the explicit `--image`
 override and adds `.agents-safe/Dockerfile` discovery only when no override was supplied.
 
 ### 2. Project Discovery

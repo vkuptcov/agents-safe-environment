@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
@@ -73,7 +72,7 @@ type launchAttempt struct {
 	image         string
 	baseImage     string
 	definition    *projectenv.Definition
-	environment   string
+	projectImage  bool
 	containerName string
 	projectKey    string
 	// noHostMCP skips discovery entirely for this launch.
@@ -267,22 +266,10 @@ func (docker *DockerLauncher) Launch(
 		plan:          plan,
 		image:         image,
 		baseImage:     image,
-		environment:   projectenv.AbsentEnvironmentLabel,
 		containerName: ProjectContainerName(docker.HostUID, plan.ProjectRoot),
 		projectKey:    ProjectKey(docker.HostUID, plan.ProjectRoot),
+		projectImage:  !options.ImageOverride,
 		noHostMCP:     options.NoHostMCP,
-	}
-	if options.ImageOverride {
-		attempt.environment = projectenv.OverrideEnvironmentLabel
-	} else {
-		definition, err := projectenv.Discover(plan.ProjectRoot)
-		if err != nil {
-			return err
-		}
-		if definition != nil {
-			attempt.definition = definition
-			attempt.environment = definition.EnvironmentLabel()
-		}
 	}
 	resolution, err := docker.resolveMounts(plan)
 	if err != nil {
@@ -338,5 +325,3 @@ func (docker *DockerLauncher) Launch(
 	}
 	return nil
 }
-
-const projectImageProbeTimeout = 15 * time.Second

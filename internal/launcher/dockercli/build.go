@@ -38,45 +38,5 @@ func BuildArgs(request BuildRequest) ([]string, error) {
 		"--tag", request.Tag,
 		"--build-arg", "AGENTS_SAFE_BASE=" + request.BaseImage,
 	}
-	for _, label := range request.Labels {
-		if label.Key == "" {
-			return nil, errors.New("build label key is required")
-		}
-		args = append(args, "--label", label.Key+"="+label.Value)
-	}
 	return append(args, request.Context), nil
-}
-
-// Probe runs one executable in a mount-free, network-free, read-only container. Callers provide a
-// bounded context so a project image can never make this compatibility check run indefinitely.
-func (client *Client) Probe(
-	ctx context.Context,
-	request ProbeRequest,
-	diagnostics io.Writer,
-) error {
-	arguments, err := BuildProbeArgs(request)
-	if err != nil {
-		return err
-	}
-	if err := client.run(ctx, arguments, nil, diagnostics, diagnostics); err != nil {
-		return fmt.Errorf("probe project image %q: %w", request.ImageID, err)
-	}
-	return nil
-}
-
-// BuildProbeArgs encodes the non-negotiable confinement of a derived-image compatibility probe.
-func BuildProbeArgs(request ProbeRequest) ([]string, error) {
-	if err := validateImageID(request.ImageID); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(request.Entrypoint) == "" {
-		return nil, errors.New("probe entrypoint is required")
-	}
-	if len(request.Arguments) == 0 {
-		return nil, errors.New("probe arguments are required")
-	}
-	return append([]string{
-		"run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL",
-		"--entrypoint", request.Entrypoint, request.ImageID,
-	}, request.Arguments...), nil
 }

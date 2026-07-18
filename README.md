@@ -168,19 +168,18 @@ Place a Dockerfile at the worktree root:
 .agents-safe/Dockerfile
 ```
 
-The launcher uses only `.agents-safe/` as the Docker build context. It rejects symlinks and non-regular context
-entries, prints the Dockerfile path to stderr, and requires an interactive `y` or `yes` before a new definition is
-built with the host Docker daemon. A compatible cached image for the same context digest and immutable base-image ID
-does not prompt or rebuild.
+The Dockerfile itself is consent to build it with the host Docker daemon. When a new session is needed, the launcher
+uses only `.agents-safe/` as the build context and rebuilds one stable per-project tag. Docker/BuildKit decides whether
+to reuse cached layers; the launcher computes no parallel context digest and asks no additional confirmation.
 
 The derived image must retain the session entrypoint, `serve` command, private Docker socket configuration, and
-required runtime binaries. A failed validation, declined/non-interactive confirmation, changed context, or changed
-base image stops the launch; the launcher never falls back to the base image.
+required runtime binaries. A failed build or validation stops the launch; the launcher never falls back to the base
+image.
 
 `--image REF` takes precedence over project-image discovery. It intentionally bypasses `.agents-safe/Dockerfile`
 validation and image building, including when `REF` equals the normal default. A running session retains its selected
-environment until its active commands finish: a changed or removed Dockerfile produces a finish-active-session
-diagnostic rather than modifying the session.
+environment until its active commands finish, even if the Dockerfile changes or is removed. The next cold launch uses
+the then-current project definition.
 
 ## Run the real-host smoke test
 

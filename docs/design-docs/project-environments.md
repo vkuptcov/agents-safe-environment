@@ -2,50 +2,22 @@
 
 Status: Implemented
 
-Decision: the owner accepted the first implementation scope on 2026-07-17.
+Decision: the owner accepted Dockerfile-as-consent and BuildKit-owned cache semantics on 2026-07-18.
 
 Scope:
 
 - project-owned system toolchains and packages needed inside `codex-safe` and `agents-safe` sessions;
-- automatic discovery and host-side build of `.agents-safe/Dockerfile`;
-- project-image caching, compatibility checks, confirmation, and active-session reuse;
-- behavior of the existing explicit `--image` override when a project Dockerfile exists.
+- automatic host-side builds from `.agents-safe/Dockerfile`;
+- stable project-image naming, static compatibility checks, and active-session reuse;
+- precedence of the existing explicit `--image` override.
 
 ## Purpose and Intent
 
-### Problem
+Different projects need different toolchains. Installing every tool in the shared image makes it large and cannot
+support conflicting versions. Installing tools manually in a running session is also temporary because the session
+container is removed after its final command and idle timeout.
 
-Different projects need different tools. One needs Go, another needs a JDK and Gradle, and another needs Node.js,
-`protoc`, or system libraries. Installing every toolchain in the shared base image makes that image large and cannot
-satisfy projects that require different versions.
-
-Installing packages manually inside a running session is also a poor default. The Sysbox container is removed after
-the final managed command and idle timeout, so its writable layer does not survive into the next session.
-
-The launcher needs a project-owned, reproducible way to add tools without mounting host SDKs or adding a package
-manager for every ecosystem.
-
-### Worked Example
-
-Before:
-
-```text
-The user opens a Java project with codex-safe.
-The image has no JDK.
-The user installs a JDK with sudo.
-The installation disappears when the session ends.
-```
-
-After:
-
-```text
-The project contains .agents-safe/Dockerfile.
-The user runs codex-safe as usual.
-The launcher confirms and builds a project image once.
-Later sessions reuse the host Docker image and layer cache.
-```
-
-The project contract is one file:
+A project can instead add one file:
 
 ```dockerfile
 ARG AGENTS_SAFE_BASE
@@ -56,43 +28,28 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-The package command is illustrative. Real projects must pin versions, sources, images, and checksums according to
-their dependency policy.
+Both launchers discover that file, build a derived image when a new session is needed, and start the ordinary Sysbox
+session from the immutable build result. The project owns tool and version selection; the launcher owns only the base
+image argument, fixed context, stable tag, and runtime compatibility boundary.
 
-### Chosen Shape
+The presence of `.agents-safe/Dockerfile` is explicit consent to execute its build through the host Docker daemon.
+There is no additional launcher prompt or trust database.
 
-Both launchers look for `.agents-safe/Dockerfile` at the canonical worktree root. When it is absent, the existing
-base-image behavior is unchanged. When it is present, the launcher builds a derived image through the host Docker
-daemon and starts the normal Sysbox session from that image.
+## Success Criteria
 
-The build context is exactly `.agents-safe/`. The launcher passes the selected base image through
-`AGENTS_SAFE_BASE`; the project Dockerfile owns every additional tool and version.
-
-The project-definition digest identifies the requested environment. The base image ID joins that digest to identify
-the cached derived image. A changed project definition or base image therefore selects a new cached image.
-
-### Success Criteria
-
-- A project adds one Dockerfile and users continue to run ordinary `codex-safe` or `agents-safe` commands.
-- The first launch confirms and builds the project image; later launches reuse a valid cached image without a prompt.
+- A project adds one Dockerfile and continues to use ordinary `codex-safe` or `agents-safe` commands.
+- Every cold create invokes `docker build`; Docker/BuildKit decides which layers need rebuilding.
 - Two projects can use different toolchain versions without sharing writable SDK state.
-- The build receives no host home, Codex home, credentials, project files outside `.agents-safe/`, or Docker socket.
-- A derived image preserves the session manager, Codex CLI, nested Docker, and root bootstrap contracts.
-- A changed Dockerfile never mutates an active session or installs packages through `docker exec`.
-- A build or compatibility failure stops the launch without falling back to the base image.
-
-### Tradeoff
-
-The first launch performs a host-side Docker build and may download large layers. Project images and BuildKit cache
-remain in host Docker after a Sysbox session is removed and consume disk until the user cleans them up.
-
-This cost buys reproducible, cross-session toolchains without exposing host SDK directories to the agent.
+- The build context exposes no project or host files outside `.agents-safe/`.
+- A derived image preserves the session manager, Codex CLI, nested Docker, and root-bootstrap contracts.
+- Changing or removing the Dockerfile never mutates an active session.
+- Build or compatibility failure stops the launch without falling back to the base image.
 
 ## Contract
 
 ### 1. Discovery and precedence
 
-The only project definition in version 1 is:
+The only project definition is:
 
 ```text
 <canonical-worktree-root>/.agents-safe/Dockerfile
@@ -100,138 +57,109 @@ The only project definition in version 1 is:
 
 Rules:
 
-- A missing `.agents-safe/` directory or Dockerfile means the project requests no derived image.
-- The directory, Dockerfile, and every build-context entry must remain inside the canonical worktree.
-- The launcher rejects symlinks, devices, sockets, and other non-regular context entries.
+- A missing `.agents-safe/` directory or Dockerfile requests no derived image.
+- The `.agents-safe/` directory must be a real directory, not a symlink.
+- The Dockerfile must be a regular file, not a symlink, device, socket, or directory.
 - The launcher does not search parent directories, the host home, or a linked worktree's primary checkout.
-- An explicitly supplied `--image` bypasses project-environment discovery for that launch.
+- An explicitly supplied `--image` bypasses project-environment discovery and building for that launch.
 
-`--image` retains its current lifecycle meaning: it selects an image only when creating a session and does not replace
-an already-running compatible session.
+Nested context traversal, `.dockerignore`, `COPY`, and layer invalidation use Docker's own build-context semantics. The
+launcher does not compute a competing digest over the context.
 
-### 2. Definition digest and cached image
+### 2. Build and cache
 
-The project-definition digest is SHA-256 over sorted relative paths, entry types, executable bits, and file contents
-under `.agents-safe/`. Absolute checkout paths, UID, GID, and timestamps do not affect it.
+The launcher first checks for a reusable deterministic session. Only the new-container path builds a project image.
 
-The project-image cache key is SHA-256 over:
-
-- the project-definition digest;
-- the resolved immutable base image ID;
-- the project-image contract version.
-
-The local image name contains the existing project key and a shortened cache key. Full values remain in image labels:
-
-- `codex-safe.project-image=true`;
-- `codex-safe.project-key=<project-key>`;
-- `codex-safe.project-definition=<full-definition-digest>`;
-- `codex-safe.base-image-id=<immutable-base-image-id>`.
-
-Only an image whose labels and compatibility checks match the current request counts as cached. A missing or invalid
-cached image follows the confirmation and build path.
-
-### 3. Confirmation and build
-
-Before building a new cache key, an interactive launcher prints the Dockerfile and context paths and asks:
+The local tag is stable for the worktree and invoking user:
 
 ```text
-Project defines a custom environment:
-  /work/app/.agents-safe/Dockerfile
-Build it with the host Docker daemon? [y/N]
+codex-safe-project-<project-key>:local
 ```
 
-Only `y` or `yes` accepts. A decline, EOF, or non-interactive launch fails before `docker build`. There is no durable
-trust database in version 1: the presence of a valid cached image records that the exact cache key was previously
-built successfully. If the image is removed, confirmation is required again.
+For every cold create, the launcher runs `docker build` with:
 
-The launcher invokes Docker with separate arguments and sends build progress to its diagnostic stream. Standard
-output remains reserved for the requested command.
-
-The build receives:
-
-- `.agents-safe/` as its only context;
-- the selected base reference as `AGENTS_SAFE_BASE`;
-- launcher-owned labels and a deterministic local tag;
+- `.agents-safe/` as the complete build context;
+- `.agents-safe/Dockerfile` as the Dockerfile;
+- the selected base reference in `AGENTS_SAFE_BASE`;
+- the stable local tag;
 - ordinary Docker build network access.
 
-The build receives no secret mounts, SSH forwarding, host environment copy, or implicit credentials. Projects that
-need private build credentials require a separate design.
+Docker/BuildKit owns cache lookup and invalidation. It already understands Dockerfile instructions, `.dockerignore`,
+`COPY` and `ADD` inputs, build arguments, base images, and layer dependencies. The launcher neither hashes the context
+nor stores cache-identity labels.
 
-### 4. Derived-image compatibility
+Build progress and diagnostics use launcher stderr. Stdout remains reserved for the requested command.
 
-A project image must preserve these base-image contracts:
+The build receives no secret mounts, SSH forwarding, host environment copy, host home, Codex home, or Docker socket.
+Private build credentials require a separate design.
 
-- root is the configured image user for container bootstrap;
+### 3. Derived-image compatibility
+
+After a successful build, the launcher inspects the stable tag and selects its immutable image ID. It rejects a
+derived image that changes any static base-image contract:
+
+- architecture matches the host;
+- configured user is empty or root;
 - entrypoint is `/usr/bin/tini -- /usr/local/bin/codex-safe-session`;
 - default command is `serve`;
-- `DOCKER_HOST` selects the private daemon at `unix:///var/run/docker.sock`;
-- `tini`, `codex-safe-session`, `codex`, and the Docker CLI remain executable.
+- `DOCKER_HOST` is `unix:///var/run/docker.sock`.
 
-The launcher inspects the image configuration and runs bounded, mount-free probes before creating a Sysbox session.
-The probes use the immutable derived image ID, no host network, no capabilities, and no writable host paths.
+The normal session startup exercises `tini`, `codex-safe-session`, `codex`, Docker CLI, and the private daemon. Missing
+or broken runtime binaries fail without a base-image fallback.
 
-These checks detect accidental incompatibility. They do not make a project Dockerfile safe or prove that its added
-software is trustworthy; the user explicitly approved executing that Dockerfile through host Docker.
+Validation does not make a Dockerfile trustworthy. The project opted into executing it by tracking the definition.
 
-### 5. Active-session reuse
+### 4. Active-session reuse
 
-New session containers carry `codex-safe.project-environment` with one of these values:
+Image selection applies only when the deterministic session container is created. A compatible running session is
+reused without building or inspecting a project image, even when:
 
-- `absent`: no project Dockerfile selected the image;
-- `override`: the user explicitly supplied `--image`;
-- `sha256:<definition-digest>`: a project Dockerfile selected the image.
+- `.agents-safe/Dockerfile` changed;
+- `.agents-safe/Dockerfile` was added or removed;
+- a later invocation supplies an explicit `--image`.
 
-Reuse follows these rules:
+This matches the existing `--image` lifecycle: a later image choice does not replace an active container. The next
+cold create builds the current Dockerfile or returns to the selected base image when the Dockerfile is absent.
 
-- An explicit `--image` keeps current behavior and may reuse the already-running managed session.
-- A requested project definition requires the running label to contain the same definition digest.
-- An absent project definition accepts a missing legacy label, `absent`, or `override`.
-- Removing a Dockerfile does not silently reuse a running project-image session.
-- A mismatch reports both environments and asks the user to finish the active session.
+The launcher never terminates active commands, rebuilds a running container, or installs packages through
+`docker exec`.
 
-The launcher never terminates active commands, rebuilds a running container, or adds packages through `docker exec`.
-After the old session exits, the next launch resolves or builds the requested image normally.
-
-The base image ID is not compared against an active session. This preserves the existing rule that image selection
-applies at container creation; a newer base takes effect after the current session ends.
-
-### 6. Failure and change behavior
+### 5. Failure and concurrency
 
 The launcher fails without fallback when:
 
-- context validation or hashing fails;
-- the user declines or cannot answer the build prompt;
-- the base image cannot be pulled or resolved;
+- discovery finds an invalid context directory or Dockerfile boundary;
+- the base image cannot be made available;
 - Docker build fails;
-- `.agents-safe/` changes while its image is being built;
-- the base reference moves to another image ID during the build;
-- the derived image fails label or compatibility validation;
-- an active session has a different project definition.
+- the built tag cannot be inspected;
+- the derived image violates the static startup contract;
+- session or relay creation fails.
 
-A concurrent first launch may perform duplicate builds in version 1. Existing deterministic container creation still
-ensures that only one session wins and later callers inspect and reuse that session. Avoiding redundant concurrent
-build work is an optimization, not a new correctness or host-state contract for this version.
+Docker owns the build-context snapshot. If files change while the client sends the context, the produced image is the
+result of Docker's input processing; the launcher does not attach a potentially misleading precomputed digest.
 
-### 7. What is and is not cached
+Concurrent cold callers may invoke duplicate builds against the same stable tag. The existing deterministic
+container-name race still ensures that only one session container wins. Build serialization is an optimization, not
+a version-one host-state contract.
 
-The derived image persists system toolchains and packages in host Docker layers across Sysbox sessions.
+### 6. Cache lifetime
 
-Version 1 does not persist:
+The stable derived image and BuildKit layers remain in host Docker after a Sysbox session is removed. They consume
+disk until ordinary Docker cleanup removes them.
+
+Version one does not persist:
 
 - Go module caches;
 - Gradle or Maven artifact caches;
 - npm package caches;
 - nested-Docker images, containers, or volumes.
 
-Persistent package-manager caches require a separate project-scoped volume, ownership, and cleanup design. The
-launcher must not mount the host's global `~/.gradle`, `~/.m2`, Go, npm, or SDK directories as a shortcut.
+The launcher must not mount global host package-manager directories as a shortcut.
 
-### 8. Example for this repository
+## Repository Example
 
-Both this repository's application and tools modules require Go 1.26.0. The runtime image already contains Docker,
-Compose, Git, Make, Bash, and `rg`, but its Go compiler exists only in a build stage.
-
-The tracked [`.agents-safe/Dockerfile`](../../.agents-safe/Dockerfile) reuses the exact pinned Go image:
+This repository's tracked [`.agents-safe/Dockerfile`](../../.agents-safe/Dockerfile) copies the pinned Go 1.26.0
+toolchain from the same digest-pinned image used by the session-builder stage:
 
 ```dockerfile
 ARG AGENTS_SAFE_BASE
@@ -247,73 +175,48 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 RUN go version
 ```
 
-That environment supports `make build`, `make test`, `make lint`, `make docker-build`, and `make check-docs` inside
-the session. `make test-smoke-go` remains a real-host gate because it needs a host Docker Engine with
-`sysbox-runc` registered.
-
-It adds no system packages. Adding any package to this repository Dockerfile still requires the explicit approval
-mandated by [`docs/dependencies.md`](../dependencies.md).
+It adds no system package. Adding one still requires the explicit approval mandated by
+[`docs/dependencies.md`](../dependencies.md).
 
 ## Boundaries and Non-Goals
 
-This design intentionally excludes:
+This design excludes:
 
-- `environment.toml` or another project-environment manifest;
-- automatic detection of `go.mod`, Gradle, Maven, npm, `mise`, or other ecosystem files;
-- a launcher-owned catalog or installer for Go, Java, Node.js, or other toolchains;
-- startup or post-create hooks;
-- prebuilt registry image selection;
+- a project-environment manifest or startup hooks;
+- automatic ecosystem detection;
 - arbitrary build contexts outside `.agents-safe/`;
+- launcher-owned context hashing or a trust database;
 - BuildKit secrets, SSH forwarding, or private-registry credential design;
 - persistent package-manager or nested-Docker caches;
-- automatic pruning of project images and build cache;
-- unapproved system packages in this repository's `.agents-safe/Dockerfile`.
-
-Rejected alternative: install packages at session startup. It repeats downloads after every session, makes ordinary
-launch depend on registries, and produces a mutable environment.
-
-Rejected alternative: mount host SDKs or package-manager homes. Host binaries may not match the container ABI, and
-the mounts expose unrelated writable host state.
-
-Rejected alternative: put every common SDK in the base image. It grows the common image and still cannot support
-projects that require conflicting versions.
-
-Rejected alternative: require nested project containers for every command. They remain useful for services and
-tests, but they do not provide toolchains to the agent session itself.
+- automatic image and BuildKit-cache pruning;
+- prebuilt project-image registry selection.
 
 ## Test Plan
 
-### Focused tests
+Focused tests prove:
 
-- Discover an absent, valid, changed, and invalid `.agents-safe/` context.
-- Prove digest stability across checkout paths and timestamps, and changes on content or executable-bit updates.
-- Prove explicit `--image` bypasses project discovery and retains current active-session semantics.
-- Prove a new cache key prompts, a valid cached image does not prompt, and decline or non-interactive input fails.
-- Assert exact Docker build arguments, fixed context, labels, build argument, and diagnostic-stream routing.
-- Reject a context or base image that changes during build.
-- Reject derived images with incompatible user, entrypoint, command, environment, labels, or required binaries.
-- Prove build and probe failures never reach container creation or fallback.
-- Prove every active-session reuse combination described above.
+- absent, valid, and invalid discovery boundaries;
+- stable per-project image naming;
+- explicit `--image` bypass;
+- exact Docker build arguments and fixed context;
+- build output routing and fail-closed errors;
+- static derived-image validation;
+- active-session reuse performs no build after the Dockerfile changes.
 
-### Real-host smoke tests
+Real-host smoke proves:
 
-- Build a dependency-free fixture image that adds one executable through `.agents-safe/Dockerfile`.
-- Run that executable through `agents-safe` in a real Sysbox session.
-- Reuse the cached image and active session without another prompt.
-- Change the fixture definition, reject active-session reuse, then use the new image after the old session ends.
-- Preserve nested Docker, linked-worktree mounts, UID/GID ownership, Codex mounts, and host-socket isolation.
-- Remove all fixture images and containers during test cleanup.
+- the public no-`--image` path builds a dependency-free v1 fixture;
+- changing the Dockerfile to v2 does not mutate the active v1 session;
+- the next cold create rebuilds the stable tag and executes v2;
+- fixture images and containers are removed during cleanup.
 
 ## Where the code lives
 
-- `internal/cli/`: preserve whether `--image` was explicitly supplied.
-- `internal/launcher/projectenv/`: discover, validate, hash, and name project definitions and cached images.
-- `internal/launcher/`: confirmation, build orchestration, image selection, and session compatibility policy.
-- `internal/launcher/dockercli/`: typed Docker build, image inspection, and compatibility probe transport.
-- `internal/launcher/docker_requests.go`: project-environment session label.
-- `tests/smoke/`: real Docker and Sysbox proof.
-- `container/Dockerfile`: authoritative base entrypoint, command, environment, and required binary contract.
+- `internal/cli/`: preserves whether `--image` was explicitly supplied.
+- `internal/launcher/projectenv/`: discovers the fixed context and names the stable image tag.
+- `internal/launcher/`: runs build orchestration, validates the result, and selects its immutable ID.
+- `internal/launcher/dockercli/`: provides typed Docker build and image-inspection transport.
+- `tests/smoke/`: provides real Docker and Sysbox proof.
 
-This document extends the image-selection and reuse behavior in
-[`Safe Environment for Running Codex Agents`](codex-safe.md). Command lifetime after container creation remains owned
-by [`Go Session Manager`](go-session-manager.md).
+This document extends image selection in [`codex-safe.md`](codex-safe.md). Command lifetime after container creation
+remains owned by [`go-session-manager.md`](go-session-manager.md).

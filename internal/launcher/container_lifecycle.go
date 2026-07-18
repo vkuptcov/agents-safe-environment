@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
-	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
@@ -41,9 +40,6 @@ func (attempt *launchAttempt) acquireContainer(
 	}
 	if found {
 		if inspection.State.Running {
-			if err := attempt.validateRunningProjectEnvironment(inspection); err != nil {
-				return "", UserMounts{}, err
-			}
 			if err := attempt.validateResolvedRunningUserMounts(inspection, resolution); err != nil {
 				return "", UserMounts{}, err
 			}
@@ -64,6 +60,9 @@ func (attempt *launchAttempt) acquireContainer(
 		}
 	}
 
+	if err := attempt.discoverProjectImage(); err != nil {
+		return "", UserMounts{}, err
+	}
 	if attempt.definition == nil {
 		if err := attempt.cli.Preflight(ctx, sysboxRuntime, attempt.image); err != nil {
 			return "", UserMounts{}, err
@@ -143,7 +142,6 @@ func (attempt *launchAttempt) createContainer(
 	if err != nil {
 		return "", false, err
 	}
-	request.Labels = append(request.Labels, dockercli.KeyValue{Key: projectEnvironmentLabel, Value: attempt.environment})
 	// Both containers must come from one immutable image, so a resolved ID supersedes the reference.
 	if attempt.hostMCPImageID != "" {
 		request.Image = attempt.hostMCPImageID
@@ -228,24 +226,6 @@ func (attempt *launchAttempt) validateResolvedRunningUserMounts(
 	return attempt.validateRunningUserMounts(inspection, resolution.mounts)
 }
 
-func (attempt *launchAttempt) validateRunningProjectEnvironment(inspection dockercli.ContainerInspection) error {
-	running, found := inspection.Config.Labels[projectEnvironmentLabel]
-	if !found {
-		running = projectenv.AbsentEnvironmentLabel
-	}
-	if attempt.environment == projectenv.OverrideEnvironmentLabel {
-		return nil
-	}
-	if attempt.environment == projectenv.AbsentEnvironmentLabel &&
-		(running == projectenv.AbsentEnvironmentLabel || running == projectenv.OverrideEnvironmentLabel) {
-		return nil
-	}
-	if running == attempt.environment {
-		return nil
-	}
-	return fmt.Errorf("a managed session for worktree %q is running with project environment %q, but this launch requests %q; finish the active session before retrying", attempt.plan.ProjectRoot, running, attempt.environment)
-}
-
 // userMountMismatchError reports immutable user mounts that differ from an active container.
 type userMountMismatchError struct {
 	projectRoot string
@@ -282,9 +262,6 @@ func (attempt *launchAttempt) waitForReusableOrReleased(
 			return "", nil
 		}
 		if inspection.State.Running {
-			if err := attempt.validateRunningProjectEnvironment(inspection); err != nil {
-				return "", err
-			}
 			if err := attempt.validateResolvedRunningUserMounts(inspection, resolution); err != nil {
 				return "", err
 			}
@@ -315,9 +292,6 @@ func (attempt *launchAttempt) containerStoppedAfterExec(
 		return true, nil
 	}
 	if inspection.State.Running {
-		if err := attempt.validateRunningProjectEnvironment(inspection); err != nil {
-			return false, err
-		}
 		if err := attempt.validateRunningUserMounts(inspection, userMounts); err != nil {
 			return false, err
 		}

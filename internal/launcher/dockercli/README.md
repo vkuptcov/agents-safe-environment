@@ -6,7 +6,7 @@ diagnostics. It does not own managed-container identity, reuse, mount-selection,
 ## Non-test files
 
 - `client.go` — defines the adapter, replaceable process runner, and bounded command diagnostics.
-- `build.go` — encodes project-image builds and mount-free compatibility probes.
+- `build.go` — encodes project-image builds and routes their output to launcher diagnostics.
 - `create.go` — encodes and executes detached container creation.
 - `exec.go` — encodes and executes an interactive command in an existing container.
 - `inspect.go` — inspects containers and verifies the required runtime and image.

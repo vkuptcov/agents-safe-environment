@@ -61,34 +61,25 @@ type ExecRequest struct {
 }
 
 // BuildRequest contains the transport inputs for one project-image build. The launcher owns all
-// policy: this type only preserves the already-selected file, tag, labels, base reference, and
+// policy: this type only preserves the already-selected file, tag, base reference, and
 // fixed context as separate Docker argv values.
 type BuildRequest struct {
 	Dockerfile string
 	Tag        string
 	BaseImage  string
-	Labels     []KeyValue
 	Context    string
 }
 
-// ImageInspection is the image-config subset used to validate a derived project image.
+// ImageInspection is the image-config subset used to validate a built project image.
 type ImageInspection struct {
 	ID           string `json:"Id"`
 	Architecture string `json:"Architecture"`
 	Config       struct {
-		User        string            `json:"User"`
-		Entrypoint  []string          `json:"Entrypoint"`
-		Command     []string          `json:"Cmd"`
-		Environment []string          `json:"Env"`
-		Labels      map[string]string `json:"Labels"`
+		User        string   `json:"User"`
+		Entrypoint  []string `json:"Entrypoint"`
+		Command     []string `json:"Cmd"`
+		Environment []string `json:"Env"`
 	} `json:"Config"`
-}
-
-// ProbeRequest describes a confined one-shot executable probe against an immutable image ID.
-type ProbeRequest struct {
-	ImageID    string
-	Entrypoint string
-	Arguments  []string
 }
 
 // ContainerInspection is the subset of Docker inspect state used by launcher lifecycle policy.
