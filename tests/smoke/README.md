@@ -23,8 +23,8 @@ The target:
 1. builds `bin/codex-safe`, `bin/agents-safe`, and `bin/codex-safe-session`;
 2. builds the `codex-safe-mvp:local` image;
 3. enables the opt-in smoke test with `CODEX_SAFE_RUN_SYSBOX_SMOKE=1`;
-4. runs every `TestSysbox` scenario (linked worktree, Codex product launch, and `agents-safe bash`) without the Go
-   test cache.
+4. runs every `TestSysbox` scenario (linked worktree, Codex product launch, `agents-safe bash`, and project-image
+   selection) without the Go test cache.
 
 The test requires:
 
@@ -112,6 +112,12 @@ selected project before the idle lifecycle removes the container.
 `TestSysboxAgentsSafeWithoutCodexHome` omits the fixture `.codex` directory and verifies that the real container
 has no Codex-home bind mount, carries the `absent` compatibility label, and does not pass `CODEX_HOME` to the command.
 
+`TestSysboxProjectEnvironment` creates a fixture `.agents-safe/Dockerfile`, builds tagged derived images with the
+same labels the launcher requires, then drives the public launcher without `--image`. It verifies cached selection,
+the project-provided executable, active-session rejection after a definition change, the changed-image path, and
+image cleanup. The production interactive cold-build confirmation is covered by the documented manual release gate;
+the test keeps its host process non-interactive and adds no PTY dependency.
+
 ## Probe synchronization
 
 Long-running probes communicate through files in the temporary linked worktree. That directory is visible to both
@@ -152,6 +158,7 @@ immediately and includes the command's captured stdout and stderr instead of wai
 ## Files
 
 - `sysbox_linked_worktree_test.go` contains the scenario and domain assertions.
+- `sysbox_project_environment_test.go` covers cached project-image selection and changed-definition lifecycle.
 - `sysbox_fixture_test.go` composes the harness, starts embedded probes, and implements marker synchronization.
 - `smoke_setup_test.go` creates the Git fixture, host identity, artifact paths, and launcher processes.
 - `docker_harness_test.go` contains all direct host-Docker access and deterministic smoke container names.

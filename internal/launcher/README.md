@@ -6,6 +6,7 @@ launch plan and delegates host Docker command encoding and execution to `dockerc
 Child packages:
 
 - `launchplan/` — builds the validated filesystem contract from Git-project discovery.
+- `projectenv/` — validates and hashes the fixed `.agents-safe/` build context.
 - `dockercli/` — performs typed operations through the host Docker CLI.
 
 ## Non-test files
@@ -17,4 +18,5 @@ Child packages:
 - `host_environment.go` — validates host identity and launcher configuration and discovers host Git configuration.
 - `identity.go` — derives deterministic project keys and container names.
 - `launcher.go` — constructs the launcher, resolves host and user-mount state, and coordinates one launch.
+- `project_environment.go` — confirms, builds, caches, and validates project-derived images.
 - `user_mounts.go` — resolves and validates Codex-home and personal-skills mount sources.

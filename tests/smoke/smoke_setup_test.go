@@ -143,9 +143,29 @@ func (launcher *launcherHarness) launcherEnv(extra []string) []string {
 	return append(environment, extra...)
 }
 
-func (launcher *launcherHarness) startBinary(binary string, project string, separator bool, hostEnv []string, command ...string) *launcherProcess {
+func (launcher *launcherHarness) startBinary(
+	binary string,
+	project string,
+	separator bool,
+	hostEnv []string,
+	command ...string,
+) *launcherProcess {
+	return launcher.startBinaryWithImageOverride(binary, project, true, separator, hostEnv, command...)
+}
+
+func (launcher *launcherHarness) startBinaryWithImageOverride(
+	binary string,
+	project string,
+	imageOverride bool,
+	separator bool,
+	hostEnv []string,
+	command ...string,
+) *launcherProcess {
 	launcher.t.Helper()
-	arguments := []string{"--project", project, "--image", goSmokeImage}
+	arguments := []string{"--project", project}
+	if imageOverride {
+		arguments = append(arguments, "--image", goSmokeImage)
+	}
 	if separator {
 		arguments = append(arguments, "--")
 	}
@@ -166,6 +186,12 @@ func (launcher *launcherHarness) startBinary(binary string, project string, sepa
 func (launcher *launcherHarness) start(project string, command ...string) *launcherProcess {
 	launcher.t.Helper()
 	return launcher.startBinary(launcher.agentsBinary, project, true, nil, command...)
+}
+
+// startDefault invokes the public launcher without --image, so normal project-environment discovery applies.
+func (launcher *launcherHarness) startDefault(project string, command ...string) *launcherProcess {
+	launcher.t.Helper()
+	return launcher.startBinaryWithImageOverride(launcher.agentsBinary, project, false, true, nil, command...)
 }
 
 // startAgents invokes the public generic launcher without a separator, exercising the documented

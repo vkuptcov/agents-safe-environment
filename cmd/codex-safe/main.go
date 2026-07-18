@@ -20,7 +20,8 @@ Run interactive Codex for the current Git project inside an ephemeral Sysbox con
 Arguments after -- are forwarded to Codex; the launcher never runs another executable.
 
   --no-host-mcp  Do not forward host MCP servers into the container. By default a loopback
-                 MCP server in the base config.toml is reached through a confined relay.`
+                 MCP server in the base config.toml is reached through a confined relay.
+  --image        Explicitly select an image and bypass automatic .agents-safe/Dockerfile selection.`
 
 // config returns the codex-safe launcher configuration. It is a function so tests can drive the
 // same command policy the binary uses.

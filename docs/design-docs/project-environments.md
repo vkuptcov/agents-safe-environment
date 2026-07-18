@@ -1,6 +1,6 @@
 # Project-Specific Agent Environments
 
-Status: Proposed
+Status: Implemented
 
 Decision: the owner accepted the first implementation scope on 2026-07-17.
 
@@ -231,7 +231,7 @@ launcher must not mount the host's global `~/.gradle`, `~/.m2`, Go, npm, or SDK 
 Both this repository's application and tools modules require Go 1.26.0. The runtime image already contains Docker,
 Compose, Git, Make, Bash, and `rg`, but its Go compiler exists only in a build stage.
 
-An eventual project Dockerfile can reuse the exact pinned Go image:
+The tracked [`.agents-safe/Dockerfile`](../../.agents-safe/Dockerfile) reuses the exact pinned Go image:
 
 ```dockerfile
 ARG AGENTS_SAFE_BASE
@@ -244,18 +244,15 @@ FROM ${AGENTS_SAFE_BASE}
 COPY --from=go-toolchain /usr/local/go /usr/local/go
 ENV PATH="/usr/local/go/bin:${PATH}"
 
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends build-essential \
-    && rm -rf /var/lib/apt/lists/* \
-    && go version
+RUN go version
 ```
 
 That environment supports `make build`, `make test`, `make lint`, `make docker-build`, and `make check-docs` inside
 the session. `make test-smoke-go` remains a real-host gate because it needs a host Docker Engine with
 `sysbox-runc` registered.
 
-This example is not itself approval to add `build-essential`. Checking the Dockerfile into this repository requires
-the explicit dependency approval mandated by [`docs/dependencies.md`](../dependencies.md).
+It adds no system packages. Adding any package to this repository Dockerfile still requires the explicit approval
+mandated by [`docs/dependencies.md`](../dependencies.md).
 
 ## Boundaries and Non-Goals
 
@@ -270,7 +267,7 @@ This design intentionally excludes:
 - BuildKit secrets, SSH forwarding, or private-registry credential design;
 - persistent package-manager or nested-Docker caches;
 - automatic pruning of project images and build cache;
-- checking this repository's example `.agents-safe/Dockerfile` into source without dependency approval.
+- unapproved system packages in this repository's `.agents-safe/Dockerfile`.
 
 Rejected alternative: install packages at session startup. It repeats downloads after every session, makes ordinary
 launch depend on registries, and produces a mutable environment.

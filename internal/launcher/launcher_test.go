@@ -9,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/terminal"
 )
 
@@ -294,6 +296,7 @@ func TestDockerLaunchCreatesDetachedContainerThenExecutesWrapper(t *testing.T) {
 	if !containsSequence(create, "run", "--detach", "--rm") || !containsSequence(create, "--name", containerName) {
 		t.Fatalf("create call = %#v", create)
 	}
+	assertLabel(t, create, projectEnvironmentLabel, projectenv.AbsentEnvironmentLabel)
 	assertWrappedRun(t, runner.runCalls, containerID, []string{"echo", "safe"})
 }
 
@@ -314,6 +317,141 @@ func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
 	assertWrappedRun(t, runner.runCalls, containerID, []string{"make", "test"})
 	if !containsSequence(runner.runCalls[0], "exec", "--interactive", "--tty") {
 		t.Fatalf("exec does not preserve TTY: %#v", runner.runCalls[0])
+	}
+}
+
+func TestDockerLaunchExplicitImageBypassesInvalidProjectEnvironment(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, projectenv.Directory), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing", filepath.Join(root, projectenv.Directory, projectenv.DockerfileName)); err != nil {
+		t.Fatal(err)
+	}
+	containerID := strings.Repeat("d", 64)
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+		{output: []byte(containerID + "\n")},
+	}}
+	plan := launchplan.Plan{ProjectRoot: root, WorkingDir: root, Mounts: []launchplan.BindMount{{Source: root, Target: root}}}
+	docker := testDocker(runner)
+	if err := docker.Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{ImageOverride: true}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	assertLabel(t, runner.combinedCalls[3], projectEnvironmentLabel, projectenv.OverrideEnvironmentLabel)
+}
+
+func TestDockerLaunchRejectsInvalidProjectEnvironmentBeforeDocker(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, projectenv.Directory), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing", filepath.Join(root, projectenv.Directory, projectenv.DockerfileName)); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeCommandRunner{}
+	plan := launchplan.Plan{ProjectRoot: root, WorkingDir: root, Mounts: []launchplan.BindMount{{Source: root, Target: root}}}
+	err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{})
+	if err == nil || !strings.Contains(err.Error(), "project Dockerfile") {
+		t.Fatalf("Launch() error = %v, want project Dockerfile validation failure", err)
+	}
+	if len(runner.combinedCalls) != 0 {
+		t.Fatalf("invalid context reached Docker: %#v", runner.combinedCalls)
+	}
+}
+
+func TestDockerLaunchBuildsProjectImageAndPinsCreate(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	contextPath := filepath.Join(root, projectenv.Directory)
+	if err := os.Mkdir(contextPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(contextPath, projectenv.DockerfileName), []byte("ARG AGENTS_SAFE_BASE\nFROM ${AGENTS_SAFE_BASE}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	definition, err := projectenv.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseID := "sha256:" + strings.Repeat("a", 64)
+	derivedID := "sha256:" + strings.Repeat("b", 64)
+	projectKey := ProjectKey(1000, root)
+	labels := map[string]string{
+		projectenv.ProjectImageLabel: projectenv.ProjectImageLabelValue,
+		projectenv.ProjectKeyLabel:   projectKey,
+		projectenv.DefinitionLabel:   definition.Digest,
+		projectenv.BaseImageIDLabel:  baseID,
+	}
+	containerID := strings.Repeat("c", 64)
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+		{output: []byte(baseID + "\n")},
+		{output: imageInspectionJSON(t, baseID, runtime.GOARCH, nil)},
+		{output: []byte("Error: No such image"), err: fakeExitError{code: 1}},
+		{output: []byte(baseID + "\n")},
+		{output: imageInspectionJSON(t, derivedID, runtime.GOARCH, labels)},
+		{output: []byte(containerID + "\n")},
+	}}
+	docker := testDocker(runner)
+	docker.CanPrompt = true
+	docker.Stdin = strings.NewReader("yes\n")
+	docker.Stderr = new(bytes.Buffer)
+	plan := launchplan.Plan{ProjectRoot: root, WorkingDir: root, Mounts: []launchplan.BindMount{{Source: root, Target: root}}}
+	if err := docker.Launch(context.Background(), plan, "base:image", []string{"true"}, launchplan.Options{}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if len(runner.runCalls) != 3 {
+		t.Fatalf("Run calls = %#v, want build, probe, and exec", runner.runCalls)
+	}
+	build := runner.runCalls[0]
+	if !containsSequence(build, "build", "--file", definition.DockerfilePath) || build[len(build)-1] != contextPath {
+		t.Fatalf("project build call = %#v", build)
+	}
+	create := runner.combinedCalls[len(runner.combinedCalls)-1]
+	if create[len(create)-1] != derivedID {
+		t.Fatalf("create image = %q, want immutable derived ID %q", create[len(create)-1], derivedID)
+	}
+	assertLabel(t, create, projectEnvironmentLabel, definition.EnvironmentLabel())
+}
+
+func TestProjectEnvironmentReuseMatrix(t *testing.T) {
+	t.Parallel()
+	digest := "sha256:" + strings.Repeat("d", 64)
+	tests := []struct {
+		name        string
+		requested   string
+		running     string
+		legacy      bool
+		shouldMatch bool
+	}{
+		{name: "legacy absent", requested: projectenv.AbsentEnvironmentLabel, legacy: true, shouldMatch: true},
+		{name: "absent", requested: projectenv.AbsentEnvironmentLabel, running: projectenv.AbsentEnvironmentLabel, shouldMatch: true},
+		{name: "override accepted when absent", requested: projectenv.AbsentEnvironmentLabel, running: projectenv.OverrideEnvironmentLabel, shouldMatch: true},
+		{name: "explicit override", requested: projectenv.OverrideEnvironmentLabel, running: digest, shouldMatch: true},
+		{name: "matching digest", requested: digest, running: digest, shouldMatch: true},
+		{name: "changed digest", requested: digest, running: "sha256:" + strings.Repeat("e", 64)},
+		{name: "removed Dockerfile", requested: projectenv.AbsentEnvironmentLabel, running: digest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			inspection := dockercli.ContainerInspection{}
+			inspection.Config.Labels = map[string]string{}
+			if !test.legacy {
+				inspection.Config.Labels[projectEnvironmentLabel] = test.running
+			}
+			attempt := &launchAttempt{plan: launchplan.Plan{ProjectRoot: "/project"}, environment: test.requested}
+			err := attempt.validateRunningProjectEnvironment(inspection)
+			if (err == nil) != test.shouldMatch {
+				t.Fatalf("validateRunningProjectEnvironment() error = %v, shouldMatch = %t", err, test.shouldMatch)
+			}
+		})
 	}
 }
 
@@ -892,6 +1030,20 @@ func inspectionJSON(
 	data, err := json.Marshal([]dockercli.ContainerInspection{inspection})
 	if err != nil {
 		t.Fatalf("marshal inspection: %v", err)
+	}
+	return data
+}
+
+func imageInspectionJSON(t *testing.T, imageID string, architecture string, labels map[string]string) []byte {
+	t.Helper()
+	inspection := dockercli.ImageInspection{ID: imageID, Architecture: architecture}
+	inspection.Config.Entrypoint = []string{"/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session"}
+	inspection.Config.Command = []string{"serve"}
+	inspection.Config.Environment = []string{"DOCKER_HOST=unix:///var/run/docker.sock"}
+	inspection.Config.Labels = labels
+	data, err := json.Marshal([]dockercli.ImageInspection{inspection})
+	if err != nil {
+		t.Fatalf("marshal image inspection: %v", err)
 	}
 	return data
 }

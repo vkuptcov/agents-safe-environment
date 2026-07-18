@@ -14,6 +14,9 @@ import (
 // the package both the CLI scaffold and the launcher already import, so neither has to depend on the
 // other to name them.
 type Options struct {
+	// ImageOverride records explicit --image intent. Its value is independent of the selected image:
+	// supplying the default reference still deliberately bypasses project-environment discovery.
+	ImageOverride bool
 	// NoHostMCP skips host MCP discovery entirely: no config.toml read, no forwarders, no mount, and
 	// no relay. It selects creation-time state and so cannot narrow a session that already forwards.
 	NoHostMCP bool

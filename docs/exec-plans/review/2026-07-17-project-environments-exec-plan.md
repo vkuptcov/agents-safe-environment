@@ -1,6 +1,6 @@
 # Exec Plan: Project-Specific Agent Environments
 
-- Status: active
+- Status: in review
 - Created: 2026-07-17
 - Intended executor: GPT-5.6-Terra
 - Design: [`docs/design-docs/project-environments.md`](../../design-docs/project-environments.md)
@@ -63,8 +63,8 @@ image, reuse a valid cached image, and reject stale active environments without 
   container-name race remains the correctness lock.
 - **Detect mutable inputs:** re-read the project definition and base image ID after build; fail if either changed.
 - **No new Go module:** use the standard library for traversal, hashing, and validation.
-- **No repository dogfood image in this plan:** the design's `build-essential` example needs separate explicit
-  dependency approval. Use a dependency-free smoke Dockerfile instead.
+- **Repository self-build image:** the owner approved a Dockerfile that copies only the pinned Go toolchain.
+  `build-essential` and other system packages remain out of scope without separate approval.
 
 ## Execution Protocol for GPT-5.6-Terra
 
@@ -82,7 +82,7 @@ image, reuse a valid cached image, and reject stale active environments without 
 
 ### Phase 1: Project Definition Model
 Purpose: Produce one deterministic, validated description of `.agents-safe/` without invoking Docker.
-Status: to be done
+Status: done
 Done when: callers can distinguish absent and valid definitions, and invalid or mutable context entries fail closed.
 
 1. Create `internal/launcher/projectenv/README.md` with the package boundary and non-test file map.
@@ -96,7 +96,7 @@ Done when: callers can distinguish absent and valid definitions, and invalid or 
 
 ### Phase 2: Typed Docker Image Operations
 Purpose: Give the launcher typed build, inspect, and probe operations without moving policy into `dockercli`.
-Status: to be done
+Status: done
 Done when: tests prove the exact Docker argv and typed results needed to build and validate one project image.
 
 1. Add `BuildRequest` and `ImageInspection` transport types to `internal/launcher/dockercli/request.go`.
@@ -110,7 +110,7 @@ Done when: tests prove the exact Docker argv and typed results needed to build a
 
 ### Phase 3: Preserve Explicit Image Intent
 Purpose: Let launcher policy distinguish a default base reference from an explicit user override.
-Status: to be done
+Status: done
 Done when: both binaries pass exact `--image` intent without changing command parsing or current image values.
 
 1. Add `ImageOverride bool` to `launchplan.Options`; keep `NoHostMCP` unchanged.
@@ -122,7 +122,7 @@ Done when: both binaries pass exact `--image` intent without changing command pa
 
 ### Phase 4: Project Image Preparation
 Purpose: Confirm, build, cache, and validate the project image only on the new-container path.
-Status: to be done
+Status: done
 Done when: a missing valid cache key builds once with confirmation, while valid cache, decline, and failure paths are
 observable and deterministic.
 
@@ -137,7 +137,7 @@ observable and deterministic.
 
 ### Phase 5: Compatibility and Session Reuse
 Purpose: Prevent a derived image or active session from violating immutable startup and environment contracts.
-Status: to be done
+Status: done
 Done when: only compatible images create sessions, and every active-session combination follows the design matrix.
 
 1. Validate project-image labels, architecture, root user, exact entrypoint, exact `serve` command, and `DOCKER_HOST`.
@@ -151,7 +151,7 @@ Done when: only compatible images create sessions, and every active-session comb
 
 ### Phase 6: Focused Integration and Regression Coverage
 Purpose: Prove the complete launcher decision tree with scripted Docker and filesystem fixtures.
-Status: to be done
+Status: done
 Done when: focused tests cover every contract branch without requiring real Docker or Sysbox.
 
 1. Add launcher tests for absent definition, valid cache, accepted build, declined build, and non-interactive input.
@@ -166,7 +166,7 @@ Done when: focused tests cover every contract branch without requiring real Dock
 
 ### Phase 7: Real Docker and Sysbox Proof
 Purpose: Demonstrate that a real derived image supplies a tool without weakening the existing isolation contract.
-Status: to be done
+Status: done
 Done when: a dependency-free fixture image runs through `agents-safe`, caches correctly, and preserves smoke gates.
 
 1. Add `tests/smoke/sysbox_project_environment_test.go` and focused fixture helpers rather than enlarging unrelated
@@ -181,7 +181,7 @@ Done when: a dependency-free fixture image runs through `agents-safe`, caches co
 
 ### Phase 8: Documentation, Full Validation, and Handoff
 Purpose: Leave the repository contract accurate and hand completed implementation to review rather than acceptance.
-Status: to be done
+Status: done
 Done when: docs describe shipped behavior, all required gates pass, and the plan is in `review/` with evidence.
 
 1. Update `README.md` with the `.agents-safe/Dockerfile` UX, confirmation, cache, failure, and `--image` precedence.
@@ -227,8 +227,7 @@ Done when: docs describe shipped behavior, all required gates pass, and the plan
 - Adding a label affects every create-argv fixture and real-host assertion. Update expectations without weakening
   existing Sysbox, mount, host-MCP, or user-state checks.
 - Concurrent cold launches may duplicate expensive build work. Do not add a lock or host-state registry in this plan.
-- The repository example uses `build-essential`, which has not received separate dependency approval. Do not add the
-  example Dockerfile during this plan.
+- The repository Dockerfile must not add `build-essential` or other system packages without separate approval.
 
 ## Out of Scope
 
@@ -240,10 +239,41 @@ Done when: docs describe shipped behavior, all required gates pass, and the plan
 - Persistent Go, Gradle, Maven, npm, or nested-Docker caches.
 - Automatic project-image or BuildKit-cache pruning.
 - A host-side build lock or trust database.
-- Checking in this repository's example `.agents-safe/Dockerfile` without explicit dependency approval.
+- System packages in this repository's `.agents-safe/Dockerfile` without explicit dependency approval.
 
 ## Progress Notes
 
 - Add dated notes during execution for completed phases, validation results, deviations, and blockers.
 - Before moving to `review/`, record the final derived-image ID used by the smoke fixture and confirm cleanup left no
   fixture container or image behind.
+- 2026-07-17: Implemented phases 1-5. Focused Go packages and the full application/smoke-module compile suites pass
+  through the pinned `golang:1.26.0-bookworm` container; `make lint` and `make check-docs` pass the same way.
+- 2026-07-17: `make docker-build` is blocked before the final image is built: this host uses Docker's legacy builder,
+  which leaves `TARGETARCH` empty and fails at `FROM crun-${TARGETARCH}` with `invalid reference format`. Real Sysbox
+  validation and remaining end-to-end coverage stay pending until a BuildKit-capable Docker environment is available.
+- 2026-07-17: The owner approved the repository's `.agents-safe/Dockerfile`. It copies only the pinned Go 1.26.0
+  toolchain; it adds no system packages or new project dependencies.
+- 2026-07-17: `make docker-build`, `make test`, `make lint`, and `make check-docs` pass. A manual project-image
+  build from `.agents-safe/` produced `sha256:99d62198c84163e3657255b3b9085ef8c12352339c5e8aefc46017c0fa5d7a68`;
+  inside that image, `go version`, `docker buildx version`, `make test`, and `make lint` pass.
+- 2026-07-17: The available Docker daemon exposes `crun` and `runc`, but not `sysbox-runc`. Real Sysbox smoke
+  validation remains pending on a compatible host; no smoke fixture image or container was created in this daemon.
+- 2026-07-17: A compatible host now registers `sysbox-runc`. The public `agents-safe` launcher was run through a
+  PTY against this worktree's cached project image; inside the real Sysbox session, `go version` reported 1.26.0 and
+  `docker buildx version` reported 0.30.1. Host inspection confirmed the derived image and matching
+  `codex-safe.project-environment=sha256:ab9cd00d3e466afc5bba9afbfe784e3b3dd4b5c9da4cd6e153440b7c85dcd6d3`.
+- 2026-07-17: Real public launch validation held a project-image session, changed only a Dockerfile comment, and
+  received the required finish-active-session diagnostic with both definition digests. A subsequent PTY launch of
+  that changed definition accepted `yes`, built tag `codex-safe-project-8408071d393ee040639c8f42:6bcae62939e37ba7`,
+  passed compatibility probes, and ran `go version` in Sysbox. The Dockerfile was restored; its temporary session
+  removed itself after the command and the exact temporary image tag was removed.
+- 2026-07-17: Added `TestSysboxProjectEnvironment`. On a Sysbox host it built two fixture derived images with
+  launcher-equivalent labels, ran the public `agents-safe` cached path without `--image`, verified the supplied tool
+  and environment label, rejected a changed active definition, selected the changed image after release, and removed
+  its images and managed container. The final fixture image was
+  `sha256:2aeb2aada45138ac54c5ab72d39c4b3b875f0150240af3cb3d3b72a6dd94e586`; its tag and all fixture containers
+  were removed. The focused real-host test passed in 11.67s.
+- 2026-07-17: Final gates passed: `make test`, `make lint`, `make docker-build`, `make check-docs`, and
+  `git diff --check`. The full `TestSysbox` real-host set, including the new project-environment scenario, passed
+  in 110.932s with exit code 0; credentialed acceptance was intentionally skipped because test credentials were
+  absent. This plan is ready for design, plan, and implementation review.

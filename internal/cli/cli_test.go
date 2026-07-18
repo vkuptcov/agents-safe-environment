@@ -145,6 +145,38 @@ func TestRunForwardsProjectPlanAndCommand(t *testing.T) {
 	if !reflect.DeepEqual(fakeLauncher.Command, []string{"cmd", "arg"}) {
 		t.Errorf("command = %#v, want [cmd arg]", fakeLauncher.Command)
 	}
+	if !fakeLauncher.Options.ImageOverride {
+		t.Fatal("explicit --image did not set ImageOverride")
+	}
+}
+
+func TestRunPreservesExplicitImageIntent(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "omitted", args: []string{"cmd"}, want: false},
+		{name: "explicit default", args: []string{"--image", "default:image", "cmd"}, want: true},
+		{name: "explicit other", args: []string{"--image=other:image", "cmd"}, want: true},
+		{name: "after separator", args: []string{"--", "--image", "default:image"}, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			launcher := &clitest.RecordingLauncher{}
+			dependencies := cli.Dependencies{
+				Discover:        func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+				BuildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) { return launchplan.Plan{}, nil },
+				Launcher:        launcher,
+			}
+			if code := cli.Run(context.Background(), testConfig(), test.args, new(bytes.Buffer), new(bytes.Buffer), dependencies); code != 0 {
+				t.Fatalf("Run() = %d", code)
+			}
+			if launcher.Options.ImageOverride != test.want {
+				t.Fatalf("ImageOverride = %t, want %t", launcher.Options.ImageOverride, test.want)
+			}
+		})
+	}
 }
 
 func TestRunPropagatesExitCode(t *testing.T) {

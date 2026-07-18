@@ -29,6 +29,9 @@ func TestConfigHelp(t *testing.T) {
 	if !strings.Contains(stdout.String(), "--no-host-mcp") {
 		t.Errorf("usage must document --no-host-mcp, got %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), ".agents-safe/Dockerfile") {
+		t.Errorf("usage must document project image selection, got %q", stdout.String())
+	}
 	if stderr.Len() != 0 {
 		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
@@ -69,6 +72,9 @@ func TestConfigForwardsCommandWithoutSeparator(t *testing.T) {
 	}
 	if fakeLauncher.Image != "test:image" {
 		t.Errorf("image = %q, want test:image", fakeLauncher.Image)
+	}
+	if !fakeLauncher.Options.ImageOverride {
+		t.Error("explicit image did not set ImageOverride")
 	}
 	wantCommand := []string{"bash", "-c", "printf value"}
 	if !reflect.DeepEqual(fakeLauncher.Command, wantCommand) {

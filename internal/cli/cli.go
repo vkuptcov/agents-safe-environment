@@ -79,7 +79,13 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return 1
 	}
-	options := launchplan.Options{NoHostMCP: *noHostMCP}
+	imageOverride := false
+	flags.Visit(func(flag *flag.Flag) {
+		if flag.Name == "image" {
+			imageOverride = true
+		}
+	})
+	options := launchplan.Options{ImageOverride: imageOverride, NoHostMCP: *noHostMCP}
 	if err := dependencies.Launcher.Launch(ctx, plan, *image, command, options); err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return errorExitCode(err)

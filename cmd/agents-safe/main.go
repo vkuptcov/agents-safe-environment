@@ -21,7 +21,8 @@ Run a command for the current Git project inside an ephemeral Sysbox container.
 Options must appear before COMMAND; COMMAND is executed directly without a shell.
 
   --no-host-mcp  Do not forward host MCP servers into the container. By default a loopback
-                 MCP server in the base config.toml is reached through a confined relay.`
+                 MCP server in the base config.toml is reached through a confined relay.
+  --image        Explicitly select an image and bypass automatic .agents-safe/Dockerfile selection.`
 
 // config returns the agents-safe launcher configuration. It is a function so tests can drive the
 // same command policy the binary uses.

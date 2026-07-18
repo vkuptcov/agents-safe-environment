@@ -28,6 +28,7 @@ creating another nested Docker environment.
 - Interactive tools use a UTF-8 locale and handle Cyrillic input and output; Bash uses a colored prompt.
 - Files created by managed commands and nested containers retain ownership that remains usable from the host.
 - Concurrent commands for one worktree execute in its already-running container and share its nested daemon.
+- A project can add `.agents-safe/Dockerfile` to derive a cached toolchain image from the selected base image.
 
 See the [design document](docs/design-docs/codex-safe.md) for the full product and security model. The
 [Codex launch execution plan](docs/exec-plans/completed/2026-07-15-codex-launch-exec-plan.md) records the implementation
@@ -76,7 +77,8 @@ The image installs the pinned Codex CLI (`codex-cli 0.144.4`, the `openai/codex`
 build. Codex is never installed or updated from the network at container startup; updating Codex requires a new image
 build with a re-approved version and digest per [`docs/dependencies.md`](docs/dependencies.md).
 
-The environment includes Git, Docker Engine and CLI, Docker Compose V2, `sudo`, `make`, `less`, and `rg`.
+The environment includes Git, Docker Engine and CLI with Buildx/BuildKit, Docker Compose V2, `sudo`, `make`, `less`,
+and `rg`.
 The recreated host user has passwordless `sudo` for container-local administration such as `sudo apt-get update`.
 Interactive Bash sessions also load the system completion framework, including Make target completion.
 The image defaults to `C.UTF-8` and `TERM=xterm-256color`, so Bash and text tools handle Cyrillic and terminal colors.
@@ -157,6 +159,28 @@ identity, nested Docker daemon, working directory, and lifecycle behavior as `co
 The selected project path must be inside a non-bare Git working tree. Linked worktrees are supported when their
 common Git directory is the `.git` directory of an existing primary checkout. External common Git directories and
 worktrees attached to bare repositories are rejected.
+
+### Project-specific environments
+
+Place a Dockerfile at the worktree root:
+
+```text
+.agents-safe/Dockerfile
+```
+
+The launcher uses only `.agents-safe/` as the Docker build context. It rejects symlinks and non-regular context
+entries, prints the Dockerfile path to stderr, and requires an interactive `y` or `yes` before a new definition is
+built with the host Docker daemon. A compatible cached image for the same context digest and immutable base-image ID
+does not prompt or rebuild.
+
+The derived image must retain the session entrypoint, `serve` command, private Docker socket configuration, and
+required runtime binaries. A failed validation, declined/non-interactive confirmation, changed context, or changed
+base image stops the launch; the launcher never falls back to the base image.
+
+`--image REF` takes precedence over project-image discovery. It intentionally bypasses `.agents-safe/Dockerfile`
+validation and image building, including when `REF` equals the normal default. A running session retains its selected
+environment until its active commands finish: a changed or removed Dockerfile produces a finish-active-session
+diagnostic rather than modifying the session.
 
 ## Run the real-host smoke test
 

@@ -11,9 +11,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/terminal"
 )
 
@@ -69,6 +71,9 @@ type launchAttempt struct {
 	cli           *dockercli.Client
 	plan          launchplan.Plan
 	image         string
+	baseImage     string
+	definition    *projectenv.Definition
+	environment   string
 	containerName string
 	projectKey    string
 	// noHostMCP skips discovery entirely for this launch.
@@ -256,20 +261,33 @@ func (docker *DockerLauncher) Launch(
 	if strings.TrimSpace(image) == "" {
 		return errors.New("container image is required")
 	}
-	resolution, err := docker.resolveMounts(plan)
-	if err != nil {
-		return err
-	}
 	attempt := &launchAttempt{
 		docker:        docker,
 		cli:           dockercli.New(docker.DockerBinary, docker.CommandRunner),
 		plan:          plan,
 		image:         image,
+		baseImage:     image,
+		environment:   projectenv.AbsentEnvironmentLabel,
 		containerName: ProjectContainerName(docker.HostUID, plan.ProjectRoot),
 		projectKey:    ProjectKey(docker.HostUID, plan.ProjectRoot),
 		noHostMCP:     options.NoHostMCP,
 	}
-
+	if options.ImageOverride {
+		attempt.environment = projectenv.OverrideEnvironmentLabel
+	} else {
+		definition, err := projectenv.Discover(plan.ProjectRoot)
+		if err != nil {
+			return err
+		}
+		if definition != nil {
+			attempt.definition = definition
+			attempt.environment = definition.EnvironmentLabel()
+		}
+	}
+	resolution, err := docker.resolveMounts(plan)
+	if err != nil {
+		return err
+	}
 	// Discovery runs during preflight, before a container is created or reused, and its channel must
 	// exist before either container because it is a bind mount.
 	if err := attempt.planHostMCP(resolution); err != nil {
@@ -320,3 +338,5 @@ func (docker *DockerLauncher) Launch(
 	}
 	return nil
 }
+
+const projectImageProbeTimeout = 15 * time.Second

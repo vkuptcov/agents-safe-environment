@@ -41,6 +41,16 @@ Ask for explicit owner approval before adding a runtime, build, test, container,
 Pin base images and downloaded binaries as required by the owning design. Preserve checksum verification for remote
 artifacts. Do not add packages merely for local convenience without documenting why they belong in the runtime image.
 
+### Approved Runtime Packages
+
+- `docker-buildx` — approved by the owner on 2026-07-17 for the project-environment image-build contract and
+  repository Docker validation inside a managed session. Ubuntu 24.04 packages it as the Docker Buildx CLI plugin;
+  it selects the BuildKit backend that provides Dockerfile architecture arguments required by the base image.
+
+- Project Go toolchain — approved by the owner on 2026-07-17 for this repository's
+  `.agents-safe/Dockerfile`. It copies Go 1.26.0 from the same digest-pinned image used by the session-builder stage;
+  no compiler packages or system build tools are installed into the shared runtime image.
+
 ## Documentation Tooling
 
 The Mermaid validator keeps its npm dependencies inside a Docker build under `harness/mermaid-check/`. The link
