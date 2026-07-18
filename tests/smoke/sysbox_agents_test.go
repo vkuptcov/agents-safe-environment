@@ -1,6 +1,7 @@
 package smoke_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 // TestSysboxAgentsSafeBash proves the public generic launcher accepts the documented direct
@@ -72,4 +74,42 @@ while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 
 	fixture.release(release, command, "agents-safe command without Codex home")
 	fixture.docker.waitForContainerRemoval()
+}
+
+// TestSysboxConfiguredMount proves local config adds an external read-write directory even when an
+// explicit image bypasses project Dockerfile discovery.
+func TestSysboxConfiguredMount(t *testing.T) {
+	if os.Getenv(goSmokeEnv) != "1" {
+		t.Skipf("set %s=1 to run the real Sysbox configured-mount test", goSmokeEnv)
+	}
+	fixture := newSmokeFixture(t)
+	external := filepath.Join(fixture.project.root, "configured mount")
+	require.NoError(t, os.Mkdir(external, 0o755), "configured mount source must be created")
+	require.NoError(t, os.WriteFile(filepath.Join(external, "input"), []byte("from-host\n"), 0o600),
+		"configured mount input must be written")
+	contextPath := filepath.Join(fixture.project.worktree, projectenv.Directory)
+	require.NoError(t, os.Mkdir(contextPath, 0o755), "project environment directory must be created")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(contextPath, projectenv.ConfigName),
+		[]byte(fmt.Sprintf("mounts = [%q]\n", external)),
+		0o600,
+	), "configured mount file must be written")
+
+	report := filepath.Join(fixture.project.worktree, "configured-mount.report")
+	ready := filepath.Join(fixture.project.worktree, "configured-mount.ready")
+	release := filepath.Join(fixture.project.worktree, "configured-mount.release")
+	command := fixture.launcher.startAgents(
+		fixture.project.worktree,
+		"bash", "-c", `cat "$1/input" > "$2"; printf 'from-container\n' > "$1/output"; : > "$3";
+while [[ ! -e "$4" ]]; do sleep 1; done`, "bash", external, report, ready, release,
+	)
+	fixture.waitForFile(ready, command)
+	require.Equal(t, "from-host\n", readFile(t, report), "container must read the configured mount")
+	require.Equal(t, "from-container\n", readFile(t, filepath.Join(external, "output")),
+		"container must write the configured mount")
+	requireMount(t, fixture.docker.inspectContainer(), external, external, true)
+
+	fixture.release(release, command, "configured-mount command")
+	fixture.docker.waitForContainerRemoval()
+	requireHostOwnership(t, external)
 }

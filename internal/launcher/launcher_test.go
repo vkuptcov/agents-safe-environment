@@ -94,9 +94,14 @@ func TestBuildDockerRunArgsPreservesMountOrderAndUserMounts(t *testing.T) {
 	// A custom CODEX_HOME source differs from its container target, and skills are present, so this
 	// exercises every mount mode and the source-not-equal-target user-state mounts in one place.
 	userMounts := UserMounts{CodexHome: "/host/custom codex", PersonalSkills: "/host/skills"}
+	plan := testPlan()
+	plan.Mounts = append(plan.Mounts, launchplan.BindMount{
+		Source: "/host/tool cache",
+		Target: "/host/tool cache",
+	})
 	args, err := runArgsFor(
 		hostLauncher(1000, 1000, "/home/developer profile", "/home/developer profile/.gitconfig"),
-		testPlan(),
+		plan,
 		"image",
 		"codex-safe-test",
 		userMounts,
@@ -117,6 +122,7 @@ func TestBuildDockerRunArgsPreservesMountOrderAndUserMounts(t *testing.T) {
 		"type=bind,source=/sources/primary/.git,target=/sources/primary/.git,bind-propagation=rprivate",
 		"type=bind,source=/sources/feature worktree," +
 			"target=/sources/feature worktree,bind-propagation=rprivate",
+		"type=bind,source=/host/tool cache,target=/host/tool cache,bind-propagation=rprivate",
 		"type=bind,source=/host/custom codex," +
 			"target=/home/developer profile/.codex,bind-propagation=rprivate",
 		"type=bind,source=/host/skills," +

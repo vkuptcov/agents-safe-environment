@@ -25,7 +25,7 @@ const usage = `Usage: agents-safe init [--project PATH]
 Run a command for the current Git project inside an ephemeral Sysbox container.
 Options must appear before COMMAND; COMMAND is executed directly without a shell.
 
-The init command creates an inactive .agents-safe/Dockerfile.sample at the Git worktree root.
+The init command creates local .agents-safe templates and updates the root .gitignore.
 Use agents-safe -- init to execute a container command named init.
 
   --no-host-mcp  Do not forward host MCP servers into the container. By default a loopback
@@ -34,13 +34,13 @@ Use agents-safe -- init to execute a container command named init.
 
 const initUsage = `Usage: agents-safe init [--project PATH]
 
-Create an inactive .agents-safe/Dockerfile.sample at the selected Git worktree root.
-Rename it to .agents-safe/Dockerfile after editing it to activate the project environment.`
+Create local .agents-safe/Dockerfile.sample and .agents-safe/config.toml files at the selected
+Git worktree root and add exact rules for them to the root .gitignore.`
 
 type commandDependencies struct {
 	discover        func(context.Context, string) (gitproject.Project, error)
 	buildLaunchPlan func(gitproject.Project) (launchplan.Plan, error)
-	createSample    func(string) (string, error)
+	initialize      func(string) (string, error)
 	newLauncher     func() (cli.Launcher, error)
 }
 
@@ -70,7 +70,7 @@ func productionDependencies() commandDependencies {
 	return commandDependencies{
 		discover:        gitproject.Discover,
 		buildLaunchPlan: launchplan.Build,
-		createSample:    projectenv.CreateSample,
+		initialize:      projectenv.Initialize,
 		newLauncher: func() (cli.Launcher, error) {
 			return launcher.NewDockerLauncher(launcher.CodexHomeOptional)
 		},
@@ -138,11 +138,11 @@ func runInit(
 		fmt.Fprintf(stderr, "agents-safe init: %v\n", err)
 		return 1
 	}
-	samplePath, err := dependencies.createSample(project.WorktreeRoot)
+	contextPath, err := dependencies.initialize(project.WorktreeRoot)
 	if err != nil {
 		fmt.Fprintf(stderr, "agents-safe init: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Created %s\n", samplePath)
+	fmt.Fprintf(stdout, "Initialized %s\n", contextPath)
 	return 0
 }

@@ -129,7 +129,7 @@ func TestConfigRequiresCommand(t *testing.T) {
 	}
 }
 
-func TestRunInitCreatesSampleWithoutConstructingLauncher(t *testing.T) {
+func TestRunInitInitializesProjectWithoutConstructingLauncher(t *testing.T) {
 	t.Parallel()
 	wantProject := gitproject.Project{RequestedDir: "/project/nested", WorktreeRoot: "/project"}
 	var discoverPath string
@@ -139,9 +139,9 @@ func TestRunInitCreatesSampleWithoutConstructingLauncher(t *testing.T) {
 		discoverPath = path
 		return wantProject, nil
 	}
-	dependencies.createSample = func(root string) (string, error) {
+	dependencies.initialize = func(root string) (string, error) {
 		initializedRoot = root
-		return "/project/.agents-safe/Dockerfile.sample", nil
+		return "/project/.agents-safe", nil
 	}
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -163,8 +163,8 @@ func TestRunInitCreatesSampleWithoutConstructingLauncher(t *testing.T) {
 	if initializedRoot != wantProject.WorktreeRoot {
 		t.Errorf("initialized root = %q, want %q", initializedRoot, wantProject.WorktreeRoot)
 	}
-	if !strings.Contains(stdout.String(), "/project/.agents-safe/Dockerfile.sample") {
-		t.Errorf("stdout = %q, want created sample path", stdout.String())
+	if !strings.Contains(stdout.String(), "Initialized /project/.agents-safe") {
+		t.Errorf("stdout = %q, want initialized context path", stdout.String())
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("stderr = %q, want empty", stderr.String())
@@ -221,7 +221,7 @@ func TestRunSeparatorPreservesContainerInitCommand(t *testing.T) {
 	dependencies := commandDependencies{
 		discover:        func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
 		buildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) { return launchplan.Plan{}, nil },
-		createSample:    func(string) (string, error) { panic("CreateSample should not be called") },
+		initialize:      func(string) (string, error) { panic("Initialize should not be called") },
 		newLauncher:     func() (cli.Launcher, error) { return recordingLauncher, nil },
 	}
 
@@ -247,8 +247,8 @@ func TestRunInitReportsCreationError(t *testing.T) {
 	dependencies.discover = func(context.Context, string) (gitproject.Project, error) {
 		return gitproject.Project{WorktreeRoot: "/project"}, nil
 	}
-	dependencies.createSample = func(string) (string, error) {
-		return "", errors.New("sample already exists")
+	dependencies.initialize = func(string) (string, error) {
+		return "", errors.New("cannot update .gitignore")
 	}
 	stderr := new(bytes.Buffer)
 
@@ -257,7 +257,7 @@ func TestRunInitReportsCreationError(t *testing.T) {
 	if exitCode != 1 {
 		t.Fatalf("run() = %d, want 1", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "sample already exists") {
+	if !strings.Contains(stderr.String(), "cannot update .gitignore") {
 		t.Errorf("stderr = %q, want creation error", stderr.String())
 	}
 }
@@ -270,8 +270,8 @@ func panicCommandDependencies() commandDependencies {
 		buildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) {
 			panic("BuildLaunchPlan should not be called")
 		},
-		createSample: func(string) (string, error) {
-			panic("CreateSample should not be called")
+		initialize: func(string) (string, error) {
+			panic("Initialize should not be called")
 		},
 		newLauncher: func() (cli.Launcher, error) {
 			panic("NewLauncher should not be called")

@@ -139,9 +139,21 @@ Prepare an inactive project-environment template from anywhere inside a Git work
 ./bin/agents-safe init
 ```
 
-This creates `.agents-safe/Dockerfile.sample` at the worktree root without contacting Docker. Edit the sample, then
-rename it to `.agents-safe/Dockerfile` to activate automatic project-image builds. The command never overwrites an
-existing sample. Use `./bin/agents-safe -- init` when `init` is the container command you intend to execute.
+This creates `.agents-safe/Dockerfile.sample` and `.agents-safe/config.toml` at the worktree root without contacting
+Docker. It also adds exact rules for those two local files to the root `.gitignore`; an active
+`.agents-safe/Dockerfile` remains trackable. Repeated initialization preserves existing content.
+
+Edit the Dockerfile sample, then rename it to `.agents-safe/Dockerfile` to activate automatic project-image builds.
+List additional absolute host directories in `config.toml` when the project container needs them:
+
+```toml
+mounts = ["/home/user/.cache/example-tool"]
+```
+
+Configured directories are mounted read-write at the same absolute paths for new containers. They must exist and
+must not overlap the project or one another. The file intentionally expands host access and can be changed by code in
+the writable worktree, so review it before a cold launch. Use `./bin/agents-safe -- init` when `init` is the container
+command you intend to execute.
 
 For example, open Bash inside the environment for the current Git project:
 

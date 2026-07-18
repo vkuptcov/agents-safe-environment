@@ -23,8 +23,8 @@ The target:
 1. builds `bin/codex-safe`, `bin/agents-safe`, and `bin/codex-safe-session`;
 2. builds the `codex-safe-mvp:local` image;
 3. enables the opt-in smoke test with `CODEX_SAFE_RUN_SYSBOX_SMOKE=1`;
-4. runs every `TestSysbox` scenario (linked worktree, Codex product launch, `agents-safe bash`, and project-image
-   selection) without the Go test cache.
+4. runs every `TestSysbox` scenario (linked worktree, Codex product launch, `agents-safe bash`, configured mounts,
+   and project-image selection) without the Go test cache.
 
 The test requires:
 
@@ -75,6 +75,7 @@ Managed container (sysbox-runc, not privileged)
 ├── codex-safe-session manager
 ├── recreated host user, group, and home path
 ├── mounted project, common Git directory, and read-only .gitconfig
+├── explicitly configured host directories mounted read-write at the same paths
 └── private Docker daemon using crun
              │
              ├── docker run container
@@ -116,6 +117,10 @@ has no Codex-home bind mount, carries the `absent` compatibility label, and does
 `--image`. It verifies the production cold-build path, the project-provided executable, ordinary active-session reuse
 after a Dockerfile change, a BuildKit-backed rebuild on the next cold launch, and image cleanup.
 
+`TestSysboxConfiguredMount` writes a local `.agents-safe/config.toml`, launches through the public `agents-safe`
+command with an explicit image, and verifies that an external directory is visible read-write at the same absolute
+path with `rprivate` propagation.
+
 ## Probe synchronization
 
 Long-running probes communicate through files in the temporary linked worktree. That directory is visible to both
@@ -143,6 +148,7 @@ immediately and includes the command's captured stdout and stderr instead of wai
 | Tools | `less`, `make`, `rg`, Docker Compose, and Make completion are available independently. |
 | Worktree | Git works from a linked worktree; a file can be staged; the common Git directory is writable. |
 | Mount policy | The primary checkout is read-only; the linked worktree and common Git directory are writable. |
+| Configured mount | An explicitly configured external directory is mounted read-write at the same absolute path. |
 | Mount isolation | Mounts use `rprivate`; no source or destination is the host Docker socket. |
 | Container | It uses `sysbox-runc`, is not privileged, preserves its working directory, and has exact labels. |
 | Nested daemon | Its ID differs from the host daemon, it uses `crun`, and it cannot see the sentinel. |
@@ -156,6 +162,7 @@ immediately and includes the command's captured stdout and stderr instead of wai
 ## Files
 
 - `sysbox_linked_worktree_test.go` contains the scenario and domain assertions.
+- `sysbox_agents_test.go` covers direct public-launcher behavior and configured local mounts.
 - `sysbox_project_environment_test.go` covers automatic project-image builds and active-session lifecycle.
 - `sysbox_fixture_test.go` composes the harness, starts embedded probes, and implements marker synchronization.
 - `smoke_setup_test.go` creates the Git fixture, host identity, artifact paths, and launcher processes.

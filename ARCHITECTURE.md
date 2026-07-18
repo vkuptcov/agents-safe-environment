@@ -42,7 +42,7 @@ both the module paths and document links.
 | `internal/gitproject/` | Git discovery. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/launcher/` | Managed-container lifecycle and host launch orchestration. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/launcher/launchplan/` | Validated worktree and bind-mount launch contract. | [Safe environment](docs/design-docs/codex-safe.md) |
-| `internal/launcher/projectenv/` | Discovers project Docker build contexts and names their stable images. | [Project environments](docs/design-docs/project-environments.md) |
+| `internal/launcher/projectenv/` | Initializes and reads local project image and mount configuration. | [Project environments](docs/design-docs/project-environments.md) |
 | `internal/launcher/dockercli/` | Typed adapter for the host Docker CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `cmd/codex-safe-session/` | Container CLI. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/container/` | Container bootstrap. | [Session manager](docs/design-docs/go-session-manager.md) |
@@ -57,8 +57,11 @@ both the module paths and document links.
 ## Data and Trust Boundaries
 
 - The selected worktree is mounted read-write at the same absolute path.
+- Additional directories explicitly listed in local `.agents-safe/config.toml` are mounted read-write at the same
+  absolute paths for new containers.
 - A linked worktree's primary checkout is mounted read-only while the shared Git directory remains writable.
-- The host home is not mounted. Only explicitly supported configuration files may receive narrow read-only mounts.
+- The host home is not mounted implicitly. Explicit local project configuration may expose narrower directories;
+  supported configuration files otherwise receive only their documented mounts.
 - The host Docker socket is never mounted into the container.
 - The session container shares no host namespace. The optional relay sidecar in
   [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) shares the host network namespace only, runs no agent
@@ -70,7 +73,8 @@ both the module paths and document links.
 
 - Host discovery, mount, naming, reuse, or Docker argument changes belong to
   [Safe Environment for Running Codex Agents](docs/design-docs/codex-safe.md).
-- Project-image discovery, automatic builds, BuildKit caching, and compatibility validation belong to
+- Project initialization, local mount configuration, project-image discovery, automatic builds, BuildKit caching,
+  and compatibility validation belong to
   [Project-Specific Agent Environments](docs/design-docs/project-environments.md).
 - Container startup, daemon supervision, registration, command wrapping, and idle shutdown changes belong to
   [Go Session Manager](docs/design-docs/go-session-manager.md).

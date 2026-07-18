@@ -1,11 +1,15 @@
 package launchplan
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 func TestBuildRegularCheckout(t *testing.T) {
@@ -123,5 +127,72 @@ func TestBuildRejectsUnsafeMountPath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cannot be represented safely") {
 		t.Fatalf("Build() error = %q, want unsafe --mount error", err)
+	}
+}
+
+func TestBuildAddsConfiguredMount(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	external := t.TempDir()
+	writeMountConfig(t, root, external)
+
+	plan, err := Build(gitproject.Project{
+		RequestedDir: root,
+		WorktreeRoot: root,
+		PrimaryRoot:  root,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []BindMount{
+		{Source: root, Target: root},
+		{Source: external, Target: external},
+	}
+	if !reflect.DeepEqual(plan.Mounts, want) {
+		t.Fatalf("Mounts = %#v, want %#v", plan.Mounts, want)
+	}
+}
+
+func TestBuildRejectsConfiguredMountOverlap(t *testing.T) {
+	t.Parallel()
+	t.Run("managed project", func(t *testing.T) {
+		root := t.TempDir()
+		writeMountConfig(t, root, root)
+		_, err := Build(gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root})
+		if err == nil || !strings.Contains(err.Error(), "overlaps mount") {
+			t.Fatalf("Build() error = %v, want overlap rejection", err)
+		}
+	})
+	t.Run("configured parent", func(t *testing.T) {
+		root := t.TempDir()
+		parent := t.TempDir()
+		child := filepath.Join(parent, "child")
+		if err := os.Mkdir(child, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeMountConfig(t, root, parent, child)
+		_, err := Build(gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root})
+		if err == nil || !strings.Contains(err.Error(), "overlaps mount") {
+			t.Fatalf("Build() error = %v, want overlap rejection", err)
+		}
+	})
+}
+
+func writeMountConfig(t *testing.T, root string, mounts ...string) {
+	t.Helper()
+	contextPath := filepath.Join(root, projectenv.Directory)
+	if err := os.Mkdir(contextPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "mounts = ["
+	for index, mount := range mounts {
+		if index != 0 {
+			content += ", "
+		}
+		content += fmt.Sprintf("%q", mount)
+	}
+	content += "]\n"
+	if err := os.WriteFile(filepath.Join(contextPath, projectenv.ConfigName), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

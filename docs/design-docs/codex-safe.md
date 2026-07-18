@@ -129,6 +129,8 @@ agents-safe [launcher options] [--] command [argument ...]
 - `--image` selects an image only when creating a new container; it does not replace an active environment.
 - An explicit `--image` bypasses `.agents-safe/Dockerfile` discovery; otherwise project-image behavior is owned by
   [Project-Specific Agent Environments](project-environments.md).
+- Local directories listed in `.agents-safe/config.toml` are added only when a new container is created; `--image`
+  does not bypass this mount configuration.
 - Interactive mode attaches stdin, stdout, stderr, and the terminal to the container process.
 - After successful environment setup, the Codex exit code becomes the `codex-safe` exit code.
 
@@ -227,6 +229,17 @@ Every regular-checkout and linked-worktree launch receives the same user mounts:
   launch that resolves no host Codex home receives no Codex mount (see [Codex home resolution](#codex-home-resolution)).
 - When host `$HOME/.agents/skills` exists, that exact directory is mounted read-only at the equivalent path for the
   container user.
+
+#### Local project-configured mounts
+
+`.agents-safe/config.toml` may list additional existing host directories. Each source is canonicalized and mounted
+read-write at the same absolute container path. The launcher rejects root, managed-mount overlaps, configured-mount
+overlaps, malformed TOML, and unknown settings before it contacts Docker.
+
+The configuration is local and Git-ignored, but it remains writable project content. A process with worktree access
+can modify it for a later cold launch, so it is explicit operator trust rather than a project-enforced security policy.
+The full syntax and immutable active-session behavior are owned by
+[Project-Specific Agent Environments](project-environments.md).
 
 #### Host home path and Git configuration
 

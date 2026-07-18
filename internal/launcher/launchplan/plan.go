@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 // Options are the per-launch choices the CLI resolves and the launcher applies. They live here, in
@@ -64,6 +65,14 @@ func Build(project gitproject.Project) (Plan, error) {
 	} else {
 		mounts = append(mounts, BindMount{Source: project.WorktreeRoot, Target: project.WorktreeRoot})
 	}
+	configured, err := projectenv.LoadMounts(project.WorktreeRoot)
+	if err != nil {
+		return Plan{}, err
+	}
+	mounts, err = addConfiguredMounts(mounts, configured)
+	if err != nil {
+		return Plan{}, err
+	}
 
 	normalized, err := normalizeMounts(mounts)
 	if err != nil {
@@ -75,6 +84,31 @@ func Build(project gitproject.Project) (Plan, error) {
 		WorkingDir:  project.RequestedDir,
 		Mounts:      normalized,
 	}, nil
+}
+
+func addConfiguredMounts(mounts []BindMount, sources []string) ([]BindMount, error) {
+	for _, source := range sources {
+		if err := ValidateMountPath("configured mount", source); err != nil {
+			return nil, err
+		}
+		for _, existing := range mounts {
+			if PathsOverlap(source, existing.Source) {
+				return nil, fmt.Errorf("configured mount %q overlaps mount %q", source, existing.Source)
+			}
+		}
+		mounts = append(mounts, BindMount{Source: source, Target: source})
+	}
+	return mounts, nil
+}
+
+// PathsOverlap reports whether either canonical absolute path contains the other or they are equal.
+func PathsOverlap(first string, second string) bool {
+	return pathContains(first, second) || pathContains(second, first)
+}
+
+func pathContains(parent string, child string) bool {
+	relative, err := filepath.Rel(parent, child)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func validateWorkingDirectory(workingDir string, worktreeRoot string) error {

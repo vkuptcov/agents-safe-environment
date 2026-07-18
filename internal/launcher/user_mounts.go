@@ -222,7 +222,7 @@ func resolvePersonalSkills(
 	}
 
 	for _, writable := range writableSources {
-		if pathsOverlap(canonical, writable) {
+		if launchplan.PathsOverlap(canonical, writable) {
 			return "", fmt.Errorf(
 				"personal-skills source %q overlaps writable mount %q; a read-only skill must not be "+
 					"modifiable through a writable alias",
@@ -316,21 +316,4 @@ func canonicalizeExistingDir(label string, source string, accessMode uint32) (st
 		return "", fmt.Errorf("%s %q is not accessible with the required permissions: %w", label, canonical, err)
 	}
 	return canonical, nil
-}
-
-// pathsOverlap reports whether either path contains the other or the two are equal. Both inputs
-// must be canonical absolute paths.
-func pathsOverlap(a string, b string) bool {
-	return isWithin(a, b) || isWithin(b, a)
-}
-
-func isWithin(child string, parent string) bool {
-	if child == parent {
-		return true
-	}
-	relative, err := filepath.Rel(parent, child)
-	if err != nil {
-		return false
-	}
-	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
