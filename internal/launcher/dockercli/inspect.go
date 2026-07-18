@@ -104,29 +104,26 @@ func (client *Client) ResolveImageID(ctx context.Context, image string) (string,
 	return imageID, nil
 }
 
-// InspectImage returns the config needed to validate a cached or freshly built project image.
-func (client *Client) InspectImage(ctx context.Context, image string) (ImageInspection, bool, error) {
+// InspectImage returns the config needed to validate a freshly built project image.
+func (client *Client) InspectImage(ctx context.Context, image string) (ImageInspection, error) {
 	if strings.TrimSpace(image) == "" {
-		return ImageInspection{}, false, errors.New("container image is required")
+		return ImageInspection{}, errors.New("container image is required")
 	}
 	output, err := client.combinedOutput(ctx, "image", "inspect", image)
 	if err != nil {
-		if isImageNotFound(output, err) {
-			return ImageInspection{}, false, nil
-		}
-		return ImageInspection{}, false, commandFailure(fmt.Sprintf("inspect image %q", image), output, err)
+		return ImageInspection{}, commandFailure(fmt.Sprintf("inspect image %q", image), output, err)
 	}
 	var inspections []ImageInspection
 	if err := json.Unmarshal(output, &inspections); err != nil {
-		return ImageInspection{}, false, fmt.Errorf("parse image inspection: %w", err)
+		return ImageInspection{}, fmt.Errorf("parse image inspection: %w", err)
 	}
 	if len(inspections) != 1 {
-		return ImageInspection{}, false, fmt.Errorf("inspect image %q returned %d records", image, len(inspections))
+		return ImageInspection{}, fmt.Errorf("inspect image %q returned %d records", image, len(inspections))
 	}
 	if err := validateImageID(inspections[0].ID); err != nil {
-		return ImageInspection{}, false, fmt.Errorf("parse image inspection: %w", err)
+		return ImageInspection{}, fmt.Errorf("parse image inspection: %w", err)
 	}
-	return inspections[0], true, nil
+	return inspections[0], nil
 }
 
 // validateImageID rejects anything that is not a digest-form content ID, so a malformed value can
@@ -148,12 +145,4 @@ func isContainerNotFound(output []byte, err error) bool {
 	}
 	message := strings.ToLower(string(output))
 	return strings.Contains(message, "no such container") || strings.Contains(message, "no such object")
-}
-
-func isImageNotFound(output []byte, err error) bool {
-	if ExitCode(err) != 1 {
-		return false
-	}
-	message := strings.ToLower(string(output))
-	return strings.Contains(message, "no such image") || strings.Contains(message, "no such object")
 }

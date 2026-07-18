@@ -36,6 +36,11 @@ Ask for explicit owner approval before adding a runtime, build, test, container,
   this code runs once per launch in the launcher's trusted computing base. The smoke module carries
   it as an indirect dependency because it imports the launcher packages that use it.
 
+- `github.com/spf13/pflag` v1.0.10 — approved by the owner on 2026-07-18 for application CLI parsing. Its explicit
+  `FlagSet.Changed` state preserves whether `--image` was supplied even when its value equals the default, without a
+  manual visit over parsed flags. Both parsers disable interspersed parsing so command arguments retain the previous
+  boundary.
+
 ## Container Dependencies
 
 Pin base images and downloaded binaries as required by the owning design. Preserve checksum verification for remote

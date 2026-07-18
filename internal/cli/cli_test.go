@@ -160,6 +160,7 @@ func TestRunPreservesExplicitImageIntent(t *testing.T) {
 		{name: "omitted", args: []string{"cmd"}, want: false},
 		{name: "explicit default", args: []string{"--image", "default:image", "cmd"}, want: true},
 		{name: "explicit other", args: []string{"--image=other:image", "cmd"}, want: true},
+		{name: "after command", args: []string{"cmd", "--image", "default:image"}, want: false},
 		{name: "after separator", args: []string{"--", "--image", "default:image"}, want: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

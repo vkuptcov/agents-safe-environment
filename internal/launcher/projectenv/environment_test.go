@@ -8,25 +8,22 @@ import (
 
 func TestDiscoverAbsentDockerfile(t *testing.T) {
 	t.Parallel()
-	definition, err := Discover(t.TempDir())
-	if err != nil || definition != nil {
-		t.Fatalf("Discover() = (%#v, %v), want (nil, nil)", definition, err)
+	contextPath, err := Discover(t.TempDir())
+	if err != nil || contextPath != "" {
+		t.Fatalf("Discover() = (%q, %v), want empty path and nil error", contextPath, err)
 	}
 }
 
 func TestDiscoverReturnsFixedBuildContext(t *testing.T) {
 	t.Parallel()
 	root := writeContext(t)
-	definition, err := Discover(root)
+	contextPath, err := Discover(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantContext := filepath.Join(root, Directory)
-	if definition == nil || definition.ContextPath != wantContext {
-		t.Fatalf("Discover() context = %#v, want %q", definition, wantContext)
-	}
-	if want := filepath.Join(wantContext, DockerfileName); definition.DockerfilePath != want {
-		t.Fatalf("Discover() Dockerfile = %q, want %q", definition.DockerfilePath, want)
+	if contextPath != wantContext {
+		t.Fatalf("Discover() context = %q, want %q", contextPath, wantContext)
 	}
 }
 
@@ -62,10 +59,7 @@ func TestDiscoverRejectsSymlinkBoundaries(t *testing.T) {
 
 func TestLocalImageName(t *testing.T) {
 	t.Parallel()
-	name, err := LocalImageName("project-key")
-	if err != nil {
-		t.Fatal(err)
-	}
+	name := LocalImageName("project-key")
 	if want := "codex-safe-project-project-key:local"; name != want {
 		t.Fatalf("name = %q, want %q", name, want)
 	}

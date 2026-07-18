@@ -10,48 +10,41 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
-// discoverProjectImage selects the optional definition only after active-session reuse has been
-// ruled out. An explicit image override disables project discovery for the whole launch.
-func (attempt *launchAttempt) discoverProjectImage() error {
-	if !attempt.projectImage {
-		return nil
+// prepareImage runs only after active-session reuse has been ruled out. An explicit image override
+// bypasses project discovery; otherwise a discovered context is built and pins the selected image.
+func (attempt *launchAttempt) prepareImage(ctx context.Context) error {
+	if attempt.imageOverride {
+		return attempt.cli.Preflight(ctx, sysboxRuntime, attempt.image)
 	}
-	definition, err := projectenv.Discover(attempt.plan.ProjectRoot)
+	contextPath, err := projectenv.Discover(attempt.plan.ProjectRoot)
 	if err != nil {
 		return err
 	}
-	attempt.definition = definition
-	return nil
+	if contextPath == "" {
+		return attempt.cli.Preflight(ctx, sysboxRuntime, attempt.image)
+	}
+	return attempt.prepareProjectImage(ctx, contextPath)
 }
 
 // prepareProjectImage rebuilds the stable project tag and selects its immutable result. It runs
 // only after a deterministic running session has been ruled out, so active sessions retain the
 // ordinary image-selection semantics and never trigger a build.
-func (attempt *launchAttempt) prepareProjectImage(ctx context.Context) error {
-	if attempt.definition == nil {
-		return nil
-	}
-	if err := attempt.cli.Preflight(ctx, sysboxRuntime, attempt.baseImage); err != nil {
+func (attempt *launchAttempt) prepareProjectImage(ctx context.Context, contextPath string) error {
+	baseImage := attempt.image
+	if err := attempt.cli.Preflight(ctx, sysboxRuntime, baseImage); err != nil {
 		return err
 	}
-	tag, err := projectenv.LocalImageName(attempt.projectKey)
-	if err != nil {
-		return err
-	}
+	tag := projectenv.LocalImageName(attempt.projectKey)
 	if err := attempt.cli.Build(ctx, dockercli.BuildRequest{
-		Dockerfile: attempt.definition.DockerfilePath,
-		Tag:        tag,
-		BaseImage:  attempt.baseImage,
-		Context:    attempt.definition.ContextPath,
+		Tag:       tag,
+		BaseImage: baseImage,
+		Context:   contextPath,
 	}, attempt.docker.Stderr); err != nil {
 		return err
 	}
-	inspection, found, err := attempt.cli.InspectImage(ctx, tag)
+	inspection, err := attempt.cli.InspectImage(ctx, tag)
 	if err != nil {
 		return err
-	}
-	if !found {
-		return fmt.Errorf("project image %q was not found after build", tag)
 	}
 	if err := validateProjectImage(inspection); err != nil {
 		return err

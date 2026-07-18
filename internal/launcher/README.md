@@ -18,5 +18,5 @@ Child packages:
 - `host_environment.go` — validates host identity and launcher configuration and discovers host Git configuration.
 - `identity.go` — derives deterministic project keys and container names.
 - `launcher.go` — constructs the launcher, resolves host and user-mount state, and coordinates one launch.
-- `project_environment.go` — confirms, builds, caches, and validates project-derived images.
+- `project_environment.go` — discovers, builds, validates, and pins project-derived images.
 - `user_mounts.go` — resolves and validates Codex-home and personal-skills mount sources.

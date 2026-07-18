@@ -364,7 +364,7 @@ func TestDockerLaunchRejectsInvalidProjectEnvironmentOnColdCreate(t *testing.T) 
 
 func TestDockerLaunchBuildsProjectImageAndPinsCreate(t *testing.T) {
 	t.Parallel()
-	root, definition := writeProjectDefinition(t)
+	root, contextPath := writeProjectDefinition(t)
 	derivedID := "sha256:" + strings.Repeat("b", 64)
 	containerID := strings.Repeat("c", 64)
 	runner := &fakeCommandRunner{outputs: []commandResult{
@@ -384,13 +384,10 @@ func TestDockerLaunchBuildsProjectImageAndPinsCreate(t *testing.T) {
 		t.Fatalf("Run calls = %#v, want build and exec", runner.runCalls)
 	}
 	build := runner.runCalls[0]
-	if !containsSequence(build, "build", "--file", definition.DockerfilePath) || build[len(build)-1] != definition.ContextPath {
+	if !containsSequence(build, "build", "--tag") || build[len(build)-1] != contextPath {
 		t.Fatalf("project build call = %#v", build)
 	}
-	tag, err := projectenv.LocalImageName(ProjectKey(docker.HostUID, root))
-	if err != nil {
-		t.Fatal(err)
-	}
+	tag := projectenv.LocalImageName(ProjectKey(docker.HostUID, root))
 	if !containsSequence(build, "--tag", tag) {
 		t.Fatalf("project build call = %#v, want stable tag %q", build, tag)
 	}
@@ -1022,7 +1019,7 @@ func imageInspectionJSON(t *testing.T, imageID string) []byte {
 	return data
 }
 
-func writeProjectDefinition(t *testing.T) (string, *projectenv.Definition) {
+func writeProjectDefinition(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()
 	contextPath := filepath.Join(root, projectenv.Directory)
@@ -1032,11 +1029,11 @@ func writeProjectDefinition(t *testing.T) (string, *projectenv.Definition) {
 	if err := os.WriteFile(filepath.Join(contextPath, projectenv.DockerfileName), []byte("ARG AGENTS_SAFE_BASE\nFROM ${AGENTS_SAFE_BASE}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	definition, err := projectenv.Discover(root)
+	discovered, err := projectenv.Discover(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return root, definition
+	return root, discovered
 }
 
 func containerNotFound() commandResult {

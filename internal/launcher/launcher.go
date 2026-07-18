@@ -14,7 +14,6 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
-	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/terminal"
 )
 
@@ -70,9 +69,7 @@ type launchAttempt struct {
 	cli           *dockercli.Client
 	plan          launchplan.Plan
 	image         string
-	baseImage     string
-	definition    *projectenv.Definition
-	projectImage  bool
+	imageOverride bool
 	containerName string
 	projectKey    string
 	// noHostMCP skips discovery entirely for this launch.
@@ -265,10 +262,9 @@ func (docker *DockerLauncher) Launch(
 		cli:           dockercli.New(docker.DockerBinary, docker.CommandRunner),
 		plan:          plan,
 		image:         image,
-		baseImage:     image,
+		imageOverride: options.ImageOverride,
 		containerName: ProjectContainerName(docker.HostUID, plan.ProjectRoot),
 		projectKey:    ProjectKey(docker.HostUID, plan.ProjectRoot),
-		projectImage:  !options.ImageOverride,
 		noHostMCP:     options.NoHostMCP,
 	}
 	resolution, err := docker.resolveMounts(plan)

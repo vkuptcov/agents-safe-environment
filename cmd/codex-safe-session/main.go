@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +10,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/spf13/pflag"
 
 	containerRuntime "github.com/vkuptcov/agents-safe-environment/internal/container"
 	"github.com/vkuptcov/agents-safe-environment/internal/relay"
@@ -116,27 +117,13 @@ func runCLI(
 	}
 }
 
-// endpointList collects a repeatable --endpoint flag. Its order is the launch's sorted endpoint
-// order, which is what fixes each endpoint's socket index on both sides of the mount.
-type endpointList []string
-
-func (list *endpointList) String() string { return strings.Join(*list, ",") }
-
-func (list *endpointList) Set(value string) error {
-	if strings.TrimSpace(value) == "" {
-		return errors.New("endpoint must not be empty")
-	}
-	*list = append(*list, value)
-	return nil
-}
-
 func parseRelayFlags(args []string, stderr io.Writer) (relay.Config, error) {
-	flags := flag.NewFlagSet("relay", flag.ContinueOnError)
+	flags := pflag.NewFlagSet("relay", pflag.ContinueOnError)
 	flags.SetOutput(stderr)
+	flags.SetInterspersed(false)
 	generation := flags.String("generation", "", "generation directory as seen inside this container")
 	initialLease := flags.Duration("initial-lease-timeout", 0, "bound on the wait for the session's first lease")
-	var endpoints endpointList
-	flags.Var(&endpoints, "endpoint", "host endpoint as host:port, repeated in the launch's sorted order")
+	endpoints := flags.StringArray("endpoint", nil, "host endpoint as host:port, repeated in the launch's sorted order")
 	if err := flags.Parse(args); err != nil {
 		return relay.Config{}, err
 	}
@@ -144,9 +131,15 @@ func parseRelayFlags(args []string, stderr io.Writer) (relay.Config, error) {
 		fmt.Fprintln(stderr, "codex-safe-session: relay accepts no positional arguments")
 		return relay.Config{}, errors.New("unexpected arguments")
 	}
+	for _, endpoint := range *endpoints {
+		if strings.TrimSpace(endpoint) == "" {
+			fmt.Fprintln(stderr, "codex-safe-session: endpoint must not be empty")
+			return relay.Config{}, errors.New("endpoint must not be empty")
+		}
+	}
 	return relay.Config{
 		Generation:          *generation,
-		Endpoints:           endpoints,
+		Endpoints:           *endpoints,
 		InitialLeaseTimeout: *initialLease,
 	}, nil
 }

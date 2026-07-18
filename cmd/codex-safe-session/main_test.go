@@ -259,6 +259,21 @@ func TestRunCLIRejectsUnknownRelayArguments(t *testing.T) {
 	}
 }
 
+func TestRunCLIRejectsEmptyRelayEndpoint(t *testing.T) {
+	var stderr bytes.Buffer
+	got := runCLI(
+		context.Background(),
+		[]string{"relay", "--generation", "/run/g", "--endpoint", ""},
+		strings.NewReader(""),
+		io.Discard,
+		&stderr,
+		unusedApplication(),
+	)
+	if got != 2 || !strings.Contains(stderr.String(), "endpoint must not be empty") {
+		t.Fatalf("exit code = %d, stderr = %q; want endpoint usage error", got, stderr.String())
+	}
+}
+
 func TestRunCLIReportsRelayFailure(t *testing.T) {
 	var stderr bytes.Buffer
 	app := unusedApplication()

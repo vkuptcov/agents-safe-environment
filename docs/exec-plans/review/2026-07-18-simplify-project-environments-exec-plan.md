@@ -74,6 +74,18 @@ Done when: every cold create builds the stable project tag and active sessions r
 3. Exercise production build orchestration in unit and real-host smoke tests.
 4. Align the design, README, original feature plan, and implementation review.
 
+### Phase 5: Transient-State Cleanup
+Purpose: Make the cold-create image path linear and remove values derived from existing inputs.
+Status: done
+Done when: project discovery and image preparation keep no cross-step state beyond the selected image.
+
+1. Keep the discovered build context local to image preparation.
+2. Derive the default Dockerfile path and stable tag instead of transporting and validating them twice.
+3. Remove the impossible post-build not-found result while retaining config validation and immutable image selection.
+4. Use the owner-approved `pflag` API for application flag parsing and explicit `--image` intent while preserving
+   command boundaries.
+5. Re-run the implementation review and applicable gates.
+
 ## Validation Gates
 
 - `go test ./internal/launcher/projectenv ./internal/launcher/dockercli ./internal/launcher` passes.
@@ -116,3 +128,9 @@ Done when: every cold create builds the stable project tag and active sessions r
 - 2026-07-18: `make test-smoke-go` is blocked before changed runtime code because this Docker daemon does not register
   `sysbox-runc`; the host also has no `XDG_RUNTIME_DIR` for the host-MCP scenario. Cleanup left no managed container
   or `codex-safe-project-*` fixture image.
+- 2026-07-18: A second review removed transient build state from `launchAttempt`, reduced discovery to one optional
+  context path, let Docker select the fixed context's default Dockerfile, and removed the post-build `found` branch.
+- 2026-07-18: Added owner-approved `github.com/spf13/pflag` v1.0.10. Both application parsers use it; interspersed
+  parsing stays disabled, and explicit image intent now uses `FlagSet.Changed`.
+- 2026-07-18: Focused tests, `go vet`, `make test`, `make lint`, `make docker-build`, `make check-docs`, compile-only
+  smoke, and `git diff --check` pass. Per owner direction, real Sysbox is not a gate on this host because it is absent.

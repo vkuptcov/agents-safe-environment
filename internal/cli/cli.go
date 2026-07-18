@@ -7,9 +7,10 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
+
+	"github.com/spf13/pflag"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
@@ -45,15 +46,16 @@ type Config struct {
 // Run parses args, builds the command, discovers the project, builds the plan, and launches the
 // command, returning the process exit code.
 func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Writer, dependencies Dependencies) int {
-	flags := flag.NewFlagSet(cfg.Name, flag.ContinueOnError)
+	flags := pflag.NewFlagSet(cfg.Name, pflag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.SetInterspersed(false)
 	projectPath := flags.String("project", ".", "Git project path")
 	image := flags.String("image", cfg.DefaultImage, "container image")
 	noHostMCP := flags.Bool("no-host-mcp", false,
 		"disable host MCP forwarding: no config.toml read, no forwarders, no relay, no mount")
 
 	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
+		if errors.Is(err, pflag.ErrHelp) {
 			fmt.Fprintln(stdout, cfg.Usage)
 			return 0
 		}
@@ -79,13 +81,7 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return 1
 	}
-	imageOverride := false
-	flags.Visit(func(flag *flag.Flag) {
-		if flag.Name == "image" {
-			imageOverride = true
-		}
-	})
-	options := launchplan.Options{ImageOverride: imageOverride, NoHostMCP: *noHostMCP}
+	options := launchplan.Options{ImageOverride: flags.Changed("image"), NoHostMCP: *noHostMCP}
 	if err := dependencies.Launcher.Launch(ctx, plan, *image, command, options); err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return errorExitCode(err)

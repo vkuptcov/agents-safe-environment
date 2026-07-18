@@ -20,10 +20,9 @@ func (client *Client) Build(ctx context.Context, request BuildRequest, diagnosti
 	return nil
 }
 
-// BuildArgs encodes a project-image build without widening its already validated context.
+// BuildArgs encodes a project-image build from its already validated context.
 func BuildArgs(request BuildRequest) ([]string, error) {
 	for _, value := range []struct{ name, value string }{
-		{"Dockerfile", request.Dockerfile},
 		{"image tag", request.Tag},
 		{"base image", request.BaseImage},
 		{"build context", request.Context},
@@ -34,7 +33,6 @@ func BuildArgs(request BuildRequest) ([]string, error) {
 	}
 	args := []string{
 		"build",
-		"--file", request.Dockerfile,
 		"--tag", request.Tag,
 		"--build-arg", "AGENTS_SAFE_BASE=" + request.BaseImage,
 	}

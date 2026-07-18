@@ -24,8 +24,7 @@ func TestSysboxProjectEnvironment(t *testing.T) {
 		t.Skip("bin/agents-safe is missing; run make build first")
 	}
 
-	tag, err := projectenv.LocalImageName(launcher.ProjectKey(os.Getuid(), fixture.project.worktree))
-	require.NoError(t, err, "fixture project image tag must be derived")
+	tag := projectenv.LocalImageName(launcher.ProjectKey(os.Getuid(), fixture.project.worktree))
 	t.Cleanup(func() {
 		cleanupContext, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 		defer cancel()

@@ -61,13 +61,12 @@ type ExecRequest struct {
 }
 
 // BuildRequest contains the transport inputs for one project-image build. The launcher owns all
-// policy: this type only preserves the already-selected file, tag, base reference, and
-// fixed context as separate Docker argv values.
+// policy: this type only preserves the already-selected tag, base reference, and fixed context as
+// separate Docker argv values. Docker uses the validated context's default Dockerfile.
 type BuildRequest struct {
-	Dockerfile string
-	Tag        string
-	BaseImage  string
-	Context    string
+	Tag       string
+	BaseImage string
+	Context   string
 }
 
 // ImageInspection is the image-config subset used to validate a built project image.
