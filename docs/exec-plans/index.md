@@ -4,7 +4,7 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
-- [Project Mount Configuration](active/2026-07-18-project-mount-config-exec-plan.md)
+- [Project Launcher Configuration](active/2026-07-19-project-launcher-configuration-exec-plan.md)
 
 ## Review
 

@@ -591,7 +591,7 @@ sequenceDiagram
             Serve->>Relay: Open the lifetime lease on control.sock
             Serve->>Serve: Open the session-manager listener
         else Session container is running
-            Launcher->>Launcher: Require a matching codex-safe.host-mcp label
+            Launcher->>Launcher: Require a matching codex-safe.launch-config fingerprint
             Launcher->>Launcher: Adopt the channel from codex-safe.host-mcp-channel
             Launcher->>Launcher: Adopt the session container's inspected image ID
             Launcher->>Launcher: Remove the unused candidate directory
@@ -614,17 +614,18 @@ sequenceDiagram
     end
 ```
 
-Reuse uses the two labels differently, and the distinction matters:
+Reuse uses the labels differently, and the distinction matters:
 
-- `codex-safe.host-mcp` is compared. It carries the sorted `host:port` endpoint list, or the literal `absent` for a
-  container created with an empty set. The launcher reuses a running container only when it equals the current
-  resolution.
+- `codex-safe.launch-config` is compared. Its canonical input includes `no_host_mcp` and the sorted `host:port`
+  endpoint list defined by [Project Launcher Configuration](project-launcher-configuration.md#4-parameter-classes-and-active-containers).
+- `codex-safe.host-mcp` carries the same sorted endpoint list, or the literal `absent`, for operator diagnostics. It
+  is not an independent reuse predicate.
 - `codex-safe.host-mcp-channel` is read, never compared. It carries the absolute generation directory of the running
   container. A reusing launcher has already created its own candidate directory, which necessarily differs; it adopts
   the label's directory and removes its candidate.
 
-On a mismatch of the compared label, the launcher reports that the active session forwards a different host MCP set
-and asks the user to finish it before retrying. It never terminates the other session and never proceeds with stale
+On a creation-time fingerprint mismatch, the launcher reports the running and requested fingerprints and asks the
+user to finish the active session before retrying. It never terminates the other session and never proceeds with stale
 forwarders.
 
 Neither label participates in the container name. A worktree still has exactly one session; a changed MCP
@@ -636,7 +637,7 @@ mutable tag or a new `--image` value.
 
 Editing `config.toml` while a session runs therefore does not change that session. The container's listeners, the
 mount, and the relay's endpoints are all creation-time state. The next launch resolves the new set and reports a
-label mismatch until the active session ends.
+fingerprint mismatch until the active session ends.
 
 ### 6. Command Interface and Visibility
 
@@ -645,13 +646,12 @@ sides of the sandbox. Requiring a flag for every launch would reintroduce the pr
 
 One option controls it:
 
-- `--no-host-mcp`: skip discovery entirely. No `config.toml` read, no forwarders, no mount, no relay, and the reuse
-  label records `absent`.
+- `--no-host-mcp`: skip discovery entirely. No `config.toml` read, no forwarders, no mount, no relay, and the
+  diagnostic host-MCP label records `absent`.
 
 The flag selects creation-time state, so it cannot narrow a session that is already forwarding: the mount exists and
-`docker exec` cannot remove it. A `--no-host-mcp` command against a live forwarding session is therefore the label
-mismatch of [Launch Sequence and Reuse](#5-launch-sequence-and-reuse), and its diagnostic names that case rather than
-reporting a differing endpoint set, because the user asked for less access than the session already has.
+`docker exec` cannot remove it. A `--no-host-mcp` command against a live forwarding session therefore changes the
+creation-time fingerprint and is rejected by [Launch Sequence and Reuse](#5-launch-sequence-and-reuse).
 
 Because it widens the security boundary, a non-empty set is always printed before the command starts, in the same
 place the launcher prints an image override:
@@ -679,7 +679,7 @@ Launch-time failures, all of which stop the launch:
 - The sidecar cannot be created, or `control.sock` does not report ready within the bounded readiness timeout.
 - `serve` cannot open the lease, which fails bootstrap and exits the session container.
 - A container listener cannot bind, which fails `serve` and exits the session container.
-- A running container's `codex-safe.host-mcp` label does not match the current resolution.
+- A running container's creation-time fingerprint does not match the current resolution.
 
 Runtime failures, none of which stop the session:
 
@@ -733,7 +733,8 @@ These are the rules that must not regress. Mechanics are in the contract section
 - No host TCP port is bound by any part of this feature.
 - The channel is unreachable to other host users and to unrelated outer sessions.
 - The forwarded endpoint set is fixed at container creation and can never be extended by `docker exec`.
-- A running container is reused only when its `codex-safe.host-mcp` label equals the current resolution.
+- A running container is reused only when its creation-time fingerprint covers the same host-MCP policy and endpoint
+  set as the current resolution.
 - Only endpoints whose configured host is a loopback host, and which are not disabled, are ever forwarded.
 - A container listener binds the same address and port the host URL names. A `localhost` endpoint may skip a leg whose
   address family the container lacks, but never substitutes one loopback address for another the user named.
@@ -852,10 +853,10 @@ own lifecycle. The per-session sidecar gets all of that from the session it is l
 
 - Verify `CODEX_SAFE_HOST_MCP`, the socket mount, `codex-safe.host-mcp`, and `codex-safe.host-mcp-channel` appear on
   create exactly when the set is non-empty.
-- Verify the compared label, the JSON environment value, and the banner all describe the same sorted endpoints.
+- Verify the fingerprint input, diagnostic label, JSON environment value, and banner describe the same sorted
+  endpoints.
 - Verify the socket index in the environment matches the sorted endpoint order.
-- Reuse a running container whose compared label matches, and reject one whose label differs with the active-session
-  diagnostic.
+- Reuse a running container whose fingerprint matches, and reject one whose host-MCP policy or endpoint fields differ.
 - Prove reuse adopts the channel directory from the label and never compares it, including when the reusing launcher's
   own candidate differs.
 - Prove a create-race loser removes its candidate directory and adopts the winner's.
@@ -878,8 +879,7 @@ own lifecycle. The per-session sidecar gets all of that from the session it is l
 - Prove a running container under the sidecar name is adopted without further validation.
 - Prove a non-running sidecar is allowed bounded removal before create is retried once.
 - Prove one launcher cannot delete another launcher's candidate merely because no session label references it yet.
-- Prove `--no-host-mcp` against a live forwarding session reports the narrowing diagnostic rather than a differing
-  endpoint set.
+- Prove `--no-host-mcp` against a live forwarding session produces a creation-time fingerprint mismatch.
 
 ### Relay sidecar unit tests
 

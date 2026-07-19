@@ -61,6 +61,8 @@ both the module paths and document links.
 - The selected worktree is mounted read-write at the same absolute path.
 - Local `.agents-safe/config.toml` serializes the validated host-specific mount plan and may add explicit project
   mounts for new containers.
+- Git-topology roles are required and fail before Docker access when omitted. Host Git config, Codex home, personal
+  skills, and host MCP are degradable roles: omission keeps them absent and emits an explicit startup warning.
 - A linked worktree's primary checkout is mounted read-only while the shared Git directory remains writable.
 - The host home is not mounted implicitly. Explicit local project configuration may expose narrower directories;
   supported configuration files otherwise receive only their documented mounts.

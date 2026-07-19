@@ -63,9 +63,10 @@ rewriting repository metadata.
 minimum bind-mount set, start an ephemeral system container through `sysbox-runc`, and hand control to a managed
 foreground process inside that container.
 
-The launcher resolves the Codex state directory from the host's `CODEX_HOME` or operating-system user-home API. It
-does not assume `/home/<user>`, `/Users/<user>`, or a Windows profile path. The resolved directory is mounted into the
-container as its Codex home, while the Codex executable itself comes from the pinned container image.
+The launcher resolves the optional Codex state directory from the host's `CODEX_HOME` or operating-system user-home
+API. It does not assume `/home/<user>`, `/Users/<user>`, or a Windows profile path. An existing resolved directory is
+mounted into the container as its Codex home; otherwise Codex uses ephemeral container-local state. The executable
+always comes from the pinned container image.
 
 The container has its own Docker daemon and Docker CLI. The host Docker socket is not mounted. Nested containers use
 only the container's daemon and storage and can access host files only through paths already visible inside the
@@ -225,16 +226,17 @@ silently broadens read-write access.
 
 Every regular-checkout and linked-worktree launch receives the same user mounts:
 
-- The resolved host Codex home, when present, is mounted read-write as the container's Codex home. An `agents-safe`
-  launch that resolves no host Codex home receives no Codex mount (see [Codex home resolution](#codex-home-resolution)).
+- The resolved host Codex home, when present, is mounted read-write as the container's Codex home. Without that
+  optional role, `codex-safe` uses ephemeral container-local Codex state and `agents-safe` receives no Codex mount.
 - When host `$HOME/.agents/skills` exists, that exact directory is mounted read-only at the equivalent path for the
   container user.
 
 #### Local project-configured mounts
 
 The resolved mount topology above is serialized with explicit roles, paths, modes, and descriptions in
-`.agents-safe/config.toml`. The file is an authoritative host-specific snapshot; required roles and security-sensitive
-modes are validated before Docker creation. Syntax, layering, and CLI precedence are owned by
+`.agents-safe/config.toml`. The file is an authoritative host-specific snapshot; required roles fail when omitted,
+degradable roles warn when omitted, and present paths and security-sensitive modes are validated before Docker
+creation. The role classification, syntax, layering, and CLI precedence are owned by
 [Project Launcher Configuration](project-launcher-configuration.md).
 
 The file is local and Git-ignored, but it remains writable project content. A process with worktree access can modify
@@ -263,23 +265,19 @@ The launcher resolves exactly one host Codex-home source before it creates or re
 1. When host `CODEX_HOME` is set and non-empty, its trimmed value is the requested source.
 2. Otherwise, the source is `.codex` below the operating-system-resolved host home.
 3. A relative `CODEX_HOME`, the filesystem root, an unsupported path, or a non-directory always fails preflight
-   without creating it or falling back to another location. How a source that does not yet exist is handled depends
-   on the command's Codex-home policy:
-   - `codex-safe` requires a Codex home. When `CODEX_HOME` is unset and the default `.codex` home is missing, the
-     launcher offers to create the default home only after Docker preflight and active-container reuse validation
-     succeed. The prompt uses terminal stdin and stderr; EOF, a non-interactive session, or a declined answer leaves
-     the source missing and fails the launch. A missing explicitly requested `CODEX_HOME` is never offered for
-     creation.
-   - `agents-safe` treats Codex state as optional. A missing source is recorded as absent: the launch mounts no Codex
-     home and sets no `CODEX_HOME` for the command, because an arbitrary command needs no Codex state. This exception
-     applies only to the implicit default; a missing explicitly requested `CODEX_HOME` remains an error.
+   without creating it or falling back to another location. A missing explicitly requested `CODEX_HOME` is also an
+   error because it is invalid host intent, not an omitted config role. When the implicit default `.codex` directory
+   is absent, both launchers omit the degradable `codex_home` role. `codex-safe` warns that host configuration,
+   authentication, and session persistence are unavailable and uses ephemeral container-local state; `agents-safe`
+   starts without a Codex mount.
 4. An existing source is canonicalized before the mount plan is built. A symlink used as the source may resolve to
    another directory, but symlinks inside it do not authorize additional host mounts.
 
 When a Codex home is resolved, the canonical host source is bind-mounted read-write at `$HOME/.codex` inside the
 container and the managed command receives `CODEX_HOME=<container-home>/.codex`, even when the host selected a custom
 source. This separates host-native path syntax from the Linux container path and gives Codex one stable container-local
-location. A launch with no Codex home sets no `CODEX_HOME` and mounts nothing at `$HOME/.codex`.
+location. A launch with no host Codex home sets no explicit `CODEX_HOME` and mounts nothing at `$HOME/.codex`;
+image-local state below `HOME` disappears with the session container.
 
 For example, the default source may be `/home/alex/.codex` on Linux, `/Users/alex/.codex` on macOS, or
 `C:\Users\alex\.codex` on Windows. The first release still launches only on Linux because the Sysbox runtime and
@@ -318,8 +316,9 @@ codex-safe-session run -- codex --sandbox danger-full-access [forwarded Codex ar
 ```
 
 The process uses the invoking host UID and GID, the selected project directory as its working directory, the
-container-local `HOME` and `CODEX_HOME`, and the launcher's terminal streams. Arguments stay separate argv elements;
-the launcher does not invoke a shell. Start failures and Codex exit status propagate through the wrapper and launcher.
+container-local `HOME`, optional mounted `CODEX_HOME`, and the launcher's terminal streams. Arguments stay separate
+argv elements; the launcher does not invoke a shell. Start failures and Codex exit status propagate through the
+wrapper and launcher.
 
 The launcher selects `--sandbox danger-full-access` by default. The Sysbox container is the isolation boundary, so
 Codex's own bubblewrap-based inner sandbox is redundant, and the image intentionally ships no bubblewrap on `PATH`.
@@ -330,8 +329,8 @@ suppressed when the forwarded arguments already select a policy through `-s`/`--
 overridden. `agents-safe` runs an arbitrary command and never adds this flag.
 
 `agents-safe` uses the same identity, working directory, terminal streams, and wrapper, but replaces the Codex argv
-with the required command argv and treats the Codex home as optional: it mounts one and sets `CODEX_HOME` only when a
-host Codex home already exists. Its command exit status propagates through `agents-safe`.
+with the required command argv. Both launchers mount and set `CODEX_HOME` only when a host Codex home exists; its
+absence is degradable rather than a launch failure. The command exit status propagates through `agents-safe`.
 
 #### Persistent state, configuration, and skills
 
@@ -351,12 +350,13 @@ but scripts they contain execute with the same permissions as the agent when Cod
 
 #### Authentication boundary
 
-File-based credentials in `$CODEX_HOME/auth.json` are available through the Codex-home mount. Credentials stored only
-in the host operating system's keychain or keyring are not available inside the container. The launcher does not mount
-keyring services, browser profiles, desktop sockets, `.ssh`, cloud credential directories, password stores, Git
-credential helpers, or pre-existing Unix sockets. The only socket mount this project allows is the launcher-created
-host MCP channel owned by [`host-mcp-forwarding.md`](host-mcp-forwarding.md), which carries no host credential and
-exposes only the endpoints that design selected.
+File-based credentials in `$CODEX_HOME/auth.json` are available when the Codex-home mount is present. Without it,
+Codex has only ephemeral container-local state and host file-based credentials are unavailable. Credentials stored
+only in the host operating system's keychain or keyring are also unavailable inside the container. The launcher does
+not mount keyring services, browser profiles, desktop sockets, `.ssh`, cloud credential directories, password stores,
+Git credential helpers, or pre-existing Unix sockets. The only socket mount this project allows is the
+launcher-created host MCP channel owned by [`host-mcp-forwarding.md`](host-mcp-forwarding.md), which carries no host
+credential and exposes only the endpoints that design selected.
 
 The launcher neither changes `cli_auth_credentials_store` nor converts credentials between storage modes. If the
 mounted configuration requires an unavailable keyring, Codex reports the authentication error and the launcher
@@ -486,16 +486,17 @@ to the host MCP servers named by the resolved Codex home is owned by
 
 A new container has a deterministic name derived from the canonical worktree root and invoking host UID. The
 launcher inspects that exact name, then validates `codex-safe.managed`, `codex-safe.project-path`,
-`codex-safe.host-uid`, `codex-safe.manager-protocol`, `codex-safe.codex-home`, `codex-safe.personal-skills`, and
-`codex-safe.host-mcp`. It also validates `codex-safe.launch-config`, the deterministic fingerprint of all
-creation-time parameters defined by
+`codex-safe.host-uid`, and `codex-safe.manager-protocol`, then validates `codex-safe.launch-config`, the deterministic
+fingerprint of all creation-time parameters defined by
 [Project Launcher Configuration](project-launcher-configuration.md#4-parameter-classes-and-active-containers).
 
 The `codex-safe.codex-home` and `codex-safe.personal-skills` labels each contain the canonical resolved source or the
-literal `absent`. `codex-safe.host-mcp` is owned by [`host-mcp-forwarding.md`](host-mcp-forwarding.md). That design also
-sets `codex-safe.host-mcp-channel`, which locates a running container's MCP channel and is read rather than compared.
-A compatible running container receives the new command through `docker exec`; an absent name is created with detached
-`docker run --rm`. Different worktrees continue to use distinct Docker daemons and writable layers.
+literal `absent`. They remain diagnostic metadata and are not independent reuse predicates; their effective mount
+state is already covered by `codex-safe.launch-config`. `codex-safe.host-mcp` is also diagnostic metadata owned by
+[`host-mcp-forwarding.md`](host-mcp-forwarding.md). That design sets `codex-safe.host-mcp-channel`, which locates a
+running container's MCP channel and is read rather than compared. A compatible running container receives the new
+command through `docker exec`; an absent name is created with detached `docker run --rm`. Different worktrees continue
+to use distinct Docker daemons and writable layers.
 
 Creation-time parameters are fixed when the container is created and cannot be changed by `docker exec`. A fingerprint
 mismatch prevents reuse. The launcher reports the running and requested fingerprints and asks the user to finish the
@@ -503,9 +504,9 @@ active session before retrying; it does not silently use stale configuration, te
 the container. Ownership or protocol label mismatches remain name conflicts. Command-time parameters are excluded
 from the fingerprint and apply to each new `docker exec`.
 
-A running container whose `codex-safe.codex-home` label is `absent` cannot satisfy a later `codex-safe` launch:
-`docker exec` cannot add the missing bind mount. The launcher reports that specific active-session condition and does
-not create the host directory first, so retrying after the unrelated session exits can still offer the normal prompt.
+A change between absent and present `codex_home` state changes the normalized physical mount plan and therefore the
+creation-time fingerprint. It uses the same generic fingerprint-mismatch rejection as every other creation-time
+change; the diagnostic Codex-home label does not select a separate active-session error path.
 
 The container's foreground workload is a Go session manager. Every `docker exec`, including the first, invokes
 `codex-safe-session run -- COMMAND`. That wrapper connects to a container-local Unix socket, runs the requested command,
@@ -577,9 +578,9 @@ Before creating a container, the launcher verifies:
 2. The `docker` command exists and a local Docker daemon responds.
 3. The Docker Engine has `sysbox-runc` registered.
 4. The project is a Git working tree and all computed mount sources exist.
-5. The resolved Codex home, when required (`codex-safe`) or already present (`agents-safe`), is a directory, is
-   accessible read-write, and can be represented safely as a bind source. An `agents-safe` launch with no host Codex
-   home skips this mount.
+5. A present resolved Codex home is a directory, is accessible read-write, and can be represented safely as a bind
+   source. Without the degradable role, `codex-safe` warns and uses ephemeral state while `agents-safe` skips the
+   mount.
 6. The optional personal-skills source is absent or is an accessible directory representable as a read-only bind.
 7. The image resolves to the pinned digest or was explicitly supplied by the user and contains the expected Codex CLI.
 8. The mount plan contains no conflicts or paths outside the allowed set.
@@ -587,9 +588,6 @@ Before creating a container, the launcher verifies:
 
 An error identifies the failed check and provides a diagnostic action. The launcher never compensates for missing
 Sysbox by using `runc`, `--privileged`, the host Docker socket, or direct host execution of Codex.
-Creation of a missing default Codex home is deferred until the Docker runtime/image checks pass and no running
-deterministic container needs to be rejected for incompatible fixed mounts.
-
 An image-pull, container, or nested-daemon failure is returned to the user without retrying in a less isolated
 mode.
 
@@ -610,7 +608,8 @@ mode.
   project's own image with no capability, no Docker socket, and a read-only root filesystem.
 - Unsafe fallback behavior is forbidden.
 - Host-side orchestration and Docker argument construction are implemented in Go.
-- `codex-safe` executes the pinned image-owned Codex binary with an explicit container-local `CODEX_HOME`.
+- `codex-safe` executes the pinned image-owned Codex binary and sets explicit container-local `CODEX_HOME` only when
+  the corresponding host mount is present.
 - `agents-safe` executes the requested command only inside the managed container and never through a host shell.
 - Arguments and paths are separate argv elements and are never passed through `eval` or shell reinterpretation.
 - After the final managed command finishes normally, the session does not intentionally leave nested containers
@@ -668,14 +667,15 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Resolve canonical paths when the launcher starts through a symbolic link.
 - Verify the exact mount plan and mode of every mount without starting a container.
 - Resolve default and explicit `CODEX_HOME` sources without hard-coded home prefixes.
-- Under the required policy, reject a declined or non-interactive missing default; under both policies, reject a
-  missing explicit source and any relative, root, non-directory, unreadable, or unwritable source.
+- Allow a missing implicit default Codex home with the exact degradation warning; reject a missing explicit source
+  and any relative, root, non-directory, unreadable, or unwritable source.
+- Prove an absent-to-present Codex-home change uses the generic creation-time fingerprint mismatch and that diagnostic
+  Codex-home labels are not independent reuse predicates.
 - Canonicalize a symlinked Codex-home source without adding mounts for external symlinks contained inside it.
 - Reject a dangling default Codex-home symlink without offering to create it.
 - Mount an existing `$HOME/.agents/skills` read-only, allow it to be absent, and reject an invalid source.
 - Reject dangling personal-skills paths for `codex-safe` while treating them as absent for `agents-safe`.
-- Treat prompt EOF as decline, use the prompt's actual terminal streams, and preserve input after the answer line.
-- Prove Docker preflight and active-container validation run before a missing default Codex home is created.
+- Prove no missing Codex-home path is created as a launcher side effect.
 - Verify `HOME` and `CODEX_HOME`, the image-owned `codex` argv, forwarded arguments, working directory, and exit status.
 - Verify `agents-safe bash` preserves direct argv, starts in the selected project, rejects an omitted command, and
   propagates the command exit status.

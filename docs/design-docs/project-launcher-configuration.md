@@ -40,7 +40,7 @@ resolution begins.
 | Bootstrap | `--project .` | Discover the Git worktree from the current directory. |
 | Common | `image = "codex-safe-mvp:local"` | Base or direct session image. |
 | Common | `no_host_mcp = false` | Forward eligible host MCP servers. |
-| Common | resolved mount snapshot | Use the project, Git, Codex-home, skills, and MCP roles shown below. |
+| Common | resolved logical mount snapshot | Always describe the complete project/Git topology plus available optional host integrations. |
 | Codex | `arguments = ['--sandbox', 'danger-full-access']` | Use the Sysbox container as the sandbox boundary. |
 | Agents | no default argv | Require a command on every `agents-safe` invocation. |
 
@@ -54,16 +54,17 @@ flowchart TD
     Overlay["Overlay TOML<br/>mounts replace the whole list"]
     Flags["4. Apply explicitly supplied<br/>launcher flags"]
     Validate["5. Validate and classify<br/>the resolved parameters"]
-    Running{"6. Container running?"}
+    Normalize["6. Normalize logical roles<br/>to physical mounts"]
+    Running{"7. Container running?"}
     Compatible{"Creation-time<br/>parameters match?"}
     Reject["Fail closed<br/>finish the active session first"]
     Create["Create container with<br/>creation-time parameters"]
-    Command["7. Apply command-time parameters<br/>through docker exec"]
+    Command["8. Apply command-time parameters<br/>through docker exec"]
 
     Project --> Defaults --> File
     File -->|yes| Overlay --> Flags
     File -->|no| Flags
-    Flags --> Validate --> Running
+    Flags --> Validate --> Normalize --> Running
     Running -->|no| Create --> Command
     Running -->|yes| Compatible
     Compatible -->|yes| Command
@@ -87,49 +88,49 @@ role = "host_git_config"
 source = "/home/alex/.gitconfig"
 target = "/home/alex/.gitconfig"
 read_only = true
-comment = "Expose Git identity and includes without allowing the container to change them."
+comment = "Optional: expose Git identity and includes without allowing the container to change them."
 
 [[common.mounts]]
 role = "primary_checkout"
 source = "/home/alex/sources/agents-safe-environment"
 target = "/home/alex/sources/agents-safe-environment"
 read_only = true
-comment = "Expose the primary checkout needed by the linked worktree without allowing branch changes there."
+comment = "Required: expose the primary checkout needed by the linked worktree without allowing branch changes there."
 
 [[common.mounts]]
 role = "common_git_dir"
 source = "/home/alex/sources/agents-safe-environment/.git"
 target = "/home/alex/sources/agents-safe-environment/.git"
 read_only = false
-comment = "Keep shared Git refs, indexes, locks, and linked-worktree metadata writable."
+comment = "Required: keep shared Git refs, indexes, locks, and linked-worktree metadata writable."
 
 [[common.mounts]]
 role = "worktree"
 source = "/home/alex/sources/agents-safe-environment-init-command-support"
 target = "/home/alex/sources/agents-safe-environment-init-command-support"
 read_only = false
-comment = "Expose the init-command-support branch worktree at the same absolute path used by host tools."
+comment = "Required: expose the init-command-support branch worktree at the same absolute path used by host tools."
 
 [[common.mounts]]
 role = "codex_home"
 source = "/home/alex/.codex"
 target = "/home/alex/.codex"
 read_only = false
-comment = "Persist Codex configuration, authentication, sessions, logs, and installed state."
+comment = "Optional: persist Codex configuration, authentication, sessions, logs, and installed state."
 
 [[common.mounts]]
 role = "personal_skills"
 source = "/home/alex/.agents/skills"
 target = "/home/alex/.agents/skills"
 read_only = true
-comment = "Expose personal skills without allowing the project to modify their source."
+comment = "Optional: expose personal skills without allowing the project to modify their source."
 
 [[common.mounts]]
 role = "host_mcp_channel"
 source = "runtime://host-mcp-channel"
 target = "/run/codex-safe-host-mcp"
 read_only = false
-comment = "Carry private Unix sockets to eligible host MCP relays."
+comment = "Optional: carry private Unix sockets to eligible host MCP relays."
 
 [codex]
 arguments = [
@@ -142,8 +143,10 @@ arguments = [
 ### Success Criteria
 
 - The first screen explains what is configured and the exact application order.
-- The generated file accounts for every bind-mount role that can appear in the session container.
+- The generated file always contains the three required project/Git roles; Docker receives their minimal normalized
+  physical mount set.
 - Project values persist until the user edits the file; explicit CLI values affect one invocation.
+- Removing a required mount fails before Docker access; removing a degradable mount starts with an explicit warning.
 - A running container is reused only when all creation-time parameters match.
 - Invalid or stale paths fail before Docker creation.
 - An explicit Codex sandbox choice is never overridden by configured defaults.
@@ -223,19 +226,43 @@ The decoder starts from a complete default `ProjectConfig` and overlays the TOML
 - present `common.mounts`: replace the entire list; mounts are never merged by index, role, source, or target.
 
 The config is authoritative when present. The launcher does not silently reinsert a deleted entry or replace a stale
-path. Validation instead requires the mandatory roles and modes defined by the
-[mount-plan contract](codex-safe.md#3-mount-plan).
+path. It compares the resolved list with the host-derived default roles: a missing required role fails, while a
+missing degradable role remains absent and produces the warning defined below. Present entries always undergo full
+path and mode validation.
 
 ### 4. Parameter Classes and Active Containers
 
-Creation-time parameters define immutable container state:
+The creation-time fingerprint is the SHA-256 digest of one versioned canonical structure:
 
-- the resolved image reference and whether explicit-image intent bypasses the project Dockerfile;
-- the normalized mount plan, excluding `MountConfig.Comment`;
-- `no_host_mcp` and the effective host-MCP endpoint identity.
+| Field | Canonical value |
+| --- | --- |
+| `schema_version` | Integer `1` for the initial schema; incremented whenever encoding or field meaning changes. |
+| `image_reference` | Resolved requested image reference, before resolving or building an immutable image ID. |
+| `image_override` | Whether an explicit `--image` bypasses the project Dockerfile, even when the reference is unchanged. |
+| `mounts` | Ordered normalized physical filesystem binds, each containing canonical `source`, `target`, and `read_only`. |
+| `no_host_mcp` | Resolved boolean after defaults, TOML, and explicit CLI overrides. |
+| `host_mcp_endpoints` | Eligible endpoints as canonical `host:port` strings, sorted by host and then port. |
 
-The launcher stores a deterministic creation-time fingerprint on the container. A running container is reusable only
-when its ownership, protocol, and creation-time fingerprint match the current request.
+`mounts` uses the exact deterministic order passed to Docker after alias and nesting normalization. It excludes the
+materialized `host_mcp_channel` bind because that bind has a random generation-directory source;
+`host_mcp_endpoints` captures whether the channel is needed and what it forwards. Endpoint server names are excluded:
+multiple names selecting the same canonical address do not change container capabilities. `no_host_mcp` remains a
+separate field so disabled discovery and enabled discovery with no eligible endpoints have distinct fingerprints.
+
+The canonical structure is encoded from ordered structs and slices, never maps or TOML bytes. The
+`codex-safe.launch-config` container label stores the resulting 64-character lowercase hexadecimal SHA-256 digest.
+The following values are deliberately excluded:
+
+- logical mount roles, comments, redundant aliases, and original TOML ordering;
+- configured and invocation command argv, including Codex sandbox arguments;
+- the invocation working directory, which every `docker exec` supplies independently;
+- built image IDs, Dockerfile contents, and mutable-tag resolution results;
+- host-MCP server names, random channel-generation paths, and sidecar container/image identities;
+- separate project-identity, host-UID, ownership, and manager-protocol fields, which are validated independently
+  before the fingerprint; project paths still appear naturally in the normalized mount entries.
+
+A running container is reusable only when its ownership, protocol, and creation-time fingerprint match the current
+request.
 
 On mismatch, the launcher fails with the running and requested fingerprints and asks the user to finish the active
 session. It never silently uses stale creation-time settings, stops another command, or replaces the container. After
@@ -265,31 +292,94 @@ the launcher does not invoke a shell.
 
 ### 6. Mount Serialization
 
-`common.mounts` serializes the mount plan whose topology and required modes are owned by
-[Safe Environment](codex-safe.md#3-mount-plan). `role` makes validation independent of list position and explains
-why a mount exists. Supported roles are:
+`common.mounts` serializes logical mount roles whose topology and required modes are owned by
+[Safe Environment](codex-safe.md#3-mount-plan). It is not a one-to-one copy of Docker's physical bind mounts:
+validation first checks the complete logical topology, then normalization removes exact aliases and redundant nested
+mounts without weakening their requested access mode. `role` makes validation independent of list position and
+explains why access exists. Supported roles are:
 
 - `host_git_config`, `primary_checkout`, `common_git_dir`, `worktree`;
 - `codex_home`, `personal_skills`, `host_mcp_channel`;
 - `additional` for an explicit user-added mount.
 
+Default roles have one fixed absence policy. `MountConfig.Comment` begins with `Required:` or `Optional:` so the
+generated file exposes that policy, but editing the comment never changes it. `ro` and `rw` below are the required
+logical access modes; normalization may satisfy several logical roles with one physical `rw` mount.
+
+| Role | Default when | Mode | If absent | Motivation |
+| --- | --- | --- | --- | --- |
+| `worktree` | Always. | `rw` | Stop. | No project files or valid working directory. |
+| `primary_checkout` | Always. | `rw` when it equals `worktree`; otherwise `ro` | Stop. | The complete checkout topology must remain explicit; a distinct primary tree is visible without allowing branch-file changes there. |
+| `common_git_dir` | Always. | `rw` | Stop. | Git refs, indexes, locks, and worktree metadata must remain writable. |
+| `host_git_config` | Host file exists. | `ro` | Warn and continue. | Host identity/includes/defaults disappear. |
+| `codex_home` | Host directory exists. | `rw` | Warn and continue. | Codex works with ephemeral state but loses host state. |
+| `personal_skills` | Skills directory exists. | `ro` | Warn and continue. | Core execution works without personal skills. |
+| `host_mcp_channel` | Host MCP enabled. | `rw` | Warn and continue. | Project works without forwarded host services. |
+| `additional` | Never generated. | configured `ro` or `rw` | Ignore. | Deletion explicitly removes user-requested access. |
+
+The three project/Git roles are always generated and required. Their default paths and modes are:
+
+| Checkout kind | `worktree` | `primary_checkout` | `common_git_dir` | Physical result |
+| --- | --- | --- | --- | --- |
+| Regular | checkout root, `rw` | same checkout root, `rw` | `<checkout>/.git`, `rw` | One `rw` mount for the checkout root. |
+| Linked worktree | linked root, `rw` | primary root, `ro` | `<primary>/.git`, `rw` | Three mounts; the nested writable Git mount follows the read-only primary mount. |
+
+For a regular checkout, the exact `worktree`/`primary_checkout` alias is deduplicated and the writable worktree mount
+already exposes the nested writable `.git` directory, so no separate `common_git_dir` bind is needed. For a linked
+worktree, none of the three roles is redundant. `docker inspect` therefore shows the normalized physical result, not
+necessarily one entry per serialized logical role; every inspected bind must still be traceable to one or more
+validated roles.
+
+The launcher stops when any of the three required project/Git roles is missing because the authoritative file no
+longer describes a complete topology that can be validated and normalized safely. It does not reconstruct a deleted
+role from host discovery. It continues when the loss is limited to an optional host integration; the warning keeps
+that degradation visible rather than silently changing behavior.
+
+Warnings are deterministic one-line diagnostics on `stderr`, emitted after config validation and before any Docker
+inspection, build, or create operation:
+
+```text
+<binary>: warning: mount role "host_git_config" is omitted; host Git identity and includes are unavailable
+<binary>: warning: mount role "codex_home" is omitted; host Codex state is unavailable; using ephemeral state
+<binary>: warning: mount role "personal_skills" is omitted; personal skills are unavailable
+<binary>: warning: mount role "host_mcp_channel" is omitted; host MCP forwarding is disabled
+```
+
+Warnings use this role order and print at most once per invocation. If config removes a `codex_home` role present in
+the current default snapshot, both binaries emit its warning because the container loses persistent Codex state. If
+the host Codex home never existed and the default snapshot therefore omitted the role, only `codex-safe` emits the
+Codex-specific warning; `agents-safe` starts without one. Other optional host state absent from the default snapshot
+does not produce a deletion warning.
+
+A present mount whose source is stale or invalid is not treated as an omission. It fails closed so a typo or host-path
+change cannot silently broaden or redirect access. Optionality authorizes deletion of the entry, not invalid content.
+
+An omitted degradable role is still a creation-time mount-plan change. A cold launch may start after warning, but a
+running container created with that mount remains incompatible and is left untouched until its active session ends.
+
 Filesystem sources and targets are canonical absolute paths. Required roles must match the discovered project and
-host identity. Security-sensitive read-only modes cannot be weakened. Duplicate targets, root sources, missing
-sources, invalid modes, and unsafe overlaps fail before Docker creation.
+host identity. In a regular checkout, `worktree` and `primary_checkout` must be the same writable path and
+`common_git_dir` must be its writable `.git` directory. In a linked worktree, the primary checkout must be read-only
+and its nested common Git directory writable. Other security-sensitive read-only modes cannot be weakened. Conflicting
+duplicate targets, root sources, missing sources, invalid modes, and unsafe overlaps fail before Docker creation.
+
+Normalization deduplicates exact source/target/mode aliases and removes a nested mount only when an already retained
+parent exposes the same source subtree with the required mode. It never replaces `ro` with broader `rw` access. The
+creation-time fingerprint is computed from this normalized physical mount list, not from redundant logical aliases.
 
 The `host_mcp_channel` role is conditional. Its `runtime://host-mcp-channel` source is not treated as a filesystem
-path. The launcher materializes it only when `common.no_host_mcp` is `false` and eligible endpoints exist. Otherwise
-the session has no channel mount. Channel creation and lifetime remain owned by
+path. The launcher materializes it only when `common.no_host_mcp` is `false`, the role remains in the resolved list,
+and eligible endpoints exist. Otherwise the session has no channel mount. Channel creation and lifetime remain owned by
 [Host MCP Access](host-mcp-forwarding.md).
 
-Mount changes apply only when a container is created. A different resolved mount plan causes a creation-time
-fingerprint mismatch while the previous container is running.
+Mount changes apply only when a container is created. A different normalized physical mount plan causes a
+creation-time fingerprint mismatch while the previous container is running.
 
 ### 7. Validation and Failure Behavior
 
 The config must be a regular, non-symlink TOML file. Unknown keys, invalid types, an empty image, unsafe Codex argv,
-missing required mount roles, and invalid mounts fail before Docker launch. Both binaries validate the complete file,
-including the other launcher's section.
+missing required mount roles, and invalid present mounts fail before Docker launch. Missing degradable roles emit
+warnings and remain absent. Both binaries validate the complete file, including the other launcher's section.
 
 The file is loaded on every invocation. Creation-time changes require a matching container or a cold create;
 command-time changes apply to the current command.
@@ -308,14 +398,20 @@ affect a later launch, so every writable source in the file must be treated as a
 
 - Initialization serializes the exact typed config and creates the exact local ignore file.
 - The resolution-order tests distinguish omitted flags from explicit boolean values.
-- Scalar overlay, omitted mounts, whole-list mount replacement, and required-role validation are covered.
+- Scalar overlay, omitted mounts, whole-list mount replacement, and validation of all three required project/Git
+  roles are covered.
+- Removing each required role fails before Docker access; removing each degradable role emits the exact warning and
+  omits that mount from the effective plan.
+- A regular checkout serializes all three required roles and normalizes them to one writable physical mount; a linked
+  worktree normalizes them to the three expected physical mounts in safe parent-before-child order.
 - An invalid or stale mount snapshot fails before Docker creation.
 - Creation-time fingerprints are stable, exclude comments and command argv, and cover every immutable config field.
 - A running-container fingerprint mismatch fails without reuse, stop, or replacement.
 - Config image and explicit CLI-image intent retain distinct project-Dockerfile behavior.
 - Explicit invocation sandbox arguments suppress the configured default sandbox pair.
 - Host-MCP mount presence follows `no_host_mcp` and endpoint eligibility.
-- Real Sysbox smoke compares serialized mount roles with session-container `docker inspect` output.
+- Real Sysbox smoke compares the normalized physical plan with session-container `docker inspect` output and traces
+  every physical bind back to its serialized logical role or roles.
 
 Implementation requires focused Go tests, `make lint`, `make test`, `make check-docs`, and `make test-smoke-go` on a
 host with Sysbox.
