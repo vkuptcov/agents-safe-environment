@@ -87,7 +87,11 @@ func testCommandDependencies(launcher cli.Launcher) commandDependencies {
 		discover: func(context.Context, string) (gitproject.Project, error) {
 			return gitproject.Project{RequestedDir: "/project", WorktreeRoot: "/project"}, nil
 		},
-		resolveConfig: func(_ gitproject.Project, overrides launchplan.Overrides) (cli.ResolvedConfig, error) {
+		resolveConfig: func(
+			_ gitproject.Project,
+			_ string,
+			overrides launchplan.Overrides,
+		) (cli.ResolvedConfig, error) {
 			return cli.ResolvedConfig{
 				Plan:           launchplan.Plan{ProjectRoot: "/project", WorkingDir: "/project"},
 				Image:          "configured:image",

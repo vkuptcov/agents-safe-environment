@@ -203,18 +203,20 @@ type CodexConfig struct {
 
 type AgentsConfig struct{}
 
+type MountRole string
+
 type MountConfig struct {
-	Role     string `toml:"role"`
-	Source   string `toml:"source"`
-	Target   string `toml:"target"`
-	ReadOnly bool   `toml:"read_only"`
-	Comment  string `toml:"comment"`
+	Role     MountRole `toml:"role"`
+	Source   string    `toml:"source"`
+	Target   string    `toml:"target"`
+	ReadOnly bool      `toml:"read_only"`
+	Comment  string    `toml:"comment"`
 }
 ```
 
 `CommonConfig` applies to both launchers. `CodexConfig` contains default Codex argv. `AgentsConfig` is empty until
-`agents-safe` has launcher-specific defaults. `MountConfig.Comment` is serialized documentation and does not affect
-Docker arguments.
+`agents-safe` has launcher-specific defaults. `MountRole` gives role constants and downstream launch-plan APIs one
+shared domain type. `MountConfig.Comment` is serialized documentation and does not affect Docker arguments.
 
 ### 3. File Layering
 

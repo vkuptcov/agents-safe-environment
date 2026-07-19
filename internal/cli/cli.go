@@ -25,13 +25,10 @@ type Launcher interface {
 // Product binaries wire production implementations; tests substitute focused doubles.
 type Dependencies struct {
 	Discover      func(context.Context, string) (gitproject.Project, error)
-	ResolveConfig func(gitproject.Project, launchplan.Overrides) (ResolvedConfig, error)
+	ResolveConfig func(gitproject.Project, string, launchplan.Overrides) (ResolvedConfig, error)
 	// NewLauncher is deliberately lazy: usage validation and project configuration must complete
 	// before host identity or Docker-facing construction can fail.
 	NewLauncher func() (Launcher, error)
-	// Launcher is retained for focused callers that already own a launcher. Production binaries use
-	// NewLauncher so they keep the public validation-before-discovery boundary.
-	Launcher Launcher
 }
 
 // ResolvedConfig is the resolver output shared by command assembly and container launch.
@@ -102,7 +99,7 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		NoHostMCP:         *noHostMCP,
 		NoHostMCPOverride: flags.Changed("no-host-mcp"),
 	}
-	resolved, err := dependencies.ResolveConfig(project, overrides)
+	resolved, err := dependencies.ResolveConfig(project, cfg.DefaultImage, overrides)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return 1
@@ -112,13 +109,14 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 	if cfg.BuildCommand != nil {
 		command = cfg.BuildCommand(resolved.CodexArguments, invocation)
 	}
-	launcher := dependencies.Launcher
-	if launcher == nil && dependencies.NewLauncher != nil {
-		launcher, err = dependencies.NewLauncher()
-		if err != nil {
-			fmt.Fprintf(stderr, "%s: initialize Docker launcher: %v\n", cfg.Name, err)
-			return 1
-		}
+	if dependencies.NewLauncher == nil {
+		fmt.Fprintf(stderr, "%s: launcher dependency is not configured\n", cfg.Name)
+		return 1
+	}
+	launcher, err := dependencies.NewLauncher()
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: initialize Docker launcher: %v\n", cfg.Name, err)
+		return 1
 	}
 	if launcher == nil {
 		fmt.Fprintf(stderr, "%s: launcher dependency is not configured\n", cfg.Name)

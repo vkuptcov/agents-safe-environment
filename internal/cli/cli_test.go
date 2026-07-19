@@ -34,6 +34,7 @@ func TestRunResolvesExplicitFlagsBeforeLaunch(t *testing.T) {
 	project := gitproject.Project{RequestedDir: "/project/nested", WorktreeRoot: "/project"}
 	launcher := &clitest.RecordingLauncher{}
 	var gotOverrides launchplan.Overrides
+	var gotDefaultImage string
 	exit := cli.Run(context.Background(), testConfig(),
 		[]string{"--project", "/project/nested", "--image", "override:image", "--no-host-mcp=false", "cmd"},
 		new(bytes.Buffer), new(bytes.Buffer), cli.Dependencies{
@@ -43,20 +44,28 @@ func TestRunResolvesExplicitFlagsBeforeLaunch(t *testing.T) {
 				}
 				return project, nil
 			},
-			ResolveConfig: func(gotProject gitproject.Project, overrides launchplan.Overrides) (cli.ResolvedConfig, error) {
+			ResolveConfig: func(
+				gotProject gitproject.Project,
+				defaultImage string,
+				overrides launchplan.Overrides,
+			) (cli.ResolvedConfig, error) {
 				if gotProject != project {
 					t.Errorf("project = %#v, want %#v", gotProject, project)
 				}
+				gotDefaultImage = defaultImage
 				gotOverrides = overrides
 				return testResolvedConfig(), nil
 			},
-			Launcher: launcher,
+			NewLauncher: func() (cli.Launcher, error) { return launcher, nil },
 		})
 	if exit != 0 {
 		t.Fatalf("Run() = %d", exit)
 	}
 	if want := (launchplan.Overrides{Image: "override:image", ImageOverride: true, NoHostMCPOverride: true}); gotOverrides != want {
 		t.Fatalf("overrides = %#v, want %#v", gotOverrides, want)
+	}
+	if gotDefaultImage != "default:image" {
+		t.Fatalf("default image = %q, want config default", gotDefaultImage)
 	}
 	if !reflect.DeepEqual(launcher.Command, []string{"configured", "cmd"}) {
 		t.Fatalf("command = %#v", launcher.Command)
@@ -71,10 +80,12 @@ func TestRunReportsResolutionFailureAndWarnings(t *testing.T) {
 	stderr := new(bytes.Buffer)
 	deps := cli.Dependencies{
 		Discover: func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		ResolveConfig: func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error) {
+		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 			return cli.ResolvedConfig{}, errors.New("bad config")
 		},
-		Launcher: &clitest.RecordingLauncher{PanicOnLaunch: true},
+		NewLauncher: func() (cli.Launcher, error) {
+			return &clitest.RecordingLauncher{PanicOnLaunch: true}, nil
+		},
 	}
 	if exit := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, deps); exit != 1 {
 		t.Fatalf("Run() = %d", exit)
@@ -84,12 +95,12 @@ func TestRunReportsResolutionFailureAndWarnings(t *testing.T) {
 	}
 
 	stderr.Reset()
-	deps.ResolveConfig = func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error) {
+	deps.ResolveConfig = func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 		resolved := testResolvedConfig()
 		resolved.Degradations = []launchplan.Degradation{{Role: "personal_skills"}}
 		return resolved, nil
 	}
-	deps.Launcher = &clitest.RecordingLauncher{}
+	deps.NewLauncher = func() (cli.Launcher, error) { return &clitest.RecordingLauncher{}, nil }
 	if exit := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, deps); exit != 0 {
 		t.Fatalf("Run() = %d", exit)
 	}
@@ -102,7 +113,7 @@ func TestRunPrintsDegradationsInStableRoleOrder(t *testing.T) {
 	t.Parallel()
 	stderr := new(bytes.Buffer)
 	deps := dependenciesFor(&clitest.RecordingLauncher{})
-	deps.ResolveConfig = func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error) {
+	deps.ResolveConfig = func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 		resolved := testResolvedConfig()
 		resolved.Degradations = []launchplan.Degradation{
 			{Role: "host_git_config"},
@@ -132,7 +143,7 @@ func TestRunOrdersSyntheticCodexHomeWarningWithDegradations(t *testing.T) {
 	config := testConfig()
 	config.WarnWhenCodexHomeAbsent = true
 	deps := dependenciesFor(&clitest.RecordingLauncher{})
-	deps.ResolveConfig = func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error) {
+	deps.ResolveConfig = func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 		resolved := testResolvedConfig()
 		resolved.DefaultCodexHomeSet = false
 		resolved.Degradations = []launchplan.Degradation{{Role: "personal_skills"}}
@@ -154,7 +165,7 @@ func TestRunConstructsLauncherOnlyAfterResolution(t *testing.T) {
 	constructed := false
 	deps := cli.Dependencies{
 		Discover: func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		ResolveConfig: func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error) {
+		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 			return cli.ResolvedConfig{}, errors.New("bad config")
 		},
 		NewLauncher: func() (cli.Launcher, error) {
@@ -167,6 +178,33 @@ func TestRunConstructsLauncherOnlyAfterResolution(t *testing.T) {
 	}
 	if constructed {
 		t.Fatal("Run() constructed launcher after configuration resolution failed")
+	}
+}
+
+func TestRunRejectsMissingLauncherDependency(t *testing.T) {
+	t.Parallel()
+	tests := map[string]func(*cli.Dependencies){
+		"factory absent": func(dependencies *cli.Dependencies) {
+			dependencies.NewLauncher = nil
+		},
+		"factory returns nil": func(dependencies *cli.Dependencies) {
+			dependencies.NewLauncher = func() (cli.Launcher, error) { return nil, nil }
+		},
+	}
+	for name, arrange := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dependencies := dependenciesFor(&clitest.RecordingLauncher{})
+			arrange(&dependencies)
+			stderr := new(bytes.Buffer)
+			if exit := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr,
+				dependencies); exit != 1 {
+				t.Fatalf("Run() = %d, want 1", exit)
+			}
+			if !strings.Contains(stderr.String(), "launcher dependency is not configured") {
+				t.Fatalf("stderr = %q, want missing launcher diagnostic", stderr.String())
+			}
+		})
 	}
 }
 
@@ -211,9 +249,9 @@ func dependenciesFor(launcher cli.Launcher) cli.Dependencies {
 		Discover: func(context.Context, string) (gitproject.Project, error) {
 			return gitproject.Project{}, nil
 		},
-		ResolveConfig: func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error) {
+		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 			return testResolvedConfig(), nil
 		},
-		Launcher: launcher,
+		NewLauncher: func() (cli.Launcher, error) { return launcher, nil },
 	}
 }

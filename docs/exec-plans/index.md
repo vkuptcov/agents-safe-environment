@@ -4,6 +4,7 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Review
 
+- [Launcher Simplification Cleanup](review/2026-07-19-launcher-simplification-cleanup-exec-plan.md)
 - [Project Launcher Configuration](review/2026-07-19-project-launcher-configuration-exec-plan.md)
 - [agents-safe Project Initialization](review/2026-07-18-agents-safe-init-exec-plan.md)
 - [Project-Specific Agent Environments](review/2026-07-17-project-environments-exec-plan.md)

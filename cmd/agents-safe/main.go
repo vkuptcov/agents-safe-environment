@@ -40,7 +40,7 @@ selected Git worktree root. Initialization does not construct a Docker launcher 
 
 type commandDependencies struct {
 	discover      func(context.Context, string) (gitproject.Project, error)
-	resolveConfig func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error)
+	resolveConfig func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error)
 	initialize    func(gitproject.Project) (string, error)
 	newLauncher   func() (cli.Launcher, error)
 }
@@ -70,10 +70,8 @@ func main() {
 
 func productionDependencies() commandDependencies {
 	return commandDependencies{
-		discover: gitproject.Discover,
-		resolveConfig: func(project gitproject.Project, overrides launchplan.Overrides) (cli.ResolvedConfig, error) {
-			return launchcli.ResolveConfig(project, defaultImage, overrides)
-		},
+		discover:      gitproject.Discover,
+		resolveConfig: launchcli.ResolveConfig,
 		initialize: func(project gitproject.Project) (string, error) {
 			host, err := launcher.ResolveHostEnvironment()
 			if err != nil {

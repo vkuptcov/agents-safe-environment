@@ -14,14 +14,6 @@ const CodexBinaryPath = "/usr/local/bin/codex"
 // without weakening the outer boundary.
 var codexDefaultSandboxArgs = []string{"--sandbox", "danger-full-access"}
 
-// DefaultCodexCommand returns the command that runs interactive Codex with the forwarded arguments.
-// The image-owned Codex binary is always the executable; forwarded arguments are Codex arguments,
-// never a standalone command. A default sandbox policy is applied unless the forwarded arguments
-// already select one, so an explicit user choice is never overridden.
-func DefaultCodexCommand(codexArgs []string) []string {
-	return CodexCommand(codexDefaultSandboxArgs, codexArgs)
-}
-
 // CodexCommand combines project-configured and invocation arguments. An explicit invocation sandbox selection removes
 // only the configured default sandbox pair; every other configured argument remains in order.
 func CodexCommand(configuredArgs, invocationArgs []string) []string {

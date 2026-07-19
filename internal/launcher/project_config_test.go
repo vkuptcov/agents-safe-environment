@@ -168,4 +168,9 @@ no_host_mcp = true
 	if data, err := os.ReadFile(filepath.Join(projectRoot, projectenv.Directory, projectenv.ConfigName)); err != nil || string(data) != config {
 		t.Fatalf("config file = %q, %v; overrides must not rewrite it", data, err)
 	}
+	if _, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{
+		Image: " invalid:image ", ImageOverride: true,
+	}); err == nil {
+		t.Fatal("ResolveProjectConfig() accepted an invalid explicit image")
+	}
 }

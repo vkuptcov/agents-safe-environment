@@ -44,7 +44,7 @@ func (recording *RecordingLauncher) Launch(
 func PanicDependencies() cli.Dependencies {
 	return cli.Dependencies{
 		Discover: func(context.Context, string) (gitproject.Project, error) { panic("discover should not be called") },
-		ResolveConfig: func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error) {
+		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 			panic("ResolveConfig should not be called")
 		},
 		NewLauncher: func() (cli.Launcher, error) { panic("NewLauncher should not be called") },

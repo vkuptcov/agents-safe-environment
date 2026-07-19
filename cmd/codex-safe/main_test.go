@@ -42,13 +42,13 @@ func TestConfigWarnsWhenHostCodexHomeIsAbsent(t *testing.T) {
 func codexDependencies(launcher cli.Launcher) cli.Dependencies {
 	return cli.Dependencies{
 		Discover: func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		ResolveConfig: func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error) {
+		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 			return cli.ResolvedConfig{
 				Plan:           launchplan.Plan{},
 				Image:          "image",
 				CodexArguments: []string{"--sandbox", "danger-full-access", "--model", "gpt-5"},
 			}, nil
 		},
-		Launcher: launcher,
+		NewLauncher: func() (cli.Launcher, error) { return launcher, nil },
 	}
 }

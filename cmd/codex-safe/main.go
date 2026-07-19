@@ -9,7 +9,6 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launchcli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
-	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
 const defaultImage = "codex-safe-mvp:local"
@@ -45,10 +44,8 @@ func main() {
 		os.Stdout,
 		os.Stderr,
 		cli.Dependencies{
-			Discover: gitproject.Discover,
-			ResolveConfig: func(project gitproject.Project, overrides launchplan.Overrides) (cli.ResolvedConfig, error) {
-				return launchcli.ResolveConfig(project, defaultImage, overrides)
-			},
+			Discover:      gitproject.Discover,
+			ResolveConfig: launchcli.ResolveConfig,
 			NewLauncher: func() (cli.Launcher, error) {
 				return launcher.NewDockerLauncher()
 			},

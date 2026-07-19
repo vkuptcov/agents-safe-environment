@@ -47,9 +47,6 @@ func ResolveProjectConfig(
 	if overrides.NoHostMCPOverride {
 		config.Common.NoHostMCP = overrides.NoHostMCP
 	}
-	if err := projectenv.Validate(config); err != nil {
-		return ResolvedProjectConfig{}, err
-	}
 	resolution, err := launchplan.Resolve(project, defaults, config)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
