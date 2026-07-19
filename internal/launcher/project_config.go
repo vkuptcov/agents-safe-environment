@@ -155,15 +155,12 @@ func DefaultProjectConfig(
 }
 
 func validateHostEnvironment(host HostEnvironment) error {
-	if err := projectenv.Validate(projectenv.ProjectConfig{
-		Common: projectenv.CommonConfig{Image: "validation-image"},
-	}); err != nil {
-		return err
-	}
 	if host.HomeDir == "" {
 		return fmt.Errorf("host home directory is empty")
 	}
-	if err := validateConfiguredHostPath("host home directory", host.HomeDir, false); err != nil {
+	// The home directory is validated as a mount target: it names a container path, not a bind source, so the
+	// filesystem-root check that ValidatePath applies to sources does not apply here.
+	if err := projectenv.ValidatePath("host home directory", host.HomeDir, false); err != nil {
 		return err
 	}
 	for _, value := range []struct {
@@ -177,23 +174,9 @@ func validateHostEnvironment(host HostEnvironment) error {
 		if value.path == "" {
 			continue
 		}
-		if err := validateConfiguredHostPath(value.label, value.path, true); err != nil {
+		if err := projectenv.ValidatePath(value.label, value.path, true); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func validateConfiguredHostPath(label string, path string, source bool) error {
-	mount := projectenv.MountConfig{Role: projectenv.RoleAdditional, Source: path, Target: path}
-	if !source {
-		mount.Source = "/host-environment-validation"
-		mount.Target = path
-	}
-	if err := projectenv.Validate(projectenv.ProjectConfig{
-		Common: projectenv.CommonConfig{Image: "validation-image", Mounts: []projectenv.MountConfig{mount}},
-	}); err != nil {
-		return fmt.Errorf("validate %s: %w", label, err)
 	}
 	return nil
 }

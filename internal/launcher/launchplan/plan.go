@@ -80,14 +80,65 @@ type Resolution struct {
 	Degradations []Degradation
 }
 
-// HasRole reports whether a validated logical role remains in the resolved plan.
-func (plan Plan) HasRole(role string) bool {
-	for _, candidate := range plan.Roles {
+// degradableRoleOrder is the canonical warning order for the optional roles the resolver may report
+// as omitted. It is the single source of truth for both the Resolve degradation list and the CLI's
+// output ordering, so the two cannot drift.
+var degradableRoleOrder = []string{
+	projectenv.RoleHostGitConfig,
+	projectenv.RoleCodexHome,
+	projectenv.RolePersonalSkills,
+	projectenv.RoleHostMCPChannel,
+}
+
+// DegradationMessage returns the operator-facing warning text for an omitted optional role. It lives
+// here, beside the role constants, so the generic CLI never spells out role names or warning text.
+func DegradationMessage(role string) string {
+	switch role {
+	case projectenv.RoleHostGitConfig:
+		return "mount role \"host_git_config\" is omitted; host Git identity and includes are unavailable"
+	case projectenv.RoleCodexHome:
+		return "mount role \"codex_home\" is omitted; host Codex state is unavailable; using ephemeral state"
+	case projectenv.RolePersonalSkills:
+		return "mount role \"personal_skills\" is omitted; personal skills are unavailable"
+	case projectenv.RoleHostMCPChannel:
+		return "mount role \"host_mcp_channel\" is omitted; host MCP forwarding is disabled"
+	default:
+		return fmt.Sprintf("mount role %q is omitted", role)
+	}
+}
+
+// AppendCodexHomeAbsentDegradation inserts a synthetic codex_home degradation into an already-ordered
+// degradation list at its canonical position. codex-safe reports it when the host never had a Codex
+// home, a condition Resolve does not treat as a degradation because no default codex_home was omitted.
+func AppendCodexHomeAbsentDegradation(degradations []Degradation) []Degradation {
+	rank := degradableRank(projectenv.RoleCodexHome)
+	result := make([]Degradation, 0, len(degradations)+1)
+	inserted := false
+	for _, degradation := range degradations {
+		if !inserted && degradableRank(degradation.Role) > rank {
+			result = append(result, Degradation{Role: projectenv.RoleCodexHome})
+			inserted = true
+		}
+		result = append(result, degradation)
+	}
+	if !inserted {
+		result = append(result, Degradation{Role: projectenv.RoleCodexHome})
+	}
+	return result
+}
+
+func degradableRank(role string) int {
+	for index, candidate := range degradableRoleOrder {
 		if candidate == role {
-			return true
+			return index
 		}
 	}
-	return false
+	return len(degradableRoleOrder)
+}
+
+// HasRole reports whether a validated logical role remains in the resolved plan.
+func (plan Plan) HasRole(role string) bool {
+	return containsRole(plan.Roles, role)
 }
 
 // MountForRole returns the physical bind that satisfies one retained filesystem role.
@@ -186,13 +237,8 @@ func Resolve(
 		return Resolution{}, err
 	}
 
-	degradations := make([]Degradation, 0, 4)
-	for _, role := range []string{
-		projectenv.RoleHostGitConfig,
-		projectenv.RoleCodexHome,
-		projectenv.RolePersonalSkills,
-		projectenv.RoleHostMCPChannel,
-	} {
+	degradations := make([]Degradation, 0, len(degradableRoleOrder))
+	for _, role := range degradableRoleOrder {
 		if _, defaultPresent := defaultRoles[role]; !defaultPresent {
 			continue
 		}
@@ -320,16 +366,11 @@ func normalizeLogicalMounts(logical []logicalMount) ([]BindMount, []MountProvena
 	retained := make([]MountProvenance, 0, len(merged))
 	for _, candidate := range merged {
 		redundant := false
-		for _, existing := range retained {
+		for index := range retained {
+			existing := &retained[index]
 			if mountContains(existing.Mount, candidate.Mount) {
 				if existing.Mount.ReadOnly == candidate.Mount.ReadOnly {
 					existing.Roles = append(existing.Roles, candidate.Roles...)
-					for index := range retained {
-						if retained[index].Mount == existing.Mount {
-							retained[index] = existing
-							break
-						}
-					}
 					redundant = true
 					break
 				}

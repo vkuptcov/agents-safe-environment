@@ -42,8 +42,6 @@ type DockerLauncher struct {
 	// HostHome is the absolute host home path recreated as a container-local directory.
 	// The directory itself is not mounted from the host.
 	HostHome string
-	// HostEnvironment is the Docker-free host snapshot shared with project-default generation.
-	HostEnvironment HostEnvironment
 	// AllocateTTY controls whether Docker allocates a terminal for the command.
 	AllocateTTY bool
 	// LookupEnv reads host environment variables during host-MCP channel allocation.
@@ -86,28 +84,28 @@ func NewDockerLauncher() (*DockerLauncher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("look up host group %d: %w", hostGID, err)
 	}
-	// Construction stays limited to the historical identity/Git preflight. Optional Codex and skills discovery belongs
-	// to the typed resolver, which Phase 2 invokes only after CLI usage validation and Git discovery.
+	// Construction stays limited to the historical identity preflight, resolving only the host home the launcher
+	// needs. Optional Codex, skills, and Git-config discovery belong to the typed resolver, which Phase 2 invokes
+	// only after CLI usage validation and Git discovery.
 	hostEnvironment, err := resolveHostIdentity(defaultHostEnvironmentInputs())
 	if err != nil {
 		return nil, err
 	}
 
 	docker := &DockerLauncher{
-		DockerBinary:    "docker",
-		CommandRunner:   dockercli.NewProcessRunner(),
-		HostOS:          runtime.GOOS,
-		Stdin:           os.Stdin,
-		Stdout:          os.Stdout,
-		Stderr:          os.Stderr,
-		HostUID:         hostUID,
-		HostGID:         hostGID,
-		HostUser:        hostUser.Username,
-		HostGroup:       hostGroup.Name,
-		HostHome:        hostEnvironment.HomeDir,
-		HostEnvironment: hostEnvironment,
-		AllocateTTY:     terminal.IsTerminal(os.Stdin) && terminal.IsTerminal(os.Stdout),
-		LookupEnv:       os.LookupEnv,
+		DockerBinary:  "docker",
+		CommandRunner: dockercli.NewProcessRunner(),
+		HostOS:        runtime.GOOS,
+		Stdin:         os.Stdin,
+		Stdout:        os.Stdout,
+		Stderr:        os.Stderr,
+		HostUID:       hostUID,
+		HostGID:       hostGID,
+		HostUser:      hostUser.Username,
+		HostGroup:     hostGroup.Name,
+		HostHome:      hostEnvironment.HomeDir,
+		AllocateTTY:   terminal.IsTerminal(os.Stdin) && terminal.IsTerminal(os.Stdout),
+		LookupEnv:     os.LookupEnv,
 	}
 	return docker, nil
 }

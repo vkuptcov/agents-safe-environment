@@ -12,6 +12,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/cli"
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
+	"github.com/vkuptcov/agents-safe-environment/internal/launchcli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
@@ -69,8 +70,10 @@ func main() {
 
 func productionDependencies() commandDependencies {
 	return commandDependencies{
-		discover:      gitproject.Discover,
-		resolveConfig: resolveProjectConfig,
+		discover: gitproject.Discover,
+		resolveConfig: func(project gitproject.Project, overrides launchplan.Overrides) (cli.ResolvedConfig, error) {
+			return launchcli.ResolveConfig(project, defaultImage, overrides)
+		},
 		initialize: func(project gitproject.Project) (string, error) {
 			host, err := launcher.ResolveHostEnvironment()
 			if err != nil {
@@ -151,23 +154,4 @@ func runInit(
 	}
 	fmt.Fprintf(stdout, "Initialized %s\n", contextPath)
 	return 0
-}
-
-func resolveProjectConfig(project gitproject.Project, overrides launchplan.Overrides) (cli.ResolvedConfig, error) {
-	host, err := launcher.ResolveHostEnvironment()
-	if err != nil {
-		return cli.ResolvedConfig{}, err
-	}
-	resolved, err := launcher.ResolveProjectConfig(project, host, defaultImage, overrides)
-	if err != nil {
-		return cli.ResolvedConfig{}, err
-	}
-	return cli.ResolvedConfig{
-		Plan:                resolved.Resolution.Plan,
-		Image:               resolved.Config.Common.Image,
-		Options:             resolved.Options,
-		CodexArguments:      resolved.Config.Codex.Arguments,
-		Degradations:        resolved.Resolution.Degradations,
-		DefaultCodexHomeSet: resolved.DefaultCodexHomeSet,
-	}, nil
 }

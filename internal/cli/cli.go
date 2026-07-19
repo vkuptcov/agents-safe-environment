@@ -132,36 +132,12 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 }
 
 func printDegradationWarnings(cfg Config, resolved ResolvedConfig, stderr io.Writer) {
-	roles := make(map[string]bool, len(resolved.Degradations)+1)
-	for _, degradation := range resolved.Degradations {
-		roles[degradation.Role] = true
-	}
+	degradations := resolved.Degradations
 	if cfg.WarnWhenCodexHomeAbsent && !resolved.DefaultCodexHomeSet {
-		roles["codex_home"] = true
+		degradations = launchplan.AppendCodexHomeAbsentDegradation(degradations)
 	}
-	for _, role := range []string{"host_git_config", "codex_home", "personal_skills", "host_mcp_channel"} {
-		if !roles[role] {
-			continue
-		}
-		message, _ := degradationWarning(role)
-		fmt.Fprintf(stderr, "%s: warning: %s\n", cfg.Name, message)
-	}
-}
-
-const degradationWarningCodexHome = "mount role \"codex_home\" is omitted; host Codex state is unavailable; using ephemeral state"
-
-func degradationWarning(role string) (string, bool) {
-	switch role {
-	case "host_git_config":
-		return "mount role \"host_git_config\" is omitted; host Git identity and includes are unavailable", true
-	case "codex_home":
-		return degradationWarningCodexHome, true
-	case "personal_skills":
-		return "mount role \"personal_skills\" is omitted; personal skills are unavailable", true
-	case "host_mcp_channel":
-		return "mount role \"host_mcp_channel\" is omitted; host MCP forwarding is disabled", true
-	default:
-		return "", false
+	for _, degradation := range degradations {
+		fmt.Fprintf(stderr, "%s: warning: %s\n", cfg.Name, launchplan.DegradationMessage(degradation.Role))
 	}
 }
 

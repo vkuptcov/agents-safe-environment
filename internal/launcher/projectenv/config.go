@@ -185,10 +185,10 @@ func validateMount(index int, mount MountConfig) error {
 		}
 		return nil
 	}
-	if err := validateConfiguredPath(fmt.Sprintf("common.mounts[%d].source", index), mount.Source, true); err != nil {
+	if err := ValidatePath(fmt.Sprintf("common.mounts[%d].source", index), mount.Source, true); err != nil {
 		return err
 	}
-	return validateConfiguredPath(fmt.Sprintf("common.mounts[%d].target", index), mount.Target, false)
+	return ValidatePath(fmt.Sprintf("common.mounts[%d].target", index), mount.Target, false)
 }
 
 func supportedRole(role string) bool {
@@ -201,7 +201,10 @@ func supportedRole(role string) bool {
 	}
 }
 
-func validateConfiguredPath(label string, path string, source bool) error {
+// ValidatePath checks one configured bind-mount path without touching the filesystem. A source path is additionally
+// rejected when it is the filesystem root; targets skip that check. Callers that validate a bare host path (rather
+// than a full MountConfig) use it directly instead of assembling a throwaway ProjectConfig.
+func ValidatePath(label string, path string, source bool) error {
 	if path == "" || strings.TrimSpace(path) != path || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return fmt.Errorf("%s must be a canonical absolute path", label)
 	}
