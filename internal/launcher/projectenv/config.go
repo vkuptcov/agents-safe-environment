@@ -12,15 +12,18 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// MountRole identifies the purpose of a logical mount in the project configuration.
+type MountRole string
+
 const (
-	RoleHostGitConfig   = "host_git_config"
-	RolePrimaryCheckout = "primary_checkout"
-	RoleCommonGitDir    = "common_git_dir"
-	RoleWorktree        = "worktree"
-	RoleCodexHome       = "codex_home"
-	RolePersonalSkills  = "personal_skills"
-	RoleHostMCPChannel  = "host_mcp_channel"
-	RoleAdditional      = "additional"
+	RoleHostGitConfig   MountRole = "host_git_config"
+	RolePrimaryCheckout MountRole = "primary_checkout"
+	RoleCommonGitDir    MountRole = "common_git_dir"
+	RoleWorktree        MountRole = "worktree"
+	RoleCodexHome       MountRole = "codex_home"
+	RolePersonalSkills  MountRole = "personal_skills"
+	RoleHostMCPChannel  MountRole = "host_mcp_channel"
+	RoleAdditional      MountRole = "additional"
 
 	HostMCPChannelSource = "runtime://host-mcp-channel"
 	HostMCPChannelTarget = "/run/codex-safe-host-mcp"
@@ -50,11 +53,11 @@ type AgentsConfig struct{}
 
 // MountConfig describes a logical mount. The resolver validates role policy and produces physical binds.
 type MountConfig struct {
-	Role     string `toml:"role"`
-	Source   string `toml:"source"`
-	Target   string `toml:"target"`
-	ReadOnly bool   `toml:"read_only"`
-	Comment  string `toml:"comment"`
+	Role     MountRole `toml:"role"`
+	Source   string    `toml:"source"`
+	Target   string    `toml:"target"`
+	ReadOnly bool      `toml:"read_only"`
+	Comment  string    `toml:"comment"`
 }
 
 type configOverlay struct {
@@ -191,7 +194,7 @@ func validateMount(index int, mount MountConfig) error {
 	return ValidatePath(fmt.Sprintf("common.mounts[%d].target", index), mount.Target, false)
 }
 
-func supportedRole(role string) bool {
+func supportedRole(role MountRole) bool {
 	switch role {
 	case RoleHostGitConfig, RolePrimaryCheckout, RoleCommonGitDir, RoleWorktree, RoleCodexHome,
 		RolePersonalSkills, RoleHostMCPChannel, RoleAdditional:

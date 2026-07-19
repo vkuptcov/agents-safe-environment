@@ -200,8 +200,8 @@ func projectOnlyPlan(root string) launchplan.Plan {
 		ProjectRoot: root,
 		WorkingDir:  root,
 		Mounts:      []launchplan.BindMount{worktree},
-		Provenance:  []launchplan.MountProvenance{{Mount: worktree, Roles: []string{projectenv.RoleWorktree}}},
-		Roles:       []string{projectenv.RoleWorktree},
+		Provenance:  []launchplan.MountProvenance{{Mount: worktree, Roles: []projectenv.MountRole{projectenv.RoleWorktree}}},
+		Roles:       []projectenv.MountRole{projectenv.RoleWorktree},
 	}
 }
 
@@ -215,12 +215,17 @@ func planWithCodex(root, workingDir, codexHome string) launchplan.Plan {
 		WorkingDir:  workingDir,
 		Mounts:      []launchplan.BindMount{primary, commonGit, worktree, codex},
 		Provenance: []launchplan.MountProvenance{
-			{Mount: primary, Roles: []string{projectenv.RolePrimaryCheckout}},
-			{Mount: commonGit, Roles: []string{projectenv.RoleCommonGitDir}},
-			{Mount: worktree, Roles: []string{projectenv.RoleWorktree}},
-			{Mount: codex, Roles: []string{projectenv.RoleCodexHome}},
+			{Mount: primary, Roles: []projectenv.MountRole{projectenv.RolePrimaryCheckout}},
+			{Mount: commonGit, Roles: []projectenv.MountRole{projectenv.RoleCommonGitDir}},
+			{Mount: worktree, Roles: []projectenv.MountRole{projectenv.RoleWorktree}},
+			{Mount: codex, Roles: []projectenv.MountRole{projectenv.RoleCodexHome}},
 		},
-		Roles: []string{projectenv.RolePrimaryCheckout, projectenv.RoleCommonGitDir, projectenv.RoleWorktree, projectenv.RoleCodexHome},
+		Roles: []projectenv.MountRole{
+			projectenv.RolePrimaryCheckout,
+			projectenv.RoleCommonGitDir,
+			projectenv.RoleWorktree,
+			projectenv.RoleCodexHome,
+		},
 	}
 }
 

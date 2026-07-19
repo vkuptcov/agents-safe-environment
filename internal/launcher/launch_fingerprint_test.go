@@ -8,6 +8,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
@@ -39,7 +40,7 @@ func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
 
 	commandOnly := plan
 	commandOnly.WorkingDir = "/another/invocation/directory"
-	commandOnly.Roles = []string{"unrelated"}
+	commandOnly.Roles = []projectenv.MountRole{"unrelated"}
 	commandOnly.Provenance = nil
 	if got := mustCreationFingerprint(t, commandOnly, "image:one", false, false,
 		hostmcp.Set{Endpoints: []hostmcp.Endpoint{{Host: "localhost", Port: 8080, Names: []string{"renamed"}}}}); got != base {

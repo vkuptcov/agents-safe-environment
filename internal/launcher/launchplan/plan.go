@@ -60,18 +60,18 @@ type Plan struct {
 	// Provenance records the logical roles each normalized physical mount satisfies.
 	Provenance []MountProvenance
 	// Roles is the retained logical role set, including non-filesystem roles such as host_mcp_channel.
-	Roles []string
+	Roles []projectenv.MountRole
 }
 
 // MountProvenance traces one physical bind to the logical roles that required it.
 type MountProvenance struct {
 	Mount BindMount
-	Roles []string
+	Roles []projectenv.MountRole
 }
 
 // Degradation reports an omitted optional role. The public command decides whether its warning applies.
 type Degradation struct {
-	Role string
+	Role projectenv.MountRole
 }
 
 // Resolution is the role-validated physical launch plan and its optional-role degradations.
@@ -83,7 +83,7 @@ type Resolution struct {
 // degradableRoleOrder is the canonical warning order for the optional roles the resolver may report
 // as omitted. It is the single source of truth for both the Resolve degradation list and the CLI's
 // output ordering, so the two cannot drift.
-var degradableRoleOrder = []string{
+var degradableRoleOrder = []projectenv.MountRole{
 	projectenv.RoleHostGitConfig,
 	projectenv.RoleCodexHome,
 	projectenv.RolePersonalSkills,
@@ -92,7 +92,7 @@ var degradableRoleOrder = []string{
 
 // DegradationMessage returns the operator-facing warning text for an omitted optional role. It lives
 // here, beside the role constants, so the generic CLI never spells out role names or warning text.
-func DegradationMessage(role string) string {
+func DegradationMessage(role projectenv.MountRole) string {
 	switch role {
 	case projectenv.RoleHostGitConfig:
 		return "mount role \"host_git_config\" is omitted; host Git identity and includes are unavailable"
@@ -127,7 +127,7 @@ func AppendCodexHomeAbsentDegradation(degradations []Degradation) []Degradation 
 	return result
 }
 
-func degradableRank(role string) int {
+func degradableRank(role projectenv.MountRole) int {
 	for index, candidate := range degradableRoleOrder {
 		if candidate == role {
 			return index
@@ -137,12 +137,12 @@ func degradableRank(role string) int {
 }
 
 // HasRole reports whether a validated logical role remains in the resolved plan.
-func (plan Plan) HasRole(role string) bool {
+func (plan Plan) HasRole(role projectenv.MountRole) bool {
 	return containsRole(plan.Roles, role)
 }
 
 // MountForRole returns the physical bind that satisfies one retained filesystem role.
-func (plan Plan) MountForRole(role string) (BindMount, bool) {
+func (plan Plan) MountForRole(role projectenv.MountRole) (BindMount, bool) {
 	for _, provenance := range plan.Provenance {
 		for _, candidate := range provenance.Roles {
 			if candidate == role {
@@ -157,7 +157,7 @@ type rolePolicy struct {
 	required bool
 }
 
-var managedRolePolicies = map[string]rolePolicy{
+var managedRolePolicies = map[projectenv.MountRole]rolePolicy{
 	projectenv.RoleHostGitConfig:   {},
 	projectenv.RolePrimaryCheckout: {required: true},
 	projectenv.RoleCommonGitDir:    {required: true},
@@ -216,7 +216,7 @@ func Resolve(
 	}
 
 	logical := make([]logicalMount, 0, len(config.Common.Mounts))
-	roles := make([]string, 0, len(config.Common.Mounts))
+	roles := make([]projectenv.MountRole, 0, len(config.Common.Mounts))
 	for _, mount := range config.Common.Mounts {
 		if !containsRole(roles, mount.Role) {
 			roles = append(roles, mount.Role)
@@ -258,7 +258,7 @@ func Resolve(
 	}, nil
 }
 
-func containsRole(roles []string, role string) bool {
+func containsRole(roles []projectenv.MountRole, role projectenv.MountRole) bool {
 	for _, candidate := range roles {
 		if candidate == role {
 			return true
@@ -267,8 +267,11 @@ func containsRole(roles []string, role string) bool {
 	return false
 }
 
-func managedRoleMap(mounts []projectenv.MountConfig, source string) (map[string]projectenv.MountConfig, error) {
-	roles := make(map[string]projectenv.MountConfig, len(managedRolePolicies))
+func managedRoleMap(
+	mounts []projectenv.MountConfig,
+	source string,
+) (map[projectenv.MountRole]projectenv.MountConfig, error) {
+	roles := make(map[projectenv.MountRole]projectenv.MountConfig, len(managedRolePolicies))
 	for _, mount := range mounts {
 		if _, managed := managedRolePolicies[mount.Role]; !managed {
 			continue
@@ -286,8 +289,8 @@ func sameManagedMount(first, second projectenv.MountConfig) bool {
 		first.ReadOnly == second.ReadOnly
 }
 
-func validateProjectRoles(project gitproject.Project, roles map[string]projectenv.MountConfig) error {
-	expected := map[string]BindMount{
+func validateProjectRoles(project gitproject.Project, roles map[projectenv.MountRole]projectenv.MountConfig) error {
+	expected := map[projectenv.MountRole]BindMount{
 		projectenv.RoleWorktree: {
 			Source: project.WorktreeRoot,
 			Target: project.WorktreeRoot,
@@ -316,7 +319,7 @@ func validateProjectRoles(project gitproject.Project, roles map[string]projecten
 
 type logicalMount struct {
 	mount BindMount
-	role  string
+	role  projectenv.MountRole
 }
 
 func validateExistingMount(mount projectenv.MountConfig) error {
@@ -359,7 +362,7 @@ func normalizeLogicalMounts(logical []logicalMount) ([]BindMount, []MountProvena
 			}
 		}
 		byMount[item.mount] = len(merged)
-		merged = append(merged, MountProvenance{Mount: item.mount, Roles: []string{item.role}})
+		merged = append(merged, MountProvenance{Mount: item.mount, Roles: []projectenv.MountRole{item.role}})
 	}
 
 	merged = orderMountParentsFirst(merged)

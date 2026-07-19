@@ -51,7 +51,7 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	roles := make(map[string]projectenv.MountConfig, len(config.Common.Mounts))
+	roles := make(map[projectenv.MountRole]projectenv.MountConfig, len(config.Common.Mounts))
 	for _, mount := range config.Common.Mounts {
 		roles[mount.Role] = mount
 	}

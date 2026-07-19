@@ -67,7 +67,7 @@ func ResolveProjectConfig(
 	}, nil
 }
 
-func findRole(mounts []projectenv.MountConfig, role string) (projectenv.MountConfig, bool) {
+func findRole(mounts []projectenv.MountConfig, role projectenv.MountRole) (projectenv.MountConfig, bool) {
 	for _, mount := range mounts {
 		if mount.Role == role {
 			return mount, true

@@ -33,7 +33,11 @@ func TestResolveRegularCheckoutNormalizesRequiredRoles(t *testing.T) {
 	if !reflect.DeepEqual(resolution.Plan.Mounts, wantMounts) {
 		t.Fatalf("Mounts = %#v, want %#v", resolution.Plan.Mounts, wantMounts)
 	}
-	wantRoles := []string{projectenv.RolePrimaryCheckout, projectenv.RoleWorktree, projectenv.RoleCommonGitDir}
+	wantRoles := []projectenv.MountRole{
+		projectenv.RolePrimaryCheckout,
+		projectenv.RoleWorktree,
+		projectenv.RoleCommonGitDir,
+	}
 	if !reflect.DeepEqual(resolution.Plan.Provenance[0].Roles, wantRoles) {
 		t.Errorf("roles = %#v, want %#v", resolution.Plan.Provenance[0].Roles, wantRoles)
 	}
@@ -90,7 +94,7 @@ func TestNormalizeLogicalMountsOrdersParentBeforeInterleavedChild(t *testing.T) 
 	if want := []BindMount{unrelated, parent}; !reflect.DeepEqual(mounts, want) {
 		t.Fatalf("mounts = %#v, want %#v", mounts, want)
 	}
-	if want := []string{"parent", "child"}; !reflect.DeepEqual(provenance[1].Roles, want) {
+	if want := []projectenv.MountRole{"parent", "child"}; !reflect.DeepEqual(provenance[1].Roles, want) {
 		t.Fatalf("parent roles = %#v, want %#v", provenance[1].Roles, want)
 	}
 }

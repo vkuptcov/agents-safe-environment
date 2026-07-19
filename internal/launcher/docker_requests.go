@@ -114,7 +114,7 @@ func (docker *DockerLauncher) buildExecRequest(
 	}, nil
 }
 
-func mountRoleLabel(plan launchplan.Plan, role string) string {
+func mountRoleLabel(plan launchplan.Plan, role projectenv.MountRole) string {
 	mount, found := plan.MountForRole(role)
 	if !found {
 		return mountAbsent
