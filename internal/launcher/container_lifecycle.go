@@ -32,80 +32,72 @@ const (
 
 func (attempt *launchAttempt) acquireContainer(
 	ctx context.Context,
-	resolution userMountResolution,
-) (string, UserMounts, error) {
+) (string, error) {
 	inspection, found, err := attempt.inspectOwnedContainer(ctx)
 	if err != nil {
-		return "", UserMounts{}, err
+		return "", err
 	}
 	if found {
 		if inspection.State.Running {
-			if err := attempt.validateResolvedRunningUserMounts(inspection, resolution); err != nil {
-				return "", UserMounts{}, err
+			if err := attempt.validateRunningFingerprint(inspection); err != nil {
+				return "", err
 			}
 			if err := attempt.reuseHostMCP(ctx, inspection); err != nil {
-				return "", UserMounts{}, err
+				return "", err
 			}
-			return inspection.ID, resolution.mounts, nil
+			return inspection.ID, nil
 		}
-		containerID, err := attempt.waitForReusableOrReleased(ctx, resolution)
+		containerID, err := attempt.waitForReusableOrReleased(ctx)
 		if err != nil {
-			return "", UserMounts{}, err
+			return "", err
 		}
 		if containerID != "" {
 			if err := attempt.reuseHostMCPAfterWait(ctx); err != nil {
-				return "", UserMounts{}, err
+				return "", err
 			}
-			return containerID, resolution.mounts, nil
+			return containerID, nil
 		}
 	}
 
 	if err := attempt.prepareImage(ctx); err != nil {
-		return "", UserMounts{}, err
-	}
-	// materializeUserMounts can block on an interactive Codex-home prompt, so nothing that starts a
-	// clock may precede it. The sidecar is created after this, immediately before the session, or it
-	// would burn its initial-lease timeout waiting for a human.
-	userMounts, err := attempt.docker.materializeUserMounts(attempt.plan, resolution)
-	if err != nil {
-		return "", UserMounts{}, err
+		return "", err
 	}
 	if err := attempt.resolveHostMCPImage(ctx); err != nil {
-		return "", UserMounts{}, err
+		return "", err
 	}
 	for count := 0; count < containerCreateAttempts; count++ {
-		containerID, conflict, err := attempt.createSessionWithHostMCP(ctx, userMounts)
+		containerID, conflict, err := attempt.createSessionWithHostMCP(ctx)
 		if err != nil {
-			return "", UserMounts{}, err
+			return "", err
 		}
 		if !conflict {
-			return containerID, userMounts, nil
+			return containerID, nil
 		}
 		// This attempt lost the session-name race. Its candidate sidecar is transient by
 		// construction: stop and await only this attempt's own, and remove only its generation.
 		if err := attempt.discardHostMCPCandidate(ctx); err != nil {
-			return "", UserMounts{}, err
+			return "", err
 		}
-		containerID, err = attempt.waitForReusableOrReleased(ctx, userMountResolution{mounts: userMounts})
+		containerID, err = attempt.waitForReusableOrReleased(ctx)
 		if err != nil {
-			return "", UserMounts{}, err
+			return "", err
 		}
 		if containerID != "" {
 			if err := attempt.reuseHostMCPAfterWait(ctx); err != nil {
-				return "", UserMounts{}, err
+				return "", err
 			}
-			return containerID, userMounts, nil
+			return containerID, nil
 		}
 		// The winner vanished before it could be adopted, so this attempt will try to create again.
 		// Its previous candidate generation was just removed, so allocate a fresh one before retrying.
 		if err := attempt.reallocateHostMCPCandidate(); err != nil {
-			return "", UserMounts{}, err
+			return "", err
 		}
 		if err := waitForContainerPoll(ctx); err != nil {
-			return "", UserMounts{}, err
+			return "", err
 		}
 	}
-	return "", UserMounts{}, fmt.Errorf(
+	return "", fmt.Errorf(
 		"container name %q was not released after a concurrent create", attempt.containerName,
 	)
 }
@@ -127,10 +119,9 @@ func waitForContainerPoll(ctx context.Context) error {
 // Sysbox by silently falling back to it.
 func (attempt *launchAttempt) createContainer(
 	ctx context.Context,
-	userMounts UserMounts,
 ) (string, bool, error) {
 	request, err := attempt.docker.buildCreateRequest(
-		attempt.plan, attempt.image, attempt.containerName, userMounts, attempt.hostMCP,
+		attempt.plan, attempt.image, attempt.containerName, attempt.hostMCP, attempt.launchFingerprint,
 	)
 	if err != nil {
 		return "", false, err
@@ -182,65 +173,20 @@ func (attempt *launchAttempt) validateOwnership(inspection dockercli.ContainerIn
 	return nil
 }
 
-// validateRunningUserMounts verifies immutable user-mount labels before reusing a running container.
-func (attempt *launchAttempt) validateRunningUserMounts(
-	inspection dockercli.ContainerInspection,
-	userMounts UserMounts,
-) error {
-	userMountLabels := []struct{ name, want string }{
-		{codexHomeLabel, userMounts.codexHomeLabel()},
-		{personalSkillsLabel, userMounts.personalSkillsLabel()},
-	}
-	for _, label := range userMountLabels {
-		if got := inspection.Config.Labels[label.name]; got != label.want {
-			return &userMountMismatchError{
-				projectRoot: attempt.plan.ProjectRoot,
-				label:       label.name,
-				running:     got,
-				requested:   label.want,
-			}
+// validateRunningFingerprint is the sole creation-time reuse predicate after ownership and protocol checks.
+func (attempt *launchAttempt) validateRunningFingerprint(inspection dockercli.ContainerInspection) error {
+	if running := inspection.Config.Labels[launchConfigLabel]; running != attempt.launchFingerprint {
+		return &launchConfigMismatchError{
+			projectRoot: attempt.plan.ProjectRoot,
+			running:     running,
+			requested:   attempt.launchFingerprint,
 		}
 	}
 	return nil
 }
 
-func (attempt *launchAttempt) validateResolvedRunningUserMounts(
-	inspection dockercli.ContainerInspection,
-	resolution userMountResolution,
-) error {
-	if resolution.missingCodexHome != "" {
-		return fmt.Errorf(
-			"a managed session for worktree %q is already running without a usable host Codex home; "+
-				"finish the active session before creating and mounting %q",
-			attempt.plan.ProjectRoot,
-			resolution.missingCodexHome,
-		)
-	}
-	return attempt.validateRunningUserMounts(inspection, resolution.mounts)
-}
-
-// userMountMismatchError reports immutable user mounts that differ from an active container.
-type userMountMismatchError struct {
-	projectRoot string
-	label       string
-	running     string
-	requested   string
-}
-
-func (err *userMountMismatchError) Error() string {
-	return fmt.Sprintf(
-		"a managed session for worktree %q is already running with %s=%q, but this launch resolved "+
-			"%q; finish the active session before retrying, then relaunch",
-		err.projectRoot,
-		err.label,
-		err.running,
-		err.requested,
-	)
-}
-
 func (attempt *launchAttempt) waitForReusableOrReleased(
 	ctx context.Context,
-	resolution userMountResolution,
 ) (string, error) {
 	waitContext, cancel := context.WithTimeout(ctx, containerStateTimeout)
 	defer cancel()
@@ -255,7 +201,7 @@ func (attempt *launchAttempt) waitForReusableOrReleased(
 			return "", nil
 		}
 		if inspection.State.Running {
-			if err := attempt.validateResolvedRunningUserMounts(inspection, resolution); err != nil {
+			if err := attempt.validateRunningFingerprint(inspection); err != nil {
 				return "", err
 			}
 			return inspection.ID, nil
@@ -275,7 +221,6 @@ func (attempt *launchAttempt) waitForReusableOrReleased(
 
 func (attempt *launchAttempt) containerStoppedAfterExec(
 	ctx context.Context,
-	userMounts UserMounts,
 ) (bool, error) {
 	inspection, found, err := attempt.inspectOwnedContainer(ctx)
 	if err != nil {
@@ -285,11 +230,11 @@ func (attempt *launchAttempt) containerStoppedAfterExec(
 		return true, nil
 	}
 	if inspection.State.Running {
-		if err := attempt.validateRunningUserMounts(inspection, userMounts); err != nil {
+		if err := attempt.validateRunningFingerprint(inspection); err != nil {
 			return false, err
 		}
 		return false, nil
 	}
-	containerID, err := attempt.waitForReusableOrReleased(ctx, userMountResolution{mounts: userMounts})
+	containerID, err := attempt.waitForReusableOrReleased(ctx)
 	return containerID == "" && err == nil, err
 }

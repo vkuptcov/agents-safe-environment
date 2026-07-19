@@ -24,9 +24,22 @@ type Launcher interface {
 // Dependencies contains the project discovery and container-launching operations used by Run.
 // Product binaries wire production implementations; tests substitute focused doubles.
 type Dependencies struct {
-	Discover        func(context.Context, string) (gitproject.Project, error)
-	BuildLaunchPlan func(gitproject.Project) (launchplan.Plan, error)
-	Launcher        Launcher
+	Discover      func(context.Context, string) (gitproject.Project, error)
+	ResolveConfig func(gitproject.Project, string, launchplan.Overrides) (ResolvedConfig, error)
+	// NewLauncher is deliberately lazy: usage validation and project configuration must complete
+	// before host identity or Docker-facing construction can fail.
+	NewLauncher func(hostHome string) (Launcher, error)
+}
+
+// ResolvedConfig is the resolver output shared by command assembly and container launch.
+type ResolvedConfig struct {
+	Plan                launchplan.Plan
+	Image               string
+	Options             launchplan.Options
+	CodexArguments      []string
+	Degradations        []launchplan.Degradation
+	DefaultCodexHomeSet bool
+	HostHome            string
 }
 
 // Config describes one launcher binary's identity and command policy.
@@ -37,14 +50,17 @@ type Config struct {
 	DefaultImage string
 	// Usage is the full help block printed for --help and before usage errors.
 	Usage string
-	// BuildCommand turns the post-flag arguments into the container command. A returned error is a
-	// usage error (exit code 2): agents-safe uses it to reject an empty command; codex-safe never
-	// errors because it always wraps the image-owned Codex binary.
-	BuildCommand func(args []string) ([]string, error)
+	// ValidateInvocation rejects config-independent command errors before project discovery. agents-safe uses it to
+	// reject a missing command; codex-safe accepts an empty invocation for interactive use.
+	ValidateInvocation func(args []string) error
+	// BuildCommand combines the resolved configured Codex arguments and post-flag invocation arguments. It runs only
+	// after project resolution because agents-safe must preserve its pre-discovery missing-command usage error.
+	BuildCommand func(configuredArgs, invocationArgs []string) []string
+	// WarnWhenCodexHomeAbsent selects codex-safe's warning when no default Codex home exists on this host.
+	WarnWhenCodexHomeAbsent bool
 }
 
-// Run parses args, builds the command, discovers the project, builds the plan, and launches the
-// command, returning the process exit code.
+// Run parses args, validates config-independent usage, resolves project config, builds the command, and launches it.
 func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Writer, dependencies Dependencies) int {
 	flags := pflag.NewFlagSet(cfg.Name, pflag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -64,11 +80,13 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		return 2
 	}
 
-	command, err := cfg.BuildCommand(flags.Args())
-	if err != nil {
-		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
-		fmt.Fprintln(stderr, cfg.Usage)
-		return 2
+	invocation := flags.Args()
+	if cfg.ValidateInvocation != nil {
+		if err := cfg.ValidateInvocation(invocation); err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
+			fmt.Fprintln(stderr, cfg.Usage)
+			return 2
+		}
 	}
 
 	project, err := dependencies.Discover(ctx, *projectPath)
@@ -76,17 +94,50 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return 1
 	}
-	plan, err := dependencies.BuildLaunchPlan(project)
+	overrides := launchplan.Overrides{
+		Image:             *image,
+		ImageOverride:     flags.Changed("image"),
+		NoHostMCP:         *noHostMCP,
+		NoHostMCPOverride: flags.Changed("no-host-mcp"),
+	}
+	resolved, err := dependencies.ResolveConfig(project, cfg.DefaultImage, overrides)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return 1
 	}
-	options := launchplan.Options{ImageOverride: flags.Changed("image"), NoHostMCP: *noHostMCP}
-	if err := dependencies.Launcher.Launch(ctx, plan, *image, command, options); err != nil {
+	printDegradationWarnings(cfg, resolved, stderr)
+	command := invocation
+	if cfg.BuildCommand != nil {
+		command = cfg.BuildCommand(resolved.CodexArguments, invocation)
+	}
+	if dependencies.NewLauncher == nil {
+		fmt.Fprintf(stderr, "%s: launcher dependency is not configured\n", cfg.Name)
+		return 1
+	}
+	launcher, err := dependencies.NewLauncher(resolved.HostHome)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: initialize Docker launcher: %v\n", cfg.Name, err)
+		return 1
+	}
+	if launcher == nil {
+		fmt.Fprintf(stderr, "%s: launcher dependency is not configured\n", cfg.Name)
+		return 1
+	}
+	if err := launcher.Launch(ctx, resolved.Plan, resolved.Image, command, resolved.Options); err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return errorExitCode(err)
 	}
 	return 0
+}
+
+func printDegradationWarnings(cfg Config, resolved ResolvedConfig, stderr io.Writer) {
+	degradations := resolved.Degradations
+	if cfg.WarnWhenCodexHomeAbsent && !resolved.DefaultCodexHomeSet {
+		degradations = launchplan.AppendCodexHomeAbsentDegradation(degradations)
+	}
+	for _, degradation := range degradations {
+		fmt.Fprintf(stderr, "%s: warning: %s\n", cfg.Name, launchplan.DegradationMessage(degradation.Role))
+	}
 }
 
 // errorExitCode returns the launch error's own exit code when it carries one, so a failed command's

@@ -12,10 +12,9 @@ func (attempt *launchAttempt) execCommand(
 	ctx context.Context,
 	command []string,
 	containerID string,
-	userMounts UserMounts,
 ) error {
 	docker := attempt.docker
-	request, err := docker.buildExecRequest(attempt.plan, command, containerID, userMounts)
+	request, err := docker.buildExecRequest(attempt.plan, command, containerID)
 	if err != nil {
 		return err
 	}

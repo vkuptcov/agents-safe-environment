@@ -123,29 +123,26 @@ codex-safe-<project key>
 The UID remains part of the hash input and is also stored explicitly in `codex-safe.host-uid`; repeating it in the
 container name would not add identity information.
 
-The full, unhashed identity and creation-time user-mount compatibility inputs remain in labels so the launcher can
-validate the container before reuse and operators can find sessions by project path:
+Ownership, protocol, the creation fingerprint, and selected unhashed diagnostic values remain in labels so the
+launcher can validate the container before reuse and operators can inspect sessions:
 
 - `codex-safe.managed=true`: marks containers owned by this launcher;
 - `codex-safe.project-path`: canonical worktree root;
 - `codex-safe.host-uid`: invoking numeric UID;
 - `codex-safe.manager-protocol=1`: required wrapper-manager compatibility;
+- `codex-safe.launch-config`: SHA-256 fingerprint of all creation-time parameters;
 - `codex-safe.codex-home`: canonical host source mounted as the container's Codex home, or the literal `absent` for
-  an `agents-safe` container created without one;
+  an `agents-safe` container created without one; diagnostic only;
 - `codex-safe.personal-skills`: canonical host source mounted for personal skills, or the literal `absent` when the
-  optional directory does not exist;
+  optional directory does not exist; diagnostic only;
 - `codex-safe.host-mcp`: sorted `host:port` list of forwarded host MCP endpoints, or the literal `absent` when none
-  were forwarded, as defined by [`host-mcp-forwarding.md`](host-mcp-forwarding.md);
+  were forwarded; diagnostic only, as defined by [`host-mcp-forwarding.md`](host-mcp-forwarding.md);
 - `codex-safe.host-mcp-channel`: host directory of that container's MCP channel, absent as a label when no endpoint
   was forwarded. It locates the channel and is never compared for reuse.
 
-The project path and UID determine the container name. The Codex-home and personal-skills labels do not create a second
-container for the same worktree; they prove that a running container has the user mounts requested by the new
-invocation.
-
-Because `docker exec` cannot add a bind mount, a running container labeled with `codex-safe.codex-home=absent` cannot
-serve a later `codex-safe` launch that requires a mounted home. The host launcher rejects that reuse before offering
-to create the missing source.
+The project path and UID determine the container name. After ownership and protocol validation,
+`codex-safe.launch-config` is the sole creation-time reuse predicate; the Codex-home, personal-skills, and host-MCP
+labels are not compared independently.
 
 The deterministic name is the creation lock. Docker permits only one container with a given name, so concurrent
 launchers cannot both create the same project session.

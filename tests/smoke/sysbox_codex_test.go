@@ -50,9 +50,12 @@ func TestSysboxCodexProductLaunch(t *testing.T) {
 	hold := fixture.launcher.start(fixture.project.worktree, "bash", "-c", waitScript, "bash", holdRelease)
 	fixture.docker.waitForContainer()
 
+	initialContainerID := fixture.docker.inspectContainer().ID
 	fixture.assertCodexHomeMounts(sentinel)
 	fixture.assertCodexReadsSentinelAndWritesState()
 	fixture.assertImageCodexNotShadowed(sentinel)
+	require.Equal(t, initialContainerID, fixture.docker.inspectContainer().ID,
+		"command-time Codex argv must reuse the held session")
 	fixture.assertReuseMismatchDiagnostic(sentinel, hold)
 
 	require.NoError(t, os.WriteFile(holdRelease, nil, 0o600), "hold release marker must be writable")
@@ -158,11 +161,12 @@ func (fixture *smokeFixture) assertImageCodexNotShadowed(sentinel codexSentinel)
 }
 
 // assertReuseMismatchDiagnostic relaunches the same worktree with a different Codex home and proves
-// the launcher reports the finish-active-session diagnostic without reusing or terminating the live
-// container.
+// the creation fingerprint rejects it without reusing or terminating the live container.
 func (fixture *smokeFixture) assertReuseMismatchDiagnostic(sentinel codexSentinel, hold *launcherProcess) {
 	fixture.t.Helper()
 	require.True(fixture.t, hold.running(), "the held session must still be running before the mismatch launch")
+	before := fixture.docker.inspectContainer()
+	require.Regexp(fixture.t, "^[a-f0-9]{64}$", before.Config.Labels["codex-safe.launch-config"])
 	mismatch := fixture.launcher.startBinary(
 		fixture.launcher.productBinary,
 		fixture.project.worktree,
@@ -171,11 +175,13 @@ func (fixture *smokeFixture) assertReuseMismatchDiagnostic(sentinel codexSentine
 		"doctor",
 	)
 	mismatch.waitDone(fixture.t, "codex reuse-mismatch launch")
-	require.NotZero(fixture.t, mismatch.exitCode(), "a user-mount mismatch must fail the launch")
+	require.NotZero(fixture.t, mismatch.exitCode(), "a creation-time mismatch must fail the launch")
 	require.Contains(fixture.t, mismatch.stderr.String(), "finish the active session",
 		"the launcher must report the finish-active-session diagnostic\n%s", mismatch.diagnostics())
 	require.True(fixture.t, hold.running(), "the live session must not be terminated by a mismatched launch")
-	require.True(fixture.t, fixture.docker.inspectContainer().State.Running, "the container must remain running")
+	after := fixture.docker.inspectContainer()
+	require.True(fixture.t, after.State.Running, "the container must remain running")
+	require.Equal(fixture.t, before.ID, after.ID, "a fingerprint mismatch must not replace the live container")
 	require.Len(fixture.t, fixture.docker.managedContainers(), 1, "a mismatch must not create a second container")
 }
 

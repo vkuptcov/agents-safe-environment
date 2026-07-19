@@ -11,6 +11,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/mcpchannel"
 )
 
@@ -114,20 +115,19 @@ func sidecarName(projectKey string, channel hostmcp.Channel) string {
 	return "codex-safe-mcp-" + projectKey + "-" + channel.Name
 }
 
-// planHostMCP resolves the forwarded endpoint set and allocates this attempt's candidate channel.
+// planHostMCP resolves the forwarded endpoint set before the creation fingerprint is computed.
 //
 // Discovery reads the Codex home this launch already resolved, so --no-host-mcp and a launch with no
 // Codex home both reduce to an empty set with no separate resolution path. An empty set allocates
 // nothing: no directory, no environment variable, no mount, no relay, and no banner line.
-func (attempt *launchAttempt) planHostMCP(resolution userMountResolution) error {
-	if attempt.noHostMCP {
-		// --no-host-mcp performs no config.toml read: discovery does not run at all.
+func (attempt *launchAttempt) planHostMCP() error {
+	if attempt.noHostMCP || !attempt.plan.HostMCPChannel {
+		// Disabled forwarding and an omitted logical channel role both perform no Codex config read.
 		return nil
 	}
-	codexHome := resolution.mounts.CodexHome
-	if !resolution.mounts.CodexHomePresent() {
-		// A missing home is resolved later, if at all; either way it carries no config.toml yet.
-		codexHome = ""
+	codexHome := ""
+	if mount, found := attempt.plan.MountForRole(projectenv.RoleCodexHome); found {
+		codexHome = mount.Source
 	}
 	set, err := hostmcp.Discover(codexHome)
 	if err != nil {
@@ -136,17 +136,29 @@ func (attempt *launchAttempt) planHostMCP(resolution userMountResolution) error 
 	if set.Empty() {
 		return nil
 	}
-	channel, err := hostmcp.NewChannel(attempt.docker.lookupEnv(), attempt.projectKey, len(set.Endpoints))
-	if err != nil {
-		return err
-	}
-	attempt.hostMCP = hostMCPPlan{set: set, channel: channel, candidate: true}
+	attempt.hostMCP.set = set
 	return nil
 }
 
-// reallocateHostMCPCandidate allocates a fresh generation for the same endpoint set, after a
-// previous candidate was discarded. Every session creation gets a new random generation; a
-// discarded one is never reused.
+// allocateHostMCPCandidate performs the first host-side mutation for a cold forwarding session.
+// It must run only after the fingerprint has ruled out running-container adoption.
+func (attempt *launchAttempt) allocateHostMCPCandidate() error {
+	if attempt.hostMCP.set.Empty() || attempt.hostMCP.candidate {
+		return nil
+	}
+	channel, err := hostmcp.NewChannel(
+		attempt.docker.lookupEnv(), attempt.projectKey, len(attempt.hostMCP.set.Endpoints),
+	)
+	if err != nil {
+		return err
+	}
+	attempt.hostMCP.channel = channel
+	attempt.hostMCP.candidate = true
+	return nil
+}
+
+// reallocateHostMCPCandidate allocates a fresh generation for a replacement session. A previous
+// generation may still belong to a departing sidecar, so it is never removed or reused here.
 func (attempt *launchAttempt) reallocateHostMCPCandidate() error {
 	if attempt.hostMCP.set.Empty() {
 		return nil
@@ -157,7 +169,10 @@ func (attempt *launchAttempt) reallocateHostMCPCandidate() error {
 	if err != nil {
 		return err
 	}
-	attempt.hostMCP = hostMCPPlan{set: attempt.hostMCP.set, channel: channel, candidate: true}
+	attempt.hostMCP.channel = channel
+	attempt.hostMCP.candidate = true
+	attempt.hostMCP.sidecarStarted = false
+	attempt.hostMCP.sessionID = ""
 	return nil
 }
 
@@ -180,8 +195,10 @@ func (attempt *launchAttempt) resolveHostMCPImage(ctx context.Context) error {
 // order the design fixes: the generation directory exists, then the sidecar, then the session.
 func (attempt *launchAttempt) createSessionWithHostMCP(
 	ctx context.Context,
-	userMounts UserMounts,
 ) (string, bool, error) {
+	if err := attempt.allocateHostMCPCandidate(); err != nil {
+		return "", false, err
+	}
 	if !attempt.hostMCP.set.Empty() {
 		name := sidecarName(attempt.projectKey, attempt.hostMCP.channel)
 		if err := attempt.ensureSidecar(
@@ -202,7 +219,7 @@ func (attempt *launchAttempt) createSessionWithHostMCP(
 		defer cancel()
 		createCtx = bounded
 	}
-	containerID, conflict, err := attempt.createContainer(createCtx, userMounts)
+	containerID, conflict, err := attempt.createContainer(createCtx)
 	if err != nil || conflict {
 		return containerID, conflict, err
 	}
@@ -238,13 +255,13 @@ func (attempt *launchAttempt) printForwardedEndpoints() {
 
 // discardHostMCPCandidate stops and awaits only this attempt's own sidecar and removes only its own
 // generation, for the race loser that must keep its candidate transient. It adopts nothing: the
-// winner's resources are not this attempt's to touch. It leaves the plan marked as a candidate so a
-// later failure in the same launch still cleans up, but clears sidecarStarted because the sidecar is
-// already gone.
+// winner's resources are not this attempt's to touch. Once its generation is removed, this attempt
+// no longer owns a candidate; a later cold retry allocates a fresh one.
 func (attempt *launchAttempt) discardHostMCPCandidate(ctx context.Context) error {
 	if err := attempt.cleanupCandidate(ctx); err != nil {
 		return err
 	}
+	attempt.hostMCP.candidate = false
 	attempt.hostMCP.sidecarStarted = false
 	return nil
 }
@@ -263,15 +280,15 @@ func (attempt *launchAttempt) reuseHostMCPAfterWait(ctx context.Context) error {
 	if !found {
 		return fmt.Errorf("managed container %q vanished before host MCP reuse", attempt.containerName)
 	}
+	if err := attempt.validateRunningFingerprint(inspection); err != nil {
+		return err
+	}
 	return attempt.reuseHostMCP(ctx, inspection)
 }
 
 // reuseHostMCP validates a running session's forwarding against this launch's resolution, adopts its
 // channel, and recreates a sidecar that has died.
 func (attempt *launchAttempt) reuseHostMCP(ctx context.Context, inspection dockercli.ContainerInspection) error {
-	if err := attempt.validateRunningHostMCP(inspection, attempt.hostMCP.set); err != nil {
-		return err
-	}
 	if attempt.hostMCP.set.Empty() {
 		return nil
 	}
@@ -540,57 +557,6 @@ func probeChannelReady(ctx context.Context, controlPath string) (bool, error) {
 		return false, err
 	}
 	return answer[0] == mcpchannel.Ready, nil
-}
-
-// hostMCPMismatchError reports a running session forwarding a different endpoint set. The launcher
-// never terminates the other session and never proceeds with stale forwarders.
-type hostMCPMismatchError struct {
-	projectRoot string
-	running     string
-	requested   string
-	// noHostMCP is true when this launch resolved an empty set because the user passed --no-host-mcp,
-	// as opposed to merely having no loopback endpoints configured.
-	noHostMCP bool
-}
-
-func (err *hostMCPMismatchError) Error() string {
-	// The narrowing diagnostic is used only when the user explicitly asked for less access with
-	// --no-host-mcp. A normal launch that merely resolved an empty set -- because config.toml was
-	// removed or lost its last loopback endpoint -- gets the ordinary differing-set message, since
-	// the user did not ask to narrow anything.
-	if err.noHostMCP {
-		return fmt.Sprintf(
-			"a managed session for worktree %q is already forwarding host MCP endpoints (%s), and "+
-				"--no-host-mcp cannot narrow a running session because the socket mount is fixed at "+
-				"creation; finish the active session before retrying",
-			err.projectRoot, err.running)
-	}
-	return fmt.Sprintf(
-		"a managed session for worktree %q is already forwarding host MCP endpoints %q, but this "+
-			"launch resolved %q; finish the active session before retrying, then relaunch",
-		err.projectRoot, err.running, err.requested)
-}
-
-// validateRunningHostMCP compares the reuse label. It is the compared label; the channel label is
-// read and never compared, because a reusing launcher legitimately computes a different candidate.
-func (attempt *launchAttempt) validateRunningHostMCP(
-	inspection dockercli.ContainerInspection,
-	set hostmcp.Set,
-) error {
-	running := inspection.Config.Labels[hostMCPLabel]
-	if running == "" {
-		// A container created before this feature existed forwards nothing.
-		running = hostmcp.AbsentLabel
-	}
-	if running != set.Label() {
-		return &hostMCPMismatchError{
-			projectRoot: attempt.plan.ProjectRoot,
-			running:     running,
-			requested:   set.Label(),
-			noHostMCP:   attempt.noHostMCP,
-		}
-	}
-	return nil
 }
 
 // adoptedChannel reads a running session's channel from its label, so a reusing launcher works with

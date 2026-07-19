@@ -8,6 +8,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
 func testChannel(t *testing.T) hostmcp.Channel {
@@ -103,84 +104,10 @@ func TestSidecarNameEmbedsTheGeneration(t *testing.T) {
 	}
 }
 
-// A running session forwarding a different set is a conflict to report, never a session to disturb.
-func TestValidateRunningHostMCPRejectsAMismatch(t *testing.T) {
-	t.Parallel()
-	attempt := &launchAttempt{plan: testPlan()}
-	inspection := dockercli.ContainerInspection{}
-	inspection.Config.Labels = map[string]string{hostMCPLabel: "127.0.0.1:1000"}
-
-	err := attempt.validateRunningHostMCP(inspection, oneEndpointSet(t))
-	if err == nil {
-		t.Fatal("a differing host-mcp label must be rejected")
-	}
-	var mismatch *hostMCPMismatchError
-	if !strings.Contains(err.Error(), "already forwarding") {
-		t.Fatalf("the diagnostic must name the active session, got %v", err)
-	}
-	_ = mismatch
-}
-
-// --no-host-mcp against a live forwarding session narrows it, which creation-time mounts forbid. The
-// diagnostic must name that case rather than reporting a differing endpoint set.
-func TestValidateRunningHostMCPNamesTheNarrowingCase(t *testing.T) {
-	t.Parallel()
-	attempt := &launchAttempt{plan: testPlan(), noHostMCP: true}
-	inspection := dockercli.ContainerInspection{}
-	inspection.Config.Labels = map[string]string{hostMCPLabel: "127.0.0.1:64342"}
-
-	err := attempt.validateRunningHostMCP(inspection, hostmcp.Set{})
-	if err == nil {
-		t.Fatal("--no-host-mcp against a forwarding session must be rejected")
-	}
-	if !strings.Contains(err.Error(), "--no-host-mcp cannot narrow") {
-		t.Fatalf("the diagnostic must name the narrowing case, got %v", err)
-	}
-}
-
-// An empty set that was NOT requested with --no-host-mcp -- the user removed config.toml or its last
-// loopback endpoint -- must get the ordinary differing-set message, never a claim they used the flag.
-func TestValidateRunningHostMCPEmptySetWithoutFlagIsNotNarrowing(t *testing.T) {
-	t.Parallel()
-	attempt := &launchAttempt{plan: testPlan()} // noHostMCP defaults to false
-	inspection := dockercli.ContainerInspection{}
-	inspection.Config.Labels = map[string]string{hostMCPLabel: "127.0.0.1:64342"}
-
-	err := attempt.validateRunningHostMCP(inspection, hostmcp.Set{})
-	if err == nil {
-		t.Fatal("an empty resolution against a forwarding session must still be rejected")
-	}
-	if strings.Contains(err.Error(), "--no-host-mcp") {
-		t.Fatalf("a normal empty resolution must not blame --no-host-mcp, got %v", err)
-	}
-}
-
-func TestValidateRunningHostMCPAcceptsAMatch(t *testing.T) {
-	t.Parallel()
-	set := oneEndpointSet(t)
-	attempt := &launchAttempt{plan: testPlan()}
-	inspection := dockercli.ContainerInspection{}
-	inspection.Config.Labels = map[string]string{hostMCPLabel: set.Label()}
-	if err := attempt.validateRunningHostMCP(inspection, set); err != nil {
-		t.Fatalf("a matching label must be accepted, got %v", err)
-	}
-}
-
-// A container created before this feature carries no label; an empty resolution must reuse it.
-func TestValidateRunningHostMCPTreatsMissingLabelAsAbsent(t *testing.T) {
-	t.Parallel()
-	attempt := &launchAttempt{plan: testPlan()}
-	inspection := dockercli.ContainerInspection{}
-	inspection.Config.Labels = map[string]string{}
-	if err := attempt.validateRunningHostMCP(inspection, hostmcp.Set{}); err != nil {
-		t.Fatalf("a pre-feature container must be reusable by an empty launch, got %v", err)
-	}
-}
-
 func TestBuildCreateRequestOmitsHostMCPForAnEmptySet(t *testing.T) {
 	t.Parallel()
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		testPlan(), "image", "codex-safe-aba8b4ca4ff345d5d0443c0c", testUserMounts(), hostMCPPlan{},
+		testPlan(), "image", "codex-safe-aba8b4ca4ff345d5d0443c0c", hostMCPPlan{}, "fingerprint",
 	)
 	if err != nil {
 		t.Fatalf("buildCreateRequest() error = %v", err)
@@ -195,8 +122,7 @@ func TestBuildCreateRequestOmitsHostMCPForAnEmptySet(t *testing.T) {
 			t.Fatal("an empty set must add no host MCP mount")
 		}
 	}
-	// The compared label still records `absent`, which is how reuse tells "forwards nothing" from
-	// "predates this feature".
+	// The diagnostic label records `absent` for a session that forwards nothing.
 	assertLabel := func(want string) {
 		for _, label := range request.Labels {
 			if label.Key == hostMCPLabel && label.Value == want {
@@ -213,7 +139,7 @@ func TestBuildCreateRequestAddsHostMCPForANonEmptySet(t *testing.T) {
 	set := oneEndpointSet(t)
 	forwarding := hostMCPPlan{set: set, channel: testChannel(t), candidate: true}
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		testPlan(), "image", "codex-safe-aba8b4ca4ff345d5d0443c0c", testUserMounts(), forwarding,
+		testPlan(), "image", "codex-safe-aba8b4ca4ff345d5d0443c0c", forwarding, "fingerprint",
 	)
 	if err != nil {
 		t.Fatalf("buildCreateRequest() error = %v", err)
@@ -256,12 +182,11 @@ func TestPlanHostMCPWithNoHostMCPPerformsNoConfigRead(t *testing.T) {
 	codexHome := writeCodexHome(t, "this is not valid TOML [[[")
 	attempt := &launchAttempt{
 		docker:     hostLauncher(1000, 1000, "/home/developer", ""),
-		plan:       testPlan(),
+		plan:       testPlanWithHostMCP(codexHome),
 		projectKey: "key",
 		noHostMCP:  true,
 	}
-	resolution := userMountResolution{mounts: UserMounts{CodexHome: codexHome, PersonalSkills: PersonalSkillsAbsent}}
-	if err := attempt.planHostMCP(resolution); err != nil {
+	if err := attempt.planHostMCP(); err != nil {
 		t.Fatalf("--no-host-mcp must skip discovery entirely, but got %v", err)
 	}
 	if !attempt.hostMCP.set.Empty() {
@@ -276,13 +201,42 @@ func TestPlanHostMCPWithoutFlagReadsConfig(t *testing.T) {
 	codexHome := writeCodexHome(t, "this is not valid TOML [[[")
 	attempt := &launchAttempt{
 		docker:     hostLauncher(1000, 1000, "/home/developer", ""),
-		plan:       testPlan(),
+		plan:       testPlanWithHostMCP(codexHome),
 		projectKey: "key",
 	}
-	resolution := userMountResolution{mounts: UserMounts{CodexHome: codexHome, PersonalSkills: PersonalSkillsAbsent}}
-	if err := attempt.planHostMCP(resolution); err == nil {
+	if err := attempt.planHostMCP(); err == nil {
 		t.Fatal("a malformed config.toml must fail discovery when the flag is absent")
 	}
+}
+
+func TestPlanHostMCPDefersChannelAllocationUntilAfterFingerprint(t *testing.T) {
+	validCodexHome := writeCodexHome(t, `
+[mcp_servers.idea]
+url = "http://127.0.0.1:64342/stream"
+`)
+	attempt := &launchAttempt{
+		docker:     hostLauncher(1000, 1000, "/home/developer", ""),
+		plan:       testPlanWithHostMCP(validCodexHome),
+		projectKey: "key",
+	}
+	if err := attempt.planHostMCP(); err != nil {
+		t.Fatalf("planHostMCP() error = %v", err)
+	}
+	if attempt.hostMCP.set.Empty() || attempt.hostMCP.candidate || attempt.hostMCP.channel.Generation != "" {
+		t.Fatalf("host MCP plan = %#v, want endpoints without a candidate channel", attempt.hostMCP)
+	}
+}
+
+func testPlanWithHostMCP(codexHome string) launchplan.Plan {
+	plan := testPlan()
+	for index := range plan.Provenance {
+		if plan.Provenance[index].Mount.Target == "/home/developer/.codex" {
+			plan.Provenance[index].Mount.Source = codexHome
+			plan.Mounts[index].Source = codexHome
+		}
+	}
+	plan.HostMCPChannel = true
+	return plan
 }
 
 func writeCodexHome(t *testing.T, config string) string {

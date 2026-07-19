@@ -14,181 +14,252 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/testutil/clitest"
 )
 
-func testConfig() cli.Config {
-	return cli.Config{
-		Name:         "test-cli",
-		DefaultImage: "default:image",
-		Usage:        "Usage: test-cli [--project PATH] [--image REF] [--] COMMAND",
-		BuildCommand: func(args []string) ([]string, error) {
-			if len(args) == 0 {
-				return nil, errors.New("command is required")
-			}
-			return args, nil
-		},
-	}
-}
-
-func TestRunHelp(t *testing.T) {
+func TestRunHelpAndUsageErrorsAvoidResolution(t *testing.T) {
 	t.Parallel()
-	stdout := new(bytes.Buffer)
+	config := testConfig()
+	if exit := cli.Run(context.Background(), config, []string{"--help"}, new(bytes.Buffer), new(bytes.Buffer), clitest.PanicDependencies()); exit != 0 {
+		t.Fatalf("help exit = %d, want 0", exit)
+	}
 	stderr := new(bytes.Buffer)
-	exitCode := cli.Run(context.Background(), testConfig(), []string{"--help"}, stdout, stderr, clitest.PanicDependencies())
-	if exitCode != 0 {
-		t.Errorf("Run() = %d, want 0", exitCode)
-	}
-	if !strings.Contains(stdout.String(), "Usage: test-cli") {
-		t.Errorf("stdout = %q, want usage", stdout.String())
-	}
-	if stderr.Len() != 0 {
-		t.Errorf("stderr = %q, want empty", stderr.String())
-	}
-}
-
-func TestRunReportsFlagError(t *testing.T) {
-	t.Parallel()
-	stderr := new(bytes.Buffer)
-	exitCode := cli.Run(context.Background(), testConfig(), []string{"--unknown"}, new(bytes.Buffer), stderr, clitest.PanicDependencies())
-	if exitCode != 2 {
-		t.Errorf("Run() = %d, want 2", exitCode)
-	}
-	if !strings.Contains(stderr.String(), "Usage: test-cli") {
-		t.Errorf("stderr = %q, want usage", stderr.String())
-	}
-}
-
-func TestRunReportsBuildCommandError(t *testing.T) {
-	t.Parallel()
-	stderr := new(bytes.Buffer)
-	exitCode := cli.Run(context.Background(), testConfig(), nil, new(bytes.Buffer), stderr, clitest.PanicDependencies())
-	if exitCode != 2 {
-		t.Errorf("Run() = %d, want 2", exitCode)
+	if exit := cli.Run(context.Background(), config, nil, new(bytes.Buffer), stderr, clitest.PanicDependencies()); exit != 2 {
+		t.Fatalf("missing command exit = %d, want 2", exit)
 	}
 	if !strings.Contains(stderr.String(), "command is required") {
-		t.Errorf("stderr = %q, want build-command diagnostic", stderr.String())
+		t.Fatalf("stderr = %q, want usage error", stderr.String())
 	}
 }
 
-func TestRunReportsDiscoveryError(t *testing.T) {
+func TestRunResolvesExplicitFlagsBeforeLaunch(t *testing.T) {
+	t.Parallel()
+	project := gitproject.Project{RequestedDir: "/project/nested", WorktreeRoot: "/project"}
+	launcher := &clitest.RecordingLauncher{}
+	var gotOverrides launchplan.Overrides
+	var gotDefaultImage string
+	var gotHostHome string
+	exit := cli.Run(context.Background(), testConfig(),
+		[]string{"--project", "/project/nested", "--image", "override:image", "--no-host-mcp=false", "cmd"},
+		new(bytes.Buffer), new(bytes.Buffer), cli.Dependencies{
+			Discover: func(_ context.Context, path string) (gitproject.Project, error) {
+				if path != "/project/nested" {
+					t.Errorf("path = %q", path)
+				}
+				return project, nil
+			},
+			ResolveConfig: func(
+				gotProject gitproject.Project,
+				defaultImage string,
+				overrides launchplan.Overrides,
+			) (cli.ResolvedConfig, error) {
+				if gotProject != project {
+					t.Errorf("project = %#v, want %#v", gotProject, project)
+				}
+				gotDefaultImage = defaultImage
+				gotOverrides = overrides
+				return testResolvedConfig(), nil
+			},
+			NewLauncher: func(hostHome string) (cli.Launcher, error) {
+				gotHostHome = hostHome
+				return launcher, nil
+			},
+		})
+	if exit != 0 {
+		t.Fatalf("Run() = %d", exit)
+	}
+	if want := (launchplan.Overrides{Image: "override:image", ImageOverride: true, NoHostMCPOverride: true}); gotOverrides != want {
+		t.Fatalf("overrides = %#v, want %#v", gotOverrides, want)
+	}
+	if gotDefaultImage != "default:image" {
+		t.Fatalf("default image = %q, want config default", gotDefaultImage)
+	}
+	if gotHostHome != "/home/test" {
+		t.Fatalf("launcher host home = %q, want resolved host home", gotHostHome)
+	}
+	if !reflect.DeepEqual(launcher.Command, []string{"configured", "cmd"}) {
+		t.Fatalf("command = %#v", launcher.Command)
+	}
+	if launcher.Image != "resolved:image" || !launcher.Options.NoHostMCP {
+		t.Fatalf("launch = image %q, options %#v", launcher.Image, launcher.Options)
+	}
+}
+
+func TestRunReportsResolutionFailureAndWarnings(t *testing.T) {
 	t.Parallel()
 	stderr := new(bytes.Buffer)
-	dependencies := clitest.PanicDependencies()
-	dependencies.Discover = func(context.Context, string) (gitproject.Project, error) {
-		return gitproject.Project{}, errors.New("Git unavailable")
+	deps := cli.Dependencies{
+		Discover: func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
+			return cli.ResolvedConfig{}, errors.New("bad config")
+		},
+		NewLauncher: func(string) (cli.Launcher, error) {
+			return &clitest.RecordingLauncher{PanicOnLaunch: true}, nil
+		},
 	}
-	exitCode := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, dependencies)
-	if exitCode != 1 {
-		t.Errorf("Run() = %d, want 1", exitCode)
+	if exit := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, deps); exit != 1 {
+		t.Fatalf("Run() = %d", exit)
 	}
-	if !strings.Contains(stderr.String(), "Git unavailable") {
-		t.Errorf("stderr = %q, want discovery error", stderr.String())
+	if !strings.Contains(stderr.String(), "bad config") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+
+	stderr.Reset()
+	deps.ResolveConfig = func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
+		resolved := testResolvedConfig()
+		resolved.Degradations = []launchplan.Degradation{{Role: "personal_skills"}}
+		return resolved, nil
+	}
+	deps.NewLauncher = func(string) (cli.Launcher, error) { return &clitest.RecordingLauncher{}, nil }
+	if exit := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, deps); exit != 0 {
+		t.Fatalf("Run() = %d", exit)
+	}
+	if !strings.Contains(stderr.String(), "personal skills are unavailable") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
-func TestRunReportsPlanError(t *testing.T) {
+func TestRunPrintsDegradationsInStableRoleOrder(t *testing.T) {
 	t.Parallel()
 	stderr := new(bytes.Buffer)
-	dependencies := clitest.PanicDependencies()
-	dependencies.Discover = func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil }
-	dependencies.BuildLaunchPlan = func(gitproject.Project) (launchplan.Plan, error) {
-		return launchplan.Plan{}, errors.New("mount plan invalid")
+	deps := dependenciesFor(&clitest.RecordingLauncher{})
+	deps.ResolveConfig = func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
+		resolved := testResolvedConfig()
+		resolved.Degradations = []launchplan.Degradation{
+			{Role: "host_git_config"},
+			{Role: "codex_home"},
+			{Role: "personal_skills"},
+			{Role: "host_mcp_channel"},
+		}
+		return resolved, nil
 	}
-	exitCode := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, dependencies)
-	if exitCode != 1 {
-		t.Errorf("Run() = %d, want 1", exitCode)
+	if exit := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, deps); exit != 0 {
+		t.Fatalf("Run() = %d", exit)
 	}
-	if !strings.Contains(stderr.String(), "mount plan invalid") {
-		t.Errorf("stderr = %q, want plan error", stderr.String())
-	}
-}
-
-func TestRunForwardsProjectPlanAndCommand(t *testing.T) {
-	t.Parallel()
-	wantProject := gitproject.Project{RequestedDir: "/project/nested", WorktreeRoot: "/project"}
-	wantLaunchPlan := launchplan.Plan{ProjectRoot: "/project", WorkingDir: "/project/nested"}
-	fakeLauncher := &clitest.RecordingLauncher{}
-	var discoverPath string
-	var builtFor gitproject.Project
-	dependencies := cli.Dependencies{
-		Discover: func(_ context.Context, path string) (gitproject.Project, error) {
-			discoverPath = path
-			return wantProject, nil
-		},
-		BuildLaunchPlan: func(project gitproject.Project) (launchplan.Plan, error) {
-			builtFor = project
-			return wantLaunchPlan, nil
-		},
-		Launcher: fakeLauncher,
-	}
-
-	exitCode := cli.Run(
-		context.Background(),
-		testConfig(),
-		[]string{"--project", "/project/nested", "--image", "img", "cmd", "arg"},
-		new(bytes.Buffer), new(bytes.Buffer), dependencies,
-	)
-
-	if exitCode != 0 {
-		t.Errorf("Run() = %d, want 0", exitCode)
-	}
-	if discoverPath != "/project/nested" {
-		t.Errorf("discover path = %q, want %q", discoverPath, "/project/nested")
-	}
-	if !reflect.DeepEqual(builtFor, wantProject) {
-		t.Errorf("BuildLaunchPlan project = %#v, want %#v", builtFor, wantProject)
-	}
-	if !reflect.DeepEqual(fakeLauncher.LaunchPlan, wantLaunchPlan) {
-		t.Errorf("plan = %#v, want %#v", fakeLauncher.LaunchPlan, wantLaunchPlan)
-	}
-	if fakeLauncher.Image != "img" {
-		t.Errorf("image = %q, want img", fakeLauncher.Image)
-	}
-	if !reflect.DeepEqual(fakeLauncher.Command, []string{"cmd", "arg"}) {
-		t.Errorf("command = %#v, want [cmd arg]", fakeLauncher.Command)
-	}
-	if !fakeLauncher.Options.ImageOverride {
-		t.Fatal("explicit --image did not set ImageOverride")
+	got := stderr.String()
+	last := -1
+	for _, fragment := range []string{"host Git identity", "host Codex state", "personal skills", "host MCP"} {
+		index := strings.Index(got, fragment)
+		if index < 0 || index < last {
+			t.Fatalf("warnings = %q, want stable order containing %q", got, fragment)
+		}
+		last = index
 	}
 }
 
-func TestRunPreservesExplicitImageIntent(t *testing.T) {
+func TestRunOrdersSyntheticCodexHomeWarningWithDegradations(t *testing.T) {
 	t.Parallel()
-	for _, test := range []struct {
-		name string
-		args []string
-		want bool
-	}{
-		{name: "omitted", args: []string{"cmd"}, want: false},
-		{name: "explicit default", args: []string{"--image", "default:image", "cmd"}, want: true},
-		{name: "explicit other", args: []string{"--image=other:image", "cmd"}, want: true},
-		{name: "after command", args: []string{"cmd", "--image", "default:image"}, want: false},
-		{name: "after separator", args: []string{"--", "--image", "default:image"}, want: false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			launcher := &clitest.RecordingLauncher{}
-			dependencies := cli.Dependencies{
-				Discover:        func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-				BuildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) { return launchplan.Plan{}, nil },
-				Launcher:        launcher,
+	stderr := new(bytes.Buffer)
+	config := testConfig()
+	config.WarnWhenCodexHomeAbsent = true
+	deps := dependenciesFor(&clitest.RecordingLauncher{})
+	deps.ResolveConfig = func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
+		resolved := testResolvedConfig()
+		resolved.DefaultCodexHomeSet = false
+		resolved.Degradations = []launchplan.Degradation{{Role: "personal_skills"}}
+		return resolved, nil
+	}
+	if exit := cli.Run(context.Background(), config, []string{"cmd"}, new(bytes.Buffer), stderr, deps); exit != 0 {
+		t.Fatalf("Run() = %d", exit)
+	}
+	got := stderr.String()
+	codex := strings.Index(got, "host Codex state")
+	personal := strings.Index(got, "personal skills")
+	if codex < 0 || personal < 0 || codex > personal {
+		t.Fatalf("warnings = %q, want codex_home before personal_skills", got)
+	}
+}
+
+func TestRunConstructsLauncherOnlyAfterResolution(t *testing.T) {
+	t.Parallel()
+	constructed := false
+	deps := cli.Dependencies{
+		Discover: func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
+		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
+			return cli.ResolvedConfig{}, errors.New("bad config")
+		},
+		NewLauncher: func(string) (cli.Launcher, error) {
+			constructed = true
+			return &clitest.RecordingLauncher{}, nil
+		},
+	}
+	if exit := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), new(bytes.Buffer), deps); exit != 1 {
+		t.Fatalf("Run() = %d", exit)
+	}
+	if constructed {
+		t.Fatal("Run() constructed launcher after configuration resolution failed")
+	}
+}
+
+func TestRunRejectsMissingLauncherDependency(t *testing.T) {
+	t.Parallel()
+	tests := map[string]func(*cli.Dependencies){
+		"factory absent": func(dependencies *cli.Dependencies) {
+			dependencies.NewLauncher = nil
+		},
+		"factory returns nil": func(dependencies *cli.Dependencies) {
+			dependencies.NewLauncher = func(string) (cli.Launcher, error) { return nil, nil }
+		},
+	}
+	for name, arrange := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dependencies := dependenciesFor(&clitest.RecordingLauncher{})
+			arrange(&dependencies)
+			stderr := new(bytes.Buffer)
+			if exit := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr,
+				dependencies); exit != 1 {
+				t.Fatalf("Run() = %d, want 1", exit)
 			}
-			if code := cli.Run(context.Background(), testConfig(), test.args, new(bytes.Buffer), new(bytes.Buffer), dependencies); code != 0 {
-				t.Fatalf("Run() = %d", code)
-			}
-			if launcher.Options.ImageOverride != test.want {
-				t.Fatalf("ImageOverride = %t, want %t", launcher.Options.ImageOverride, test.want)
+			if !strings.Contains(stderr.String(), "launcher dependency is not configured") {
+				t.Fatalf("stderr = %q, want missing launcher diagnostic", stderr.String())
 			}
 		})
 	}
 }
 
-func TestRunPropagatesExitCode(t *testing.T) {
+func TestRunPropagatesCommandExitCode(t *testing.T) {
 	t.Parallel()
-	dependencies := cli.Dependencies{
-		Discover:        func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		BuildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) { return launchplan.Plan{}, nil },
-		Launcher:        &clitest.RecordingLauncher{Err: clitest.ExitError{Code: 42, Message: "command failed"}},
+	launcher := &clitest.RecordingLauncher{Err: clitest.ExitError{Code: 23, Message: "command failed"}}
+	if exit := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), new(bytes.Buffer),
+		dependenciesFor(launcher)); exit != 23 {
+		t.Fatalf("Run() = %d, want 23", exit)
 	}
-	exitCode := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), new(bytes.Buffer), dependencies)
-	if exitCode != 42 {
-		t.Errorf("Run() = %d, want 42", exitCode)
+}
+
+func testConfig() cli.Config {
+	return cli.Config{
+		Name:         "test-safe",
+		DefaultImage: "default:image",
+		Usage:        "usage",
+		ValidateInvocation: func(args []string) error {
+			if len(args) == 0 {
+				return errors.New("command is required")
+			}
+			return nil
+		},
+		BuildCommand: func(configured, invocation []string) []string {
+			return append(append([]string(nil), configured...), invocation...)
+		},
+	}
+}
+
+func testResolvedConfig() cli.ResolvedConfig {
+	return cli.ResolvedConfig{
+		Plan:                launchplan.Plan{ProjectRoot: "/project", WorkingDir: "/project"},
+		Image:               "resolved:image",
+		Options:             launchplan.Options{NoHostMCP: true},
+		CodexArguments:      []string{"configured"},
+		DefaultCodexHomeSet: true,
+		HostHome:            "/home/test",
+	}
+}
+
+func dependenciesFor(launcher cli.Launcher) cli.Dependencies {
+	return cli.Dependencies{
+		Discover: func(context.Context, string) (gitproject.Project, error) {
+			return gitproject.Project{}, nil
+		},
+		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
+			return testResolvedConfig(), nil
+		},
+		NewLauncher: func(string) (cli.Launcher, error) { return launcher, nil },
 	}
 }

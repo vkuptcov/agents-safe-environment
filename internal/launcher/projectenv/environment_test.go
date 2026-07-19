@@ -3,77 +3,109 @@ package projectenv
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
-func TestDiscoverAbsentDockerfile(t *testing.T) {
+func TestInitializeCreatesTypedLocalFilesWithoutTouchingRootIgnore(t *testing.T) {
 	t.Parallel()
-	contextPath, err := Discover(t.TempDir())
-	if err != nil || contextPath != "" {
-		t.Fatalf("Discover() = (%q, %v), want empty path and nil error", contextPath, err)
+	root := t.TempDir()
+	rootIgnore := filepath.Join(root, ".gitignore")
+	if err := os.WriteFile(rootIgnore, []byte("keep-root-rules\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-}
+	config := initializationConfig(t)
 
-func TestDiscoverReturnsFixedBuildContext(t *testing.T) {
-	t.Parallel()
-	root := writeContext(t)
-	contextPath, err := Discover(root)
+	contextPath, err := Initialize(root, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantContext := filepath.Join(root, Directory)
-	if contextPath != wantContext {
-		t.Fatalf("Discover() context = %q, want %q", contextPath, wantContext)
+	if want := filepath.Join(root, Directory); contextPath != want {
+		t.Fatalf("Initialize() path = %q, want %q", contextPath, want)
+	}
+	if data, err := os.ReadFile(filepath.Join(contextPath, DockerfileSampleName)); err != nil || string(data) != dockerfileSampleContent {
+		t.Fatalf("Dockerfile sample = %q, %v", data, err)
+	}
+	loaded, err := Load(root, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, config) {
+		t.Fatalf("Load() = %#v, want %#v", loaded, config)
+	}
+	if data, err := os.ReadFile(filepath.Join(contextPath, ".gitignore")); err != nil || string(data) != localIgnoreContent {
+		t.Fatalf("local ignore = %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(rootIgnore); err != nil || string(data) != "keep-root-rules\n" {
+		t.Fatalf("root ignore = %q, %v", data, err)
 	}
 }
 
-func TestDiscoverRejectsSymlinkBoundaries(t *testing.T) {
+func TestInitializePreservesExistingLocalFiles(t *testing.T) {
 	t.Parallel()
-	t.Run("context", func(t *testing.T) {
-		root := t.TempDir()
-		actual := filepath.Join(root, "actual")
-		if err := os.Mkdir(actual, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(actual, filepath.Join(root, Directory)); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Discover(root); err == nil {
-			t.Fatal("Discover() accepted a symlink build context")
-		}
-	})
-	t.Run("Dockerfile", func(t *testing.T) {
-		root := t.TempDir()
-		contextPath := filepath.Join(root, Directory)
-		if err := os.Mkdir(contextPath, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink("missing", filepath.Join(contextPath, DockerfileName)); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Discover(root); err == nil {
-			t.Fatal("Discover() accepted a symlink Dockerfile")
-		}
-	})
-}
-
-func TestLocalImageName(t *testing.T) {
-	t.Parallel()
-	name := LocalImageName("project-key")
-	if want := "codex-safe-project-project-key:local"; name != want {
-		t.Fatalf("name = %q, want %q", name, want)
-	}
-}
-
-func writeContext(t *testing.T) string {
-	t.Helper()
 	root := t.TempDir()
 	contextPath := filepath.Join(root, Directory)
 	if err := os.Mkdir(contextPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(contextPath, DockerfileName), []byte("FROM base\n"), 0o644); err != nil {
+	files := map[string]string{
+		DockerfileSampleName: "keep sample\n",
+		ConfigName:           "[common]\nimage = \"keep:image\"\n",
+		".gitignore":         "keep local rules\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(contextPath, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for count := 0; count < 2; count++ {
+		if _, err := Initialize(root, initializationConfig(t)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, want := range files {
+		data, err := os.ReadFile(filepath.Join(contextPath, name))
+		if err != nil || string(data) != want {
+			t.Fatalf("%s = %q, %v; want %q", name, data, err, want)
+		}
+	}
+}
+
+func TestInitializeRejectsSymlinkLocalFilesWithoutReadingRootIgnore(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	contextPath := filepath.Join(root, Directory)
+	if err := os.Mkdir(contextPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return root
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(contextPath, ".gitignore")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Initialize(root, initializationConfig(t)); err == nil {
+		t.Fatal("Initialize() accepted a local ignore symlink")
+	}
+}
+
+func TestInitializeRejectsSymlinkContext(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, Directory)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Initialize(root, initializationConfig(t)); err == nil {
+		t.Fatal("Initialize() accepted a symlink context")
+	}
+}
+
+func initializationConfig(t *testing.T) ProjectConfig {
+	t.Helper()
+	source := t.TempDir()
+	return ProjectConfig{Common: CommonConfig{
+		Image:  "test:image",
+		Mounts: []MountConfig{{Role: RoleAdditional, Source: source, Target: source}},
+	}}
 }

@@ -43,21 +43,26 @@ func newDockerHarness(t *testing.T, project projectLayout) *dockerHarness {
 	require.NoError(t, err, "Moby client must initialize from the Docker environment")
 	info, err := dockerClient.Info(ctx)
 	require.NoError(t, err, "Moby client must inspect the host Docker daemon")
-	managed := launcher.ProjectContainerName(os.Getuid(), project.worktree)
-	projectKey := launcher.ProjectKey(os.Getuid(), project.worktree)
-	return &dockerHarness{
+	harness := &dockerHarness{
 		t:        t,
 		ctx:      ctx,
 		cancel:   cancel,
 		client:   dockerClient,
-		project:  project.worktree,
 		daemonID: info.ID,
-		names: containerNames{
-			managed:  managed,
-			sentinel: "codex-safe-host-sentinel-" + projectKey,
-			nested:   "codex-safe-nested-" + projectKey,
-			compose:  "codex-safe-compose-" + projectKey,
-		},
+	}
+	harness.selectProject(project.worktree)
+	return harness
+}
+
+// selectProject aligns every deterministic smoke resource with the checkout passed to the launcher.
+func (docker *dockerHarness) selectProject(project string) {
+	docker.project = project
+	projectKey := launcher.ProjectKey(os.Getuid(), project)
+	docker.names = containerNames{
+		managed:  launcher.ProjectContainerName(os.Getuid(), project),
+		sentinel: "codex-safe-host-sentinel-" + projectKey,
+		nested:   "codex-safe-nested-" + projectKey,
+		compose:  "codex-safe-compose-" + projectKey,
 	}
 }
 

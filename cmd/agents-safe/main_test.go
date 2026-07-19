@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,117 +14,97 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/testutil/clitest"
 )
 
-func TestConfigHelp(t *testing.T) {
-	t.Parallel()
-	stdout := new(bytes.Buffer)
-	stderr := new(bytes.Buffer)
-	exitCode := cli.Run(context.Background(), config(), []string{"--help"}, stdout, stderr, clitest.PanicDependencies())
-	if exitCode != 0 {
-		t.Errorf("Run() = %d, want 0", exitCode)
-	}
-	if !strings.Contains(stdout.String(), "Usage: agents-safe") {
-		t.Errorf("stdout = %q, want usage", stdout.String())
-	}
-	// The usage is hand-written, not generated from the flag set, so it must advertise the flag or
-	// --help would describe an incomplete interface.
-	if !strings.Contains(stdout.String(), "--no-host-mcp") {
-		t.Errorf("usage must document --no-host-mcp, got %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), ".agents-safe/Dockerfile") {
-		t.Errorf("usage must document project image selection, got %q", stdout.String())
-	}
-	if stderr.Len() != 0 {
-		t.Errorf("stderr = %q, want empty", stderr.String())
-	}
-}
-
-func TestConfigForwardsCommandWithoutSeparator(t *testing.T) {
-	t.Parallel()
-	wantProject := gitproject.Project{RequestedDir: "/project/nested", WorktreeRoot: "/project"}
-	wantLaunchPlan := launchplan.Plan{
-		ProjectRoot: "/project",
-		WorkingDir:  "/project/nested",
-		Mounts:      []launchplan.BindMount{{Source: "/project", Target: "/project"}},
-	}
-	fakeLauncher := &clitest.RecordingLauncher{}
-	var discoverPath string
-	var builtFor gitproject.Project
-	dependencies := cli.Dependencies{
-		Discover: func(_ context.Context, path string) (gitproject.Project, error) {
-			discoverPath = path
-			return wantProject, nil
-		},
-		BuildLaunchPlan: func(project gitproject.Project) (launchplan.Plan, error) {
-			builtFor = project
-			return wantLaunchPlan, nil
-		},
-		Launcher: fakeLauncher,
-	}
-
-	exitCode := cli.Run(
-		context.Background(),
-		config(),
-		[]string{"--project", "/project/nested", "--image", "test:image", "bash", "-c", "printf value"},
-		new(bytes.Buffer), new(bytes.Buffer), dependencies,
-	)
-
-	if exitCode != 0 {
-		t.Errorf("Run() = %d, want 0", exitCode)
-	}
-	if fakeLauncher.Image != "test:image" {
-		t.Errorf("image = %q, want test:image", fakeLauncher.Image)
-	}
-	if !fakeLauncher.Options.ImageOverride {
-		t.Error("explicit image did not set ImageOverride")
-	}
-	wantCommand := []string{"bash", "-c", "printf value"}
-	if !reflect.DeepEqual(fakeLauncher.Command, wantCommand) {
-		t.Errorf("command = %#v, want %#v", fakeLauncher.Command, wantCommand)
-	}
-	// The --project value must reach discover, the discovered project must reach BuildLaunchPlan, and that
-	// launch plan must reach Launcher.Launch: otherwise the container starts with the wrong project mounts.
-	if discoverPath != "/project/nested" {
-		t.Errorf("discover path = %q, want %q", discoverPath, "/project/nested")
-	}
-	if !reflect.DeepEqual(builtFor, wantProject) {
-		t.Errorf("BuildLaunchPlan project = %#v, want discovered %#v", builtFor, wantProject)
-	}
-	if !reflect.DeepEqual(fakeLauncher.LaunchPlan, wantLaunchPlan) {
-		t.Errorf("launch plan forwarded to Launch = %#v, want %#v", fakeLauncher.LaunchPlan, wantLaunchPlan)
-	}
-}
-
-func TestConfigForwardsCommandAfterSeparator(t *testing.T) {
-	t.Parallel()
-	fakeLauncher := &clitest.RecordingLauncher{}
-	dependencies := cli.Dependencies{
-		Discover:        func(context.Context, string) (gitproject.Project, error) { return gitproject.Project{}, nil },
-		BuildLaunchPlan: func(gitproject.Project) (launchplan.Plan, error) { return launchplan.Plan{}, nil },
-		Launcher:        fakeLauncher,
-	}
-	exitCode := cli.Run(
-		context.Background(),
-		config(),
-		[]string{"--", "bash", "-c", "printf value"},
-		new(bytes.Buffer), new(bytes.Buffer), dependencies,
-	)
-	if exitCode != 0 {
-		t.Errorf("Run() = %d, want 0", exitCode)
-	}
-	wantCommand := []string{"bash", "-c", "printf value"}
-	if !reflect.DeepEqual(fakeLauncher.Command, wantCommand) {
-		t.Errorf("command = %#v, want %#v", fakeLauncher.Command, wantCommand)
-	}
-}
-
-func TestConfigRequiresCommand(t *testing.T) {
+func TestConfigRequiresCommandBeforeProjectResolution(t *testing.T) {
 	t.Parallel()
 	stderr := new(bytes.Buffer)
-	exitCode := cli.Run(context.Background(), config(), nil, new(bytes.Buffer), stderr, clitest.PanicDependencies())
-	if exitCode != 2 {
-		t.Errorf("Run() = %d, want 2", exitCode)
+	if exit := cli.Run(context.Background(), config(), nil, new(bytes.Buffer), stderr, clitest.PanicDependencies()); exit != 2 {
+		t.Fatalf("Run() = %d", exit)
 	}
 	if !strings.Contains(stderr.String(), "command is required") {
-		t.Errorf("stderr = %q, want missing-command diagnostic", stderr.String())
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunForwardsAgentsCommand(t *testing.T) {
+	t.Parallel()
+	recording := &clitest.RecordingLauncher{}
+	deps := testCommandDependencies(recording)
+	if exit := run(context.Background(), []string{"--image", "test:image", "echo", "safe"},
+		new(bytes.Buffer), new(bytes.Buffer), deps); exit != 0 {
+		t.Fatalf("run() = %d", exit)
+	}
+	if !reflect.DeepEqual(recording.Command, []string{"echo", "safe"}) {
+		t.Fatalf("command = %#v", recording.Command)
+	}
+	if recording.Image != "configured:image" || !recording.Options.ImageOverride {
+		t.Fatalf("launch image/options = %q, %#v", recording.Image, recording.Options)
+	}
+}
+
+func TestRunRejectsMissingCommandBeforeConstructingLauncher(t *testing.T) {
+	t.Parallel()
+	deps := testCommandDependencies(&clitest.RecordingLauncher{})
+	deps.newLauncher = func(string) (cli.Launcher, error) { panic("launcher must not be constructed") }
+	if exit := run(context.Background(), nil, new(bytes.Buffer), new(bytes.Buffer), deps); exit != 2 {
+		t.Fatalf("run() = %d, want 2", exit)
+	}
+}
+
+func TestRunInitInitializesWithoutConstructingLauncher(t *testing.T) {
+	t.Parallel()
+	project := gitproject.Project{RequestedDir: "/project/nested", WorktreeRoot: "/project"}
+	deps := testCommandDependencies(&clitest.RecordingLauncher{})
+	deps.discover = func(context.Context, string) (gitproject.Project, error) { return project, nil }
+	var initialized gitproject.Project
+	deps.initialize = func(got gitproject.Project) (string, error) {
+		initialized = got
+		return "/project/.agents-safe", nil
+	}
+	deps.newLauncher = func(string) (cli.Launcher, error) { panic("launcher must not be constructed") }
+	stdout := new(bytes.Buffer)
+	if exit := run(context.Background(), []string{"init"}, stdout, new(bytes.Buffer), deps); exit != 0 {
+		t.Fatalf("run() = %d", exit)
+	}
+	if initialized != project || !strings.Contains(stdout.String(), "Initialized /project/.agents-safe") {
+		t.Fatalf("initialized = %#v; stdout = %q", initialized, stdout.String())
+	}
+}
+
+func TestRunInitRejectsArgumentsBeforeDiscovery(t *testing.T) {
+	t.Parallel()
+	stderr := new(bytes.Buffer)
+	if exit := run(context.Background(), []string{"init", "unexpected"}, new(bytes.Buffer), stderr,
+		testCommandDependencies(&clitest.RecordingLauncher{})); exit != 2 {
+		t.Fatalf("run() = %d", exit)
+	}
+	if !strings.Contains(stderr.String(), "positional arguments are not supported") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func testCommandDependencies(launcher cli.Launcher) commandDependencies {
+	return commandDependencies{
+		discover: func(context.Context, string) (gitproject.Project, error) {
+			return gitproject.Project{RequestedDir: "/project", WorktreeRoot: "/project"}, nil
+		},
+		resolveConfig: func(
+			_ gitproject.Project,
+			_ string,
+			overrides launchplan.Overrides,
+		) (cli.ResolvedConfig, error) {
+			return cli.ResolvedConfig{
+				Plan:           launchplan.Plan{ProjectRoot: "/project", WorkingDir: "/project"},
+				Image:          "configured:image",
+				Options:        launchplan.Options{ImageOverride: overrides.ImageOverride, NoHostMCP: overrides.NoHostMCP},
+				CodexArguments: []string{"unused"},
+			}, nil
+		},
+		initialize: func(project gitproject.Project) (string, error) {
+			if project.WorktreeRoot == "" {
+				return "", errors.New("missing worktree")
+			}
+			return "/project/.agents-safe", nil
+		},
+		newLauncher: func(string) (cli.Launcher, error) { return launcher, nil },
 	}
 }

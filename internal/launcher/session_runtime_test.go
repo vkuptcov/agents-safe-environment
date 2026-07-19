@@ -17,8 +17,8 @@ func TestSessionCreateRequestAlwaysCarriesExplicitSysboxRuntime(t *testing.T) {
 		testPlan(),
 		"codex-safe-mvp:local",
 		"codex-safe-aba8b4ca4ff345d5d0443c0c",
-		testUserMounts(),
 		hostMCPPlan{},
+		"fingerprint",
 	)
 	if err != nil {
 		t.Fatalf("buildCreateRequest() error = %v", err)

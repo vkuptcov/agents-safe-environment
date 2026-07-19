@@ -5,9 +5,156 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
+
+// HostEnvironmentInputs supplies the Docker-free host lookups used to resolve project configuration and initialization.
+type HostEnvironmentInputs struct {
+	UserHomeDir       func() (string, error)
+	LookupEnv         func(string) (string, bool)
+	DiscoverGitConfig func(string) (string, error)
+}
+
+// ResolveHostEnvironment resolves canonical optional host paths without contacting Docker.
+func ResolveHostEnvironment() (HostEnvironment, error) {
+	return resolveHostEnvironment(defaultHostEnvironmentInputs())
+}
+
+func defaultHostEnvironmentInputs() HostEnvironmentInputs {
+	return HostEnvironmentInputs{
+		UserHomeDir:       os.UserHomeDir,
+		LookupEnv:         os.LookupEnv,
+		DiscoverGitConfig: discoverHostGitConfig,
+	}
+}
+
+func resolveHostEnvironment(inputs HostEnvironmentInputs) (HostEnvironment, error) {
+	if inputs.UserHomeDir == nil || inputs.LookupEnv == nil || inputs.DiscoverGitConfig == nil {
+		return HostEnvironment{}, errors.New("host environment inputs are incomplete")
+	}
+	environment, err := resolveHostIdentity(inputs)
+	if err != nil {
+		return HostEnvironment{}, err
+	}
+	codexHome, err := resolveOptionalCodexHome(environment.HomeDir, inputs.LookupEnv)
+	if err != nil {
+		return HostEnvironment{}, err
+	}
+	if codexHome != "" {
+		environment.CodexHome = codexHome
+	}
+	personalSkills, err := resolveOptionalPersonalSkills(environment.HomeDir)
+	if err != nil {
+		return HostEnvironment{}, err
+	}
+	if personalSkills != "" {
+		environment.PersonalSkills = personalSkills
+	}
+	return environment, nil
+}
+
+func resolveOptionalCodexHome(home string, lookupEnv func(string) (string, bool)) (string, error) {
+	source := filepath.Join(home, ".codex")
+	explicit := false
+	if requested, found := lookupEnv("CODEX_HOME"); found && strings.TrimSpace(requested) != "" {
+		source = strings.TrimSpace(requested)
+		explicit = true
+	}
+	path, present, err := canonicalOptionalDirectory("Codex home", source)
+	if err != nil {
+		return "", err
+	}
+	if !present && explicit {
+		return "", fmt.Errorf("Codex home %q does not exist", source)
+	}
+	return path, nil
+}
+
+func resolveOptionalPersonalSkills(home string) (string, error) {
+	path := filepath.Join(home, ".agents", "skills")
+	resolved, present, err := canonicalOptionalDirectory("personal skills", path)
+	if err != nil {
+		return "", err
+	}
+	if !present {
+		return "", nil
+	}
+	return resolved, nil
+}
+
+func canonicalOptionalDirectory(label, path string) (string, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("inspect %s %q: %w", label, path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return "", false, fmt.Errorf("%s %q is a broken symlink", label, path)
+		} else if err != nil {
+			return "", false, fmt.Errorf("inspect %s %q: %w", label, path, err)
+		}
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", false, fmt.Errorf("canonicalize %s %q: %w", label, path, err)
+	}
+	canonical = filepath.Clean(canonical)
+	if canonical == string(filepath.Separator) {
+		return "", false, fmt.Errorf("%s cannot be the filesystem root", label)
+	}
+	info, err = os.Stat(canonical)
+	if err != nil {
+		return "", false, fmt.Errorf("inspect %s %q: %w", label, canonical, err)
+	}
+	if !info.IsDir() {
+		return "", false, fmt.Errorf("%s %q is not a directory", label, canonical)
+	}
+	if err := launchplan.ValidateMountPath(label, canonical); err != nil {
+		return "", false, err
+	}
+	return canonical, true, nil
+}
+
+func resolveHostIdentity(inputs HostEnvironmentInputs) (HostEnvironment, error) {
+	if inputs.UserHomeDir == nil || inputs.DiscoverGitConfig == nil {
+		return HostEnvironment{}, errors.New("host identity inputs are incomplete")
+	}
+	home, err := inputs.UserHomeDir()
+	if err != nil {
+		return HostEnvironment{}, fmt.Errorf("resolve host home directory: %w", err)
+	}
+	if !filepath.IsAbs(home) {
+		return HostEnvironment{}, fmt.Errorf("host home directory %q is not absolute", home)
+	}
+	home, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		return HostEnvironment{}, fmt.Errorf("canonicalize host home directory %q: %w", home, err)
+	}
+	home = filepath.Clean(home)
+	if home == string(filepath.Separator) {
+		return HostEnvironment{}, errors.New("host home directory cannot be the filesystem root")
+	}
+	info, err := os.Stat(home)
+	if err != nil {
+		return HostEnvironment{}, fmt.Errorf("inspect host home directory %q: %w", home, err)
+	}
+	if !info.IsDir() {
+		return HostEnvironment{}, fmt.Errorf("host home directory %q is not a directory", home)
+	}
+	if err := launchplan.ValidateMountPath("host home directory", home); err != nil {
+		return HostEnvironment{}, err
+	}
+	gitConfig, err := inputs.DiscoverGitConfig(home)
+	if err != nil {
+		return HostEnvironment{}, err
+	}
+	return HostEnvironment{HomeDir: home, GitConfig: gitConfig}, nil
+}
 
 func (docker *DockerLauncher) validateConfiguration() error {
 	if docker == nil {
@@ -31,18 +178,17 @@ func (docker *DockerLauncher) validateConfiguration() error {
 	if err := validateAccountName("host group", docker.HostGroup); err != nil {
 		return err
 	}
-	if docker.HostHome == "/" {
-		return errors.New("host home directory cannot be the filesystem root")
-	}
-	if err := launchplan.ValidateMountPath("host home directory", docker.HostHome); err != nil {
+	if err := validateHostHome(docker.HostHome); err != nil {
 		return err
 	}
-	if docker.HostGitConfig != "" {
-		if err := launchplan.ValidateMountPath("host Git config", docker.HostGitConfig); err != nil {
-			return err
-		}
-	}
 	return nil
+}
+
+func validateHostHome(hostHome string) error {
+	if hostHome == "/" {
+		return errors.New("host home directory cannot be the filesystem root")
+	}
+	return launchplan.ValidateMountPath("host home directory", hostHome)
 }
 
 func discoverHostGitConfig(hostHome string) (string, error) {

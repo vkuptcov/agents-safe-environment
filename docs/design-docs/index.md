@@ -12,3 +12,5 @@ Use [README.md](README.md) for design-doc format and maintenance rules.
   Unix-socket channel and its two forwarding hops, the per-session host relay, and the widened network boundary.
 - [Project-Specific Agent Environments](project-environments.md): project-owned derived images, automatic builds,
   BuildKit-owned caching, compatibility validation, and active-session reuse.
+- [Project Launcher Configuration](project-launcher-configuration.md): typed project defaults, TOML serialization,
+  CLI precedence, creation-time reuse fingerprinting, and local `.agents-safe/.gitignore` behavior.
