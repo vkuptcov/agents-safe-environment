@@ -63,6 +63,9 @@ type launchAttempt struct {
 	projectKey    string
 	// noHostMCP skips discovery entirely for this launch.
 	noHostMCP bool
+	// launchFingerprint is the resolved immutable creation contract, computed before any container
+	// adoption, image preparation, sidecar allocation, or create request.
+	launchFingerprint string
 	// hostMCP is this attempt's forwarding decision. Its zero value forwards nothing, which is the
 	// zero-cost path through every lifecycle step.
 	hostMCP hostMCPPlan
@@ -149,6 +152,11 @@ func (docker *DockerLauncher) Launch(
 	if err := attempt.planHostMCP(); err != nil {
 		return err
 	}
+	fingerprint, err := creationFingerprint(plan, image, options.ImageOverride, options.NoHostMCP, attempt.hostMCP.set)
+	if err != nil {
+		return err
+	}
+	attempt.launchFingerprint = fingerprint
 
 	containerID, err := attempt.acquireContainer(ctx)
 	if err != nil {

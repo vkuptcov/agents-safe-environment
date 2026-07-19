@@ -14,7 +14,7 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 	t.Parallel()
 	plan := testPlan()
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		plan, "image", "codex-safe-test", hostMCPPlan{},
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -22,10 +22,17 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 	if !reflect.DeepEqual(request.Mounts, dockerMounts(plan.Mounts)) {
 		t.Fatalf("mounts = %#v, want resolved plan %#v", request.Mounts, plan.Mounts)
 	}
+	fingerprintFound := false
 	for _, label := range request.Labels {
 		if label.Key == codexHomeLabel && label.Value != "/home/developer/.codex" {
 			t.Fatalf("Codex label = %q, want resolved source", label.Value)
 		}
+		if label.Key == launchConfigLabel && label.Value == "fingerprint" {
+			fingerprintFound = true
+		}
+	}
+	if !fingerprintFound {
+		t.Fatalf("labels = %#v, want %s", request.Labels, launchConfigLabel)
 	}
 }
 
@@ -70,7 +77,7 @@ func runArgsFor(
 	image string,
 	containerName string,
 ) ([]string, error) {
-	request, err := docker.buildCreateRequest(plan, image, containerName, hostMCPPlan{})
+	request, err := docker.buildCreateRequest(plan, image, containerName, hostMCPPlan{}, "fingerprint")
 	if err != nil {
 		return nil, err
 	}

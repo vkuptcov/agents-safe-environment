@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
@@ -49,7 +50,7 @@ func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
 	containerID := strings.Repeat("b", 64)
 	plan := simplePlan()
 	runner := &fakeCommandRunner{outputs: []commandResult{{
-		output: inspectionJSON(t, containerID, true, "running", matchingLabels(plan, 1000)),
+		output: inspectionJSON(t, containerID, true, "running", matchingLabels(t, plan, 1000)),
 	}}}
 	docker := testDocker(runner)
 	docker.AllocateTTY = true
@@ -65,25 +66,24 @@ func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
 	}
 }
 
-func TestDockerLaunchRejectsResolvedMountMismatchForRunningSession(t *testing.T) {
+func TestDockerLaunchIgnoresDiagnosticMountLabelsWhenFingerprintMatches(t *testing.T) {
 	plan := simplePlan()
-	labels := matchingLabels(plan, 1000)
+	labels := matchingLabels(t, plan, 1000)
 	labels[codexHomeLabel] = "/home/developer/other-codex"
 	runner := &fakeCommandRunner{outputs: []commandResult{{
 		output: inspectionJSON(t, strings.Repeat("7", 64), true, "running", labels),
 	}}}
-	err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{})
-	if err == nil || !strings.Contains(err.Error(), "finish the active session") || !strings.Contains(err.Error(), codexHomeLabel) {
-		t.Fatalf("Launch() error = %v, want active-session mount mismatch", err)
+	if err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{}); err != nil {
+		t.Fatalf("Launch() error = %v, want fingerprint-controlled reuse", err)
 	}
-	if len(runner.runCalls) != 0 {
-		t.Fatalf("Run calls = %#v, want none", runner.runCalls)
+	if len(runner.runCalls) != 1 {
+		t.Fatalf("Run calls = %#v, want reuse", runner.runCalls)
 	}
 }
 
 func TestDockerLaunchRejectsMismatchedDeterministicNameOccupant(t *testing.T) {
 	plan := simplePlan()
-	labels := matchingLabels(plan, 1000)
+	labels := matchingLabels(t, plan, 1000)
 	labels[projectPathLabel] = "/other-project"
 	runner := &fakeCommandRunner{outputs: []commandResult{{
 		output: inspectionJSON(t, strings.Repeat("c", 64), true, "running", labels),
@@ -255,11 +255,17 @@ func mustContainerName(t *testing.T, hostUID int, projectRoot string) string {
 	return ProjectContainerName(hostUID, projectRoot)
 }
 
-func matchingLabels(plan launchplan.Plan, hostUID int) map[string]string {
+func matchingLabels(t *testing.T, plan launchplan.Plan, hostUID int) map[string]string {
+	t.Helper()
+	fingerprint, err := creationFingerprint(plan, "image", false, false, hostmcp.Set{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	return map[string]string{
 		managedLabel: managedLabelValue, projectPathLabel: plan.ProjectRoot, hostUIDLabel: strconv.Itoa(hostUID),
 		managerProtocolLabel: session.ProtocolVersion, codexHomeLabel: mountRoleLabel(plan, projectenv.RoleCodexHome),
 		personalSkillsLabel: mountRoleLabel(plan, projectenv.RolePersonalSkills), hostMCPLabel: "absent",
+		launchConfigLabel: fingerprint,
 	}
 }
 

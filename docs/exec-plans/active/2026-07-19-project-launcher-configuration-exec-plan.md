@@ -84,7 +84,7 @@ Done when: init and launches use the typed resolver exclusively, with no flat co
 
 ### Phase 3: Creation-Time Fingerprint
 Purpose: Make every running-container adoption path fail closed on a changed creation contract.
-Status: to be done
+Status: done
 Done when: a canonical fingerprint is labelled on creation and is the only post-ownership reuse predicate.
 
 1. Add a private, versioned SHA-256 input for requested image, explicit-image intent, normalized physical binds,
@@ -155,3 +155,8 @@ review.
   launcher construction lazy, and moved init to local typed files without root-ignore edits. Docker now receives only
   the resolved physical plan; the flat reader, user-mount prompt path, and independent mount assembly are removed.
   Focused tests, `go test ./...`, `go vet ./...`, and `make test` pass.
+- 2026-07-19: Phase 3 added the versioned canonical SHA-256 `codex-safe.launch-config` label. The label covers the
+  requested image and explicit-image intent, normalized physical binds, resolved host-MCP policy, and sorted eligible
+  endpoints. It is now the sole post-ownership reuse predicate in initial, waited, concurrent-winner, and retry
+  adoption paths; legacy mount and host-MCP comparison paths are removed. Focused tests, `go test ./...`, `go vet
+  ./...`, and `make test` pass.

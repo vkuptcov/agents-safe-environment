@@ -23,6 +23,7 @@ func (docker *DockerLauncher) buildCreateRequest(
 	image string,
 	containerName string,
 	forwarding hostMCPPlan,
+	launchFingerprint string,
 ) (dockercli.CreateRequest, error) {
 	if strings.TrimSpace(image) == "" {
 		return dockercli.CreateRequest{}, errors.New("container image is required")
@@ -40,6 +41,7 @@ func (docker *DockerLauncher) buildCreateRequest(
 		{Key: projectPathLabel, Value: plan.ProjectRoot},
 		{Key: hostUIDLabel, Value: strconv.Itoa(docker.HostUID)},
 		{Key: managerProtocolLabel, Value: session.ProtocolVersion},
+		{Key: launchConfigLabel, Value: launchFingerprint},
 		{Key: codexHomeLabel, Value: mountRoleLabel(plan, projectenv.RoleCodexHome)},
 		{Key: personalSkillsLabel, Value: mountRoleLabel(plan, projectenv.RolePersonalSkills)},
 		// Compared on reuse. It records `absent` for a session created with an empty set, which is

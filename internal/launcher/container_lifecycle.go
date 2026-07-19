@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
-	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
@@ -40,7 +39,7 @@ func (attempt *launchAttempt) acquireContainer(
 	}
 	if found {
 		if inspection.State.Running {
-			if err := attempt.validateRunningMountLabels(inspection); err != nil {
+			if err := attempt.validateRunningFingerprint(inspection); err != nil {
 				return "", err
 			}
 			if err := attempt.reuseHostMCP(ctx, inspection); err != nil {
@@ -122,7 +121,7 @@ func (attempt *launchAttempt) createContainer(
 	ctx context.Context,
 ) (string, bool, error) {
 	request, err := attempt.docker.buildCreateRequest(
-		attempt.plan, attempt.image, attempt.containerName, attempt.hostMCP,
+		attempt.plan, attempt.image, attempt.containerName, attempt.hostMCP, attempt.launchFingerprint,
 	)
 	if err != nil {
 		return "", false, err
@@ -174,19 +173,13 @@ func (attempt *launchAttempt) validateOwnership(inspection dockercli.ContainerIn
 	return nil
 }
 
-// validateRunningMountLabels temporarily keeps the pre-fingerprint compatibility guard for user-state roles.
-func (attempt *launchAttempt) validateRunningMountLabels(inspection dockercli.ContainerInspection) error {
-	userMountLabels := []struct{ name, want string }{
-		{codexHomeLabel, mountRoleLabel(attempt.plan, projectenv.RoleCodexHome)},
-		{personalSkillsLabel, mountRoleLabel(attempt.plan, projectenv.RolePersonalSkills)},
-	}
-	for _, label := range userMountLabels {
-		if got := inspection.Config.Labels[label.name]; got != label.want {
-			return fmt.Errorf(
-				"a managed session for worktree %q is already running with %s=%q, but this launch resolved %q; "+
-					"finish the active session before retrying, then relaunch",
-				attempt.plan.ProjectRoot, label.name, got, label.want,
-			)
+// validateRunningFingerprint is the sole creation-time reuse predicate after ownership and protocol checks.
+func (attempt *launchAttempt) validateRunningFingerprint(inspection dockercli.ContainerInspection) error {
+	if running := inspection.Config.Labels[launchConfigLabel]; running != attempt.launchFingerprint {
+		return &launchConfigMismatchError{
+			projectRoot: attempt.plan.ProjectRoot,
+			running:     running,
+			requested:   attempt.launchFingerprint,
 		}
 	}
 	return nil
@@ -208,7 +201,7 @@ func (attempt *launchAttempt) waitForReusableOrReleased(
 			return "", nil
 		}
 		if inspection.State.Running {
-			if err := attempt.validateRunningMountLabels(inspection); err != nil {
+			if err := attempt.validateRunningFingerprint(inspection); err != nil {
 				return "", err
 			}
 			return inspection.ID, nil
@@ -237,7 +230,7 @@ func (attempt *launchAttempt) containerStoppedAfterExec(
 		return true, nil
 	}
 	if inspection.State.Running {
-		if err := attempt.validateRunningMountLabels(inspection); err != nil {
+		if err := attempt.validateRunningFingerprint(inspection); err != nil {
 			return false, err
 		}
 		return false, nil
