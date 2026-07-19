@@ -21,7 +21,7 @@ container is removed after its final command and idle timeout.
 A project can instead add one file:
 
 ```dockerfile
-ARG AGENTS_SAFE_BASE
+ARG AGENTS_SAFE_BASE=codex-safe-mvp:local
 FROM ${AGENTS_SAFE_BASE}
 
 RUN apt-get update \
@@ -31,7 +31,9 @@ RUN apt-get update \
 
 Both launchers discover that file, build a derived image when a new session is needed, and start the ordinary Sysbox
 session from the immutable build result. The project owns tool and version selection; the launcher owns only the base
-image argument, fixed context, stable tag, and runtime compatibility boundary.
+image argument, fixed context, stable tag, and runtime compatibility boundary. The default is a valid direct-build
+fallback that prevents BuildKit from reporting an invalid default `FROM`; each launcher build overrides it with the
+selected image.
 
 The presence of `.agents-safe/Dockerfile` is explicit consent to execute its build through the host Docker daemon.
 There is no additional launcher prompt or trust database.
@@ -175,7 +177,7 @@ This repository's tracked [`.agents-safe/Dockerfile`](../../.agents-safe/Dockerf
 toolchain from the same digest-pinned image used by the session-builder stage:
 
 ```dockerfile
-ARG AGENTS_SAFE_BASE
+ARG AGENTS_SAFE_BASE=codex-safe-mvp:local
 
 FROM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c \
     AS go-toolchain

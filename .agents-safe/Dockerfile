@@ -1,6 +1,6 @@
-# This definition is intentionally self-contained: the launcher supplies the pinned runtime image
-# through AGENTS_SAFE_BASE, and the only additional toolchain is the Go version declared in go.mod.
-ARG AGENTS_SAFE_BASE
+# This definition is intentionally self-contained. The default keeps direct Docker builds valid;
+# the launcher replaces it with the selected pinned runtime image.
+ARG AGENTS_SAFE_BASE=codex-safe-mvp:local
 
 FROM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c \
     AS go-toolchain
