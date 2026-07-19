@@ -50,6 +50,7 @@ func TestSysboxRegularCheckoutNormalizesProjectRoles(t *testing.T) {
 		t.Skipf("set %s=1 to run the real Sysbox regular-checkout test", goSmokeEnv)
 	}
 	fixture := newSmokeFixture(t)
+	fixture.docker.selectProject(fixture.project.primary)
 	ready := filepath.Join(fixture.project.primary, "regular-checkout.ready")
 	release := filepath.Join(fixture.project.primary, "regular-checkout.release")
 	command := fixture.launcher.startAgents(
