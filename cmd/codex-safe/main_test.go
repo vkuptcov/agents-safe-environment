@@ -49,6 +49,6 @@ func codexDependencies(launcher cli.Launcher) cli.Dependencies {
 				CodexArguments: []string{"--sandbox", "danger-full-access", "--model", "gpt-5"},
 			}, nil
 		},
-		NewLauncher: func() (cli.Launcher, error) { return launcher, nil },
+		NewLauncher: func(string) (cli.Launcher, error) { return launcher, nil },
 	}
 }

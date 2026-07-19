@@ -33,5 +33,6 @@ func ResolveConfig(
 		CodexArguments:      resolved.Config.Codex.Arguments,
 		Degradations:        resolved.Resolution.Degradations,
 		DefaultCodexHomeSet: resolved.DefaultCodexHomeSet,
+		HostHome:            host.HomeDir,
 	}, nil
 }

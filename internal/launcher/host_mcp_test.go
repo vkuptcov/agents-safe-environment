@@ -9,7 +9,6 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
-	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 func testChannel(t *testing.T) hostmcp.Channel {
@@ -236,7 +235,7 @@ func testPlanWithHostMCP(codexHome string) launchplan.Plan {
 			plan.Mounts[index].Source = codexHome
 		}
 	}
-	plan.Roles = append(plan.Roles, projectenv.RoleHostMCPChannel)
+	plan.HostMCPChannel = true
 	return plan
 }
 

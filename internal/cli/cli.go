@@ -28,7 +28,7 @@ type Dependencies struct {
 	ResolveConfig func(gitproject.Project, string, launchplan.Overrides) (ResolvedConfig, error)
 	// NewLauncher is deliberately lazy: usage validation and project configuration must complete
 	// before host identity or Docker-facing construction can fail.
-	NewLauncher func() (Launcher, error)
+	NewLauncher func(hostHome string) (Launcher, error)
 }
 
 // ResolvedConfig is the resolver output shared by command assembly and container launch.
@@ -39,6 +39,7 @@ type ResolvedConfig struct {
 	CodexArguments      []string
 	Degradations        []launchplan.Degradation
 	DefaultCodexHomeSet bool
+	HostHome            string
 }
 
 // Config describes one launcher binary's identity and command policy.
@@ -113,7 +114,7 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "%s: launcher dependency is not configured\n", cfg.Name)
 		return 1
 	}
-	launcher, err := dependencies.NewLauncher()
+	launcher, err := dependencies.NewLauncher(resolved.HostHome)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: initialize Docker launcher: %v\n", cfg.Name, err)
 		return 1

@@ -35,6 +35,7 @@ func TestRunResolvesExplicitFlagsBeforeLaunch(t *testing.T) {
 	launcher := &clitest.RecordingLauncher{}
 	var gotOverrides launchplan.Overrides
 	var gotDefaultImage string
+	var gotHostHome string
 	exit := cli.Run(context.Background(), testConfig(),
 		[]string{"--project", "/project/nested", "--image", "override:image", "--no-host-mcp=false", "cmd"},
 		new(bytes.Buffer), new(bytes.Buffer), cli.Dependencies{
@@ -56,7 +57,10 @@ func TestRunResolvesExplicitFlagsBeforeLaunch(t *testing.T) {
 				gotOverrides = overrides
 				return testResolvedConfig(), nil
 			},
-			NewLauncher: func() (cli.Launcher, error) { return launcher, nil },
+			NewLauncher: func(hostHome string) (cli.Launcher, error) {
+				gotHostHome = hostHome
+				return launcher, nil
+			},
 		})
 	if exit != 0 {
 		t.Fatalf("Run() = %d", exit)
@@ -66,6 +70,9 @@ func TestRunResolvesExplicitFlagsBeforeLaunch(t *testing.T) {
 	}
 	if gotDefaultImage != "default:image" {
 		t.Fatalf("default image = %q, want config default", gotDefaultImage)
+	}
+	if gotHostHome != "/home/test" {
+		t.Fatalf("launcher host home = %q, want resolved host home", gotHostHome)
 	}
 	if !reflect.DeepEqual(launcher.Command, []string{"configured", "cmd"}) {
 		t.Fatalf("command = %#v", launcher.Command)
@@ -83,7 +90,7 @@ func TestRunReportsResolutionFailureAndWarnings(t *testing.T) {
 		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 			return cli.ResolvedConfig{}, errors.New("bad config")
 		},
-		NewLauncher: func() (cli.Launcher, error) {
+		NewLauncher: func(string) (cli.Launcher, error) {
 			return &clitest.RecordingLauncher{PanicOnLaunch: true}, nil
 		},
 	}
@@ -100,7 +107,7 @@ func TestRunReportsResolutionFailureAndWarnings(t *testing.T) {
 		resolved.Degradations = []launchplan.Degradation{{Role: "personal_skills"}}
 		return resolved, nil
 	}
-	deps.NewLauncher = func() (cli.Launcher, error) { return &clitest.RecordingLauncher{}, nil }
+	deps.NewLauncher = func(string) (cli.Launcher, error) { return &clitest.RecordingLauncher{}, nil }
 	if exit := cli.Run(context.Background(), testConfig(), []string{"cmd"}, new(bytes.Buffer), stderr, deps); exit != 0 {
 		t.Fatalf("Run() = %d", exit)
 	}
@@ -168,7 +175,7 @@ func TestRunConstructsLauncherOnlyAfterResolution(t *testing.T) {
 		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 			return cli.ResolvedConfig{}, errors.New("bad config")
 		},
-		NewLauncher: func() (cli.Launcher, error) {
+		NewLauncher: func(string) (cli.Launcher, error) {
 			constructed = true
 			return &clitest.RecordingLauncher{}, nil
 		},
@@ -188,7 +195,7 @@ func TestRunRejectsMissingLauncherDependency(t *testing.T) {
 			dependencies.NewLauncher = nil
 		},
 		"factory returns nil": func(dependencies *cli.Dependencies) {
-			dependencies.NewLauncher = func() (cli.Launcher, error) { return nil, nil }
+			dependencies.NewLauncher = func(string) (cli.Launcher, error) { return nil, nil }
 		},
 	}
 	for name, arrange := range tests {
@@ -241,6 +248,7 @@ func testResolvedConfig() cli.ResolvedConfig {
 		Options:             launchplan.Options{NoHostMCP: true},
 		CodexArguments:      []string{"configured"},
 		DefaultCodexHomeSet: true,
+		HostHome:            "/home/test",
 	}
 }
 
@@ -252,6 +260,6 @@ func dependenciesFor(launcher cli.Launcher) cli.Dependencies {
 		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 			return testResolvedConfig(), nil
 		},
-		NewLauncher: func() (cli.Launcher, error) { return launcher, nil },
+		NewLauncher: func(string) (cli.Launcher, error) { return launcher, nil },
 	}
 }

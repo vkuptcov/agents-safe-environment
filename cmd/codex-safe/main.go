@@ -46,8 +46,8 @@ func main() {
 		cli.Dependencies{
 			Discover:      gitproject.Discover,
 			ResolveConfig: launchcli.ResolveConfig,
-			NewLauncher: func() (cli.Launcher, error) {
-				return launcher.NewDockerLauncher()
+			NewLauncher: func(hostHome string) (cli.Launcher, error) {
+				return launcher.NewDockerLauncher(hostHome)
 			},
 		},
 	))

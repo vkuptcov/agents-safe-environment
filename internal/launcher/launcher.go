@@ -72,8 +72,12 @@ type launchAttempt struct {
 	hostMCPImageID string
 }
 
-// NewDockerLauncher creates a launcher backed by the host Docker CLI and current process streams.
-func NewDockerLauncher() (*DockerLauncher, error) {
+// NewDockerLauncher creates a launcher backed by the host Docker CLI, current process streams, and the canonical home
+// already used to resolve project configuration.
+func NewDockerLauncher(hostHome string) (*DockerLauncher, error) {
+	if err := validateHostHome(hostHome); err != nil {
+		return nil, err
+	}
 	hostUID := os.Getuid()
 	hostGID := os.Getgid()
 	hostUser, err := user.LookupId(strconv.Itoa(hostUID))
@@ -84,14 +88,6 @@ func NewDockerLauncher() (*DockerLauncher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("look up host group %d: %w", hostGID, err)
 	}
-	// Construction stays limited to the historical identity preflight, resolving only the host home the launcher
-	// needs. Optional Codex, skills, and Git-config discovery belong to the typed resolver, which Phase 2 invokes
-	// only after CLI usage validation and Git discovery.
-	hostEnvironment, err := resolveHostIdentity(defaultHostEnvironmentInputs())
-	if err != nil {
-		return nil, err
-	}
-
 	docker := &DockerLauncher{
 		DockerBinary:  "docker",
 		CommandRunner: dockercli.NewProcessRunner(),
@@ -103,7 +99,7 @@ func NewDockerLauncher() (*DockerLauncher, error) {
 		HostGID:       hostGID,
 		HostUser:      hostUser.Username,
 		HostGroup:     hostGroup.Name,
-		HostHome:      hostEnvironment.HomeDir,
+		HostHome:      hostHome,
 		AllocateTTY:   terminal.IsTerminal(os.Stdin) && terminal.IsTerminal(os.Stdout),
 		LookupEnv:     os.LookupEnv,
 	}

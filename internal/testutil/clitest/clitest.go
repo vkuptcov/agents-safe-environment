@@ -47,7 +47,7 @@ func PanicDependencies() cli.Dependencies {
 		ResolveConfig: func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
 			panic("ResolveConfig should not be called")
 		},
-		NewLauncher: func() (cli.Launcher, error) { panic("NewLauncher should not be called") },
+		NewLauncher: func(string) (cli.Launcher, error) { panic("NewLauncher should not be called") },
 	}
 }
 

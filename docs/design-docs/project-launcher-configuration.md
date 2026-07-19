@@ -74,6 +74,10 @@ flowchart TD
 `--project` is the only bootstrap option: it must be resolved before the project config can be found. At the CLI
 layer, an omitted flag changes nothing; only a flag explicitly present in argv overrides the file.
 
+Host paths are resolved once per invocation. The canonical home used to build mount targets is carried through the
+resolved CLI configuration into lazy launcher construction, so container environment and exec requests use the same
+snapshot without repeating Git-config discovery.
+
 ### Worked Example
 
 For this repository, `agents-safe init` generates:

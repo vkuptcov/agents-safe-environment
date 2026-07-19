@@ -42,7 +42,7 @@ type commandDependencies struct {
 	discover      func(context.Context, string) (gitproject.Project, error)
 	resolveConfig func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error)
 	initialize    func(gitproject.Project) (string, error)
-	newLauncher   func() (cli.Launcher, error)
+	newLauncher   func(string) (cli.Launcher, error)
 }
 
 // config returns the agents-safe launcher configuration. It is a function so tests can drive the
@@ -83,8 +83,8 @@ func productionDependencies() commandDependencies {
 			}
 			return projectenv.Initialize(project.WorktreeRoot, defaults)
 		},
-		newLauncher: func() (cli.Launcher, error) {
-			return launcher.NewDockerLauncher()
+		newLauncher: func(hostHome string) (cli.Launcher, error) {
+			return launcher.NewDockerLauncher(hostHome)
 		},
 	}
 }

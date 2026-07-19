@@ -41,6 +41,28 @@ func TestResolveRegularCheckoutNormalizesRequiredRoles(t *testing.T) {
 	if !reflect.DeepEqual(resolution.Plan.Provenance[0].Roles, wantRoles) {
 		t.Errorf("roles = %#v, want %#v", resolution.Plan.Provenance[0].Roles, wantRoles)
 	}
+	if !resolution.Plan.HostMCPChannel {
+		t.Fatal("HostMCPChannel = false, want retained logical channel role")
+	}
+
+	withoutChannel := defaults
+	withoutChannel.Common.Mounts = append(
+		[]projectenv.MountConfig(nil),
+		defaults.Common.Mounts[:len(defaults.Common.Mounts)-1]...,
+	)
+	resolution, err = Resolve(project, defaults, withoutChannel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Plan.HostMCPChannel {
+		t.Fatal("HostMCPChannel = true after channel role was omitted")
+	}
+	if want := []Degradation{{Role: projectenv.RoleHostMCPChannel}}; !reflect.DeepEqual(
+		resolution.Degradations,
+		want,
+	) {
+		t.Fatalf("Degradations = %#v, want %#v", resolution.Degradations, want)
+	}
 }
 
 func TestResolveLinkedWorktreePreservesNestedWritableGitMount(t *testing.T) {

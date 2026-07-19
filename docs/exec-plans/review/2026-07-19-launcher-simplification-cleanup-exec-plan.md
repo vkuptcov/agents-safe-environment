@@ -10,8 +10,8 @@
 
 ## Objective
 
-Remove redundant launcher wiring and validation while preserving CLI behavior and the resolved container contract.
-Record the larger host-snapshot and launch-plan role simplifications as explicit deferred work.
+Remove redundant launcher wiring, validation, host discovery, and role state while preserving CLI behavior and the
+resolved container contract.
 
 ## Done Criteria
 
@@ -19,7 +19,9 @@ Record the larger host-snapshot and launch-plan role simplifications as explicit
 - Project configuration is not validated twice at the same resolution boundary.
 - Production-unused Codex command compatibility code is removed with its obsolete tests.
 - The documented typed schema includes `MountRole`.
-- Deferred host-environment and plan-role simplifications are detailed in the tech-debt tracker.
+- One resolved canonical host home is reused by configuration and launcher construction.
+- The launch plan stores host-MCP capability without duplicating all logical roles.
+- TD-3 and TD-4 are removed after their acceptance criteria pass.
 - Required Go and documentation gates pass.
 
 ## Current Baseline
@@ -34,7 +36,8 @@ still shows the pre-`MountRole` field type.
 - Keep lazy launcher construction so usage and project-config errors still occur before launcher initialization.
 - Pass `Config.DefaultImage` to the resolver dependency; bind `launchcli.ResolveConfig` directly in production.
 - Keep full validation in `launchplan.Resolve`; remove only the immediately redundant caller validation.
-- Do not implement the larger host-snapshot or `Plan.Roles` redesign in this cleanup.
+- Preserve lazy launcher construction while passing it the already-resolved canonical host home.
+- Preserve filesystem-role provenance while replacing the general plan role set with explicit host-MCP capability.
 
 ## Phases
 
@@ -74,12 +77,25 @@ Done when: focused and repository gates pass and this plan is moved to `review/`
 3. Run `make lint test check-docs` and `git diff --check`.
 4. Move this plan to `docs/exec-plans/review/` and update the plan index.
 
+### Phase 5: Close Host and Role Debt
+Purpose: Use one host snapshot and one representation for each kind of launch-plan state.
+Status: done
+Done when: launcher construction reuses the resolved host home, the plan has explicit host-MCP capability, and TD-3
+and TD-4 are removed.
+
+1. Carry canonical host home through `cli.ResolvedConfig` into the lazy launcher factory.
+2. Make `NewDockerLauncher` accept the resolved home instead of rediscovering host identity.
+3. Replace `Plan.Roles` and `HasRole` with explicit host-MCP capability state.
+4. Update focused tests and remove the completed debt entries.
+5. Rerun all validation gates and return this plan to `review/`.
+
 ## Validation Gates
 
 - `go test ./cmd/agents-safe ./cmd/codex-safe ./internal/cli ./internal/launchcli ./internal/launcher` passes.
 - `make lint test check-docs` passes.
 - `git diff --check` reports no whitespace errors.
 - `rg -n "DefaultCodexCommand|Launcher Launcher" internal cmd` returns no production compatibility seam.
+- `rg -n "Plan\.Roles|HasRole\(|containsRole\(" internal tests` returns no duplicate general role set.
 
 ## Risks and Constraints
 
@@ -89,11 +105,12 @@ Done when: focused and repository gates pass and this plan is moved to `review/`
 
 ## Out of Scope
 
-- Resolving host environment only once per invocation.
-- Replacing `Plan.Roles` with a narrower host-MCP capability field.
 - Real Sysbox behavior; no mount or container runtime semantics change in this cleanup.
 
 ## Progress Notes
 
 - 2026-07-19: Started from the accepted simplification review; larger structural items are intentionally deferred.
 - 2026-07-19: Implemented items 1-5, recorded deferred items as TD-3 and TD-4, and passed all validation gates.
+- 2026-07-19: Owner requested immediate closure of TD-3 and TD-4; reopened the plan for Phase 5.
+- 2026-07-19: Reused the resolved canonical home, replaced the duplicate role set with explicit host-MCP state,
+  removed TD-3 and TD-4, and passed focused and repository-wide gates.

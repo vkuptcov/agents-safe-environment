@@ -10,7 +10,7 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
-// HostEnvironmentInputs supplies the Docker-free host lookups used by both initialization and launcher construction.
+// HostEnvironmentInputs supplies the Docker-free host lookups used to resolve project configuration and initialization.
 type HostEnvironmentInputs struct {
 	UserHomeDir       func() (string, error)
 	LookupEnv         func(string) (string, bool)
@@ -178,13 +178,17 @@ func (docker *DockerLauncher) validateConfiguration() error {
 	if err := validateAccountName("host group", docker.HostGroup); err != nil {
 		return err
 	}
-	if docker.HostHome == "/" {
-		return errors.New("host home directory cannot be the filesystem root")
-	}
-	if err := launchplan.ValidateMountPath("host home directory", docker.HostHome); err != nil {
+	if err := validateHostHome(docker.HostHome); err != nil {
 		return err
 	}
 	return nil
+}
+
+func validateHostHome(hostHome string) error {
+	if hostHome == "/" {
+		return errors.New("host home directory cannot be the filesystem root")
+	}
+	return launchplan.ValidateMountPath("host home directory", hostHome)
 }
 
 func discoverHostGitConfig(hostHome string) (string, error) {

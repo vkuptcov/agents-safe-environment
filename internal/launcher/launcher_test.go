@@ -20,6 +20,20 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
+func TestNewDockerLauncherUsesResolvedHomeWithoutRediscoveringGitConfig(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".gitconfig"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	docker, err := NewDockerLauncher(home)
+	if err != nil {
+		t.Fatalf("NewDockerLauncher() error = %v, want no Git-config rediscovery", err)
+	}
+	if docker.HostHome != home {
+		t.Fatalf("HostHome = %q, want resolved %q", docker.HostHome, home)
+	}
+}
+
 func TestDockerLaunchCreatesDetachedContainerThenExecutesResolvedPlan(t *testing.T) {
 	containerID := strings.Repeat("a", 64)
 	runner := &fakeCommandRunner{outputs: []commandResult{
@@ -201,7 +215,6 @@ func projectOnlyPlan(root string) launchplan.Plan {
 		WorkingDir:  root,
 		Mounts:      []launchplan.BindMount{worktree},
 		Provenance:  []launchplan.MountProvenance{{Mount: worktree, Roles: []projectenv.MountRole{projectenv.RoleWorktree}}},
-		Roles:       []projectenv.MountRole{projectenv.RoleWorktree},
 	}
 }
 
@@ -219,12 +232,6 @@ func planWithCodex(root, workingDir, codexHome string) launchplan.Plan {
 			{Mount: commonGit, Roles: []projectenv.MountRole{projectenv.RoleCommonGitDir}},
 			{Mount: worktree, Roles: []projectenv.MountRole{projectenv.RoleWorktree}},
 			{Mount: codex, Roles: []projectenv.MountRole{projectenv.RoleCodexHome}},
-		},
-		Roles: []projectenv.MountRole{
-			projectenv.RolePrimaryCheckout,
-			projectenv.RoleCommonGitDir,
-			projectenv.RoleWorktree,
-			projectenv.RoleCodexHome,
 		},
 	}
 }

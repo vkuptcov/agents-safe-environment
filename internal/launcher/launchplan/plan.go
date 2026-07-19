@@ -59,8 +59,8 @@ type Plan struct {
 	Mounts []BindMount
 	// Provenance records the logical roles each normalized physical mount satisfies.
 	Provenance []MountProvenance
-	// Roles is the retained logical role set, including non-filesystem roles such as host_mcp_channel.
-	Roles []projectenv.MountRole
+	// HostMCPChannel reports whether the validated logical host_mcp_channel role is present.
+	HostMCPChannel bool
 }
 
 // MountProvenance traces one physical bind to the logical roles that required it.
@@ -134,11 +134,6 @@ func degradableRank(role projectenv.MountRole) int {
 		}
 	}
 	return len(degradableRoleOrder)
-}
-
-// HasRole reports whether a validated logical role remains in the resolved plan.
-func (plan Plan) HasRole(role projectenv.MountRole) bool {
-	return containsRole(plan.Roles, role)
 }
 
 // MountForRole returns the physical bind that satisfies one retained filesystem role.
@@ -216,11 +211,7 @@ func Resolve(
 	}
 
 	logical := make([]logicalMount, 0, len(config.Common.Mounts))
-	roles := make([]projectenv.MountRole, 0, len(config.Common.Mounts))
 	for _, mount := range config.Common.Mounts {
-		if !containsRole(roles, mount.Role) {
-			roles = append(roles, mount.Role)
-		}
 		if mount.Role == projectenv.RoleHostMCPChannel {
 			continue
 		}
@@ -237,6 +228,7 @@ func Resolve(
 		return Resolution{}, err
 	}
 
+	_, hostMCPChannel := configRoles[projectenv.RoleHostMCPChannel]
 	degradations := make([]Degradation, 0, len(degradableRoleOrder))
 	for _, role := range degradableRoleOrder {
 		if _, defaultPresent := defaultRoles[role]; !defaultPresent {
@@ -248,23 +240,14 @@ func Resolve(
 	}
 	return Resolution{
 		Plan: Plan{
-			ProjectRoot: project.WorktreeRoot,
-			WorkingDir:  project.RequestedDir,
-			Mounts:      physical,
-			Provenance:  provenance,
-			Roles:       roles,
+			ProjectRoot:    project.WorktreeRoot,
+			WorkingDir:     project.RequestedDir,
+			Mounts:         physical,
+			Provenance:     provenance,
+			HostMCPChannel: hostMCPChannel,
 		},
 		Degradations: degradations,
 	}, nil
-}
-
-func containsRole(roles []projectenv.MountRole, role projectenv.MountRole) bool {
-	for _, candidate := range roles {
-		if candidate == role {
-			return true
-		}
-	}
-	return false
 }
 
 func managedRoleMap(

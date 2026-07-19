@@ -44,7 +44,7 @@ func TestRunForwardsAgentsCommand(t *testing.T) {
 func TestRunRejectsMissingCommandBeforeConstructingLauncher(t *testing.T) {
 	t.Parallel()
 	deps := testCommandDependencies(&clitest.RecordingLauncher{})
-	deps.newLauncher = func() (cli.Launcher, error) { panic("launcher must not be constructed") }
+	deps.newLauncher = func(string) (cli.Launcher, error) { panic("launcher must not be constructed") }
 	if exit := run(context.Background(), nil, new(bytes.Buffer), new(bytes.Buffer), deps); exit != 2 {
 		t.Fatalf("run() = %d, want 2", exit)
 	}
@@ -60,7 +60,7 @@ func TestRunInitInitializesWithoutConstructingLauncher(t *testing.T) {
 		initialized = got
 		return "/project/.agents-safe", nil
 	}
-	deps.newLauncher = func() (cli.Launcher, error) { panic("launcher must not be constructed") }
+	deps.newLauncher = func(string) (cli.Launcher, error) { panic("launcher must not be constructed") }
 	stdout := new(bytes.Buffer)
 	if exit := run(context.Background(), []string{"init"}, stdout, new(bytes.Buffer), deps); exit != 0 {
 		t.Fatalf("run() = %d", exit)
@@ -105,6 +105,6 @@ func testCommandDependencies(launcher cli.Launcher) commandDependencies {
 			}
 			return "/project/.agents-safe", nil
 		},
-		newLauncher: func() (cli.Launcher, error) { return launcher, nil },
+		newLauncher: func(string) (cli.Launcher, error) { return launcher, nil },
 	}
 }

@@ -121,7 +121,7 @@ func sidecarName(projectKey string, channel hostmcp.Channel) string {
 // Codex home both reduce to an empty set with no separate resolution path. An empty set allocates
 // nothing: no directory, no environment variable, no mount, no relay, and no banner line.
 func (attempt *launchAttempt) planHostMCP() error {
-	if attempt.noHostMCP || !attempt.plan.HasRole(projectenv.RoleHostMCPChannel) {
+	if attempt.noHostMCP || !attempt.plan.HostMCPChannel {
 		// Disabled forwarding and an omitted logical channel role both perform no Codex config read.
 		return nil
 	}
