@@ -105,6 +105,8 @@ func (fixture *smokeFixture) assertOuterContainer() {
 	require.Equal(fixture.t, fixture.project.worktree, inspection.Config.Labels["codex-safe.project-path"], "project label must name the linked worktree")
 	require.Equal(fixture.t, strconv.Itoa(os.Getuid()), inspection.Config.Labels["codex-safe.host-uid"], "host UID label must be present")
 	require.Equal(fixture.t, "1", inspection.Config.Labels["codex-safe.manager-protocol"], "manager protocol label must be present")
+	require.Regexp(fixture.t, "^[a-f0-9]{64}$", inspection.Config.Labels["codex-safe.launch-config"],
+		"creation fingerprint must be present on the managed session")
 	require.Equal(fixture.t, fixture.project.nested, inspection.Config.WorkingDir, "container working directory must preserve nested invocation path")
 	require.Equal(fixture.t, "sysbox-runc", inspection.HostConfig.Runtime, "container must use Sysbox runtime")
 	require.False(fixture.t, inspection.HostConfig.Privileged, "container must not be privileged")

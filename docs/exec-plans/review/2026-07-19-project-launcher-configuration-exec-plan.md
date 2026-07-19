@@ -1,6 +1,6 @@
 # Exec Plan: Project Launcher Configuration
 
-- Status: active
+- Status: in review
 - Created: 2026-07-19
 - Design:
   - [`docs/design-docs/project-launcher-configuration.md`](../../design-docs/project-launcher-configuration.md)
@@ -99,7 +99,7 @@ Done when: a canonical fingerprint is labelled on creation and is the only post-
 
 ### Phase 4: Contract, Real Boundary, and Review Handoff
 Purpose: Align public docs and test the serialized contract at the real Docker/Sysbox boundary.
-Status: to be done
+Status: done
 Done when: docs and smoke coverage match the shipped resolver, all available gates pass, and the plan is ready for
 review.
 
@@ -160,3 +160,8 @@ review.
   endpoints. It is now the sole post-ownership reuse predicate in initial, waited, concurrent-winner, and retry
   adoption paths; legacy mount and host-MCP comparison paths are removed. Focused tests, `go test ./...`, `go vet
   ./...`, and `make test` pass.
+- 2026-07-19: Phase 4 marked the launcher-configuration design implemented, extended the smoke harness for regular
+  and linked checkout fingerprints plus command-time reuse, and completed the implementation review. `make lint`,
+  `make test`, `make docker-build`, `make check-docs`, and `git diff --check` pass. `make test-smoke-go` was not run:
+  `docker info --format '{{json .Runtimes}}'` lists `crun` and `runc`, but not `sysbox-runc`, so real Sysbox execution
+  is blocked before it can be meaningful. The plan is moved to review pending owner acceptance on a Sysbox host.

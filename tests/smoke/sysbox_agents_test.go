@@ -43,6 +43,34 @@ while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	fixture.docker.waitForContainerRemoval()
 }
 
+// TestSysboxRegularCheckoutNormalizesProjectRoles proves the regular-checkout roles collapse to
+// their minimal Docker representation at the real Sysbox boundary.
+func TestSysboxRegularCheckoutNormalizesProjectRoles(t *testing.T) {
+	if os.Getenv(goSmokeEnv) != "1" {
+		t.Skipf("set %s=1 to run the real Sysbox regular-checkout test", goSmokeEnv)
+	}
+	fixture := newSmokeFixture(t)
+	ready := filepath.Join(fixture.project.primary, "regular-checkout.ready")
+	release := filepath.Join(fixture.project.primary, "regular-checkout.release")
+	command := fixture.launcher.startAgents(
+		fixture.project.primary,
+		"bash", "-c", `: > "$1"; while [[ ! -e "$2" ]]; do sleep 1; done`, "bash", ready, release,
+	)
+	fixture.waitForFile(ready, command)
+
+	inspection := fixture.docker.inspectContainer()
+	requireMount(t, inspection, fixture.project.primary, fixture.project.primary, true)
+	for _, mount := range inspection.Mounts {
+		require.NotEqual(t, filepath.Join(fixture.project.primary, ".git"), mount.Source,
+			"regular checkout must not retain a redundant common-Git bind")
+	}
+	require.Regexp(t, "^[a-f0-9]{64}$", inspection.Config.Labels["codex-safe.launch-config"],
+		"session must persist the normalized creation fingerprint")
+
+	fixture.release(release, command, "regular checkout command")
+	fixture.docker.waitForContainerRemoval()
+}
+
 // TestSysboxAgentsSafeWithoutCodexHome proves the optional policy reaches the real Docker boundary:
 // no host Codex-home mount is added and the managed command receives no CODEX_HOME.
 func TestSysboxAgentsSafeWithoutCodexHome(t *testing.T) {

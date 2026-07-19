@@ -674,12 +674,13 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Canonicalize a symlinked Codex-home source without adding mounts for external symlinks contained inside it.
 - Reject a dangling default Codex-home symlink without offering to create it.
 - Mount an existing `$HOME/.agents/skills` read-only, allow it to be absent, and reject an invalid source.
-- Reject dangling personal-skills paths for `codex-safe` while treating them as absent for `agents-safe`.
+- Reject a dangling personal-skills path before either launcher reaches Docker.
 - Prove no missing Codex-home path is created as a launcher side effect.
 - Verify `HOME` and `CODEX_HOME`, the image-owned `codex` argv, forwarded arguments, working directory, and exit status.
 - Verify `agents-safe bash` preserves direct argv, starts in the selected project, rejects an omitted command, and
   propagates the command exit status.
-- Reject reuse when Codex-home or personal-skills compatibility labels differ from the current resolution.
+- Reject reuse when a Codex-home or personal-skills change alters the creation fingerprint; diagnostic labels are not
+  compatibility predicates.
 - Reject launches outside Git or without Docker or `sysbox-runc`.
 - Prove that unknown options and arguments after `--` cannot trigger shell injection.
 - Prove that every preflight and runtime failure has no fallback path.

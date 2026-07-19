@@ -1,6 +1,6 @@
 # Project Launcher Configuration
 
-Status: Proposed
+Status: Implemented
 
 Scope:
 
