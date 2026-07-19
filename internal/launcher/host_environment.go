@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
@@ -37,21 +38,86 @@ func resolveHostEnvironment(inputs HostEnvironmentInputs) (HostEnvironment, erro
 	if err != nil {
 		return HostEnvironment{}, err
 	}
-	resolution, err := inspectUserMounts(UserMountInputs{
-		LookupEnv:       inputs.LookupEnv,
-		HomeDir:         environment.HomeDir,
-		CodexHomePolicy: CodexHomeOptional,
-	})
+	codexHome, err := resolveOptionalCodexHome(environment.HomeDir, inputs.LookupEnv)
 	if err != nil {
 		return HostEnvironment{}, err
 	}
-	if resolution.mounts.CodexHomePresent() {
-		environment.CodexHome = resolution.mounts.CodexHome
+	if codexHome != "" {
+		environment.CodexHome = codexHome
 	}
-	if resolution.mounts.SkillsPresent() {
-		environment.PersonalSkills = resolution.mounts.PersonalSkills
+	personalSkills, err := resolveOptionalPersonalSkills(environment.HomeDir)
+	if err != nil {
+		return HostEnvironment{}, err
+	}
+	if personalSkills != "" {
+		environment.PersonalSkills = personalSkills
 	}
 	return environment, nil
+}
+
+func resolveOptionalCodexHome(home string, lookupEnv func(string) (string, bool)) (string, error) {
+	source := filepath.Join(home, ".codex")
+	explicit := false
+	if requested, found := lookupEnv("CODEX_HOME"); found && strings.TrimSpace(requested) != "" {
+		source = strings.TrimSpace(requested)
+		explicit = true
+	}
+	path, present, err := canonicalOptionalDirectory("Codex home", source)
+	if err != nil {
+		return "", err
+	}
+	if !present && explicit {
+		return "", fmt.Errorf("Codex home %q does not exist", source)
+	}
+	return path, nil
+}
+
+func resolveOptionalPersonalSkills(home string) (string, error) {
+	path := filepath.Join(home, ".agents", "skills")
+	resolved, present, err := canonicalOptionalDirectory("personal skills", path)
+	if err != nil {
+		return "", err
+	}
+	if !present {
+		return "", nil
+	}
+	return resolved, nil
+}
+
+func canonicalOptionalDirectory(label, path string) (string, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("inspect %s %q: %w", label, path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return "", false, fmt.Errorf("%s %q is a broken symlink", label, path)
+		} else if err != nil {
+			return "", false, fmt.Errorf("inspect %s %q: %w", label, path, err)
+		}
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", false, fmt.Errorf("canonicalize %s %q: %w", label, path, err)
+	}
+	canonical = filepath.Clean(canonical)
+	if canonical == string(filepath.Separator) {
+		return "", false, fmt.Errorf("%s cannot be the filesystem root", label)
+	}
+	info, err = os.Stat(canonical)
+	if err != nil {
+		return "", false, fmt.Errorf("inspect %s %q: %w", label, canonical, err)
+	}
+	if !info.IsDir() {
+		return "", false, fmt.Errorf("%s %q is not a directory", label, canonical)
+	}
+	if err := launchplan.ValidateMountPath(label, canonical); err != nil {
+		return "", false, err
+	}
+	return canonical, true, nil
 }
 
 func resolveHostIdentity(inputs HostEnvironmentInputs) (HostEnvironment, error) {
@@ -117,11 +183,6 @@ func (docker *DockerLauncher) validateConfiguration() error {
 	}
 	if err := launchplan.ValidateMountPath("host home directory", docker.HostHome); err != nil {
 		return err
-	}
-	if docker.HostGitConfig != "" {
-		if err := launchplan.ValidateMountPath("host Git config", docker.HostGitConfig); err != nil {
-			return err
-		}
 	}
 	return nil
 }

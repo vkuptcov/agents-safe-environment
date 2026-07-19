@@ -1,3 +1,0 @@
-# Additional host directories mounted read-write at the same absolute path in new project containers.
-# Paths must be absolute, must already exist, and must not overlap the Git project or one another.
-mounts = []

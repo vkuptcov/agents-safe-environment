@@ -25,6 +25,15 @@ type Options struct {
 	NoHostMCP bool
 }
 
+// Overrides records only launcher flags explicitly present in argv. The resolver applies these after loading the
+// project file, preserving a configured false value when --no-host-mcp is omitted.
+type Overrides struct {
+	Image             string
+	ImageOverride     bool
+	NoHostMCP         bool
+	NoHostMCPOverride bool
+}
+
 // BindMount describes one host path exposed to the Sysbox container through a Docker bind mount.
 type BindMount struct {
 	// Source is the canonical absolute path on the host.
@@ -51,6 +60,8 @@ type Plan struct {
 	Mounts []BindMount
 	// Provenance records the logical roles each normalized physical mount satisfies.
 	Provenance []MountProvenance
+	// Roles is the retained logical role set, including non-filesystem roles such as host_mcp_channel.
+	Roles []string
 }
 
 // MountProvenance traces one physical bind to the logical roles that required it.
@@ -68,6 +79,28 @@ type Degradation struct {
 type Resolution struct {
 	Plan         Plan
 	Degradations []Degradation
+}
+
+// HasRole reports whether a validated logical role remains in the resolved plan.
+func (plan Plan) HasRole(role string) bool {
+	for _, candidate := range plan.Roles {
+		if candidate == role {
+			return true
+		}
+	}
+	return false
+}
+
+// MountForRole returns the physical bind that satisfies one retained filesystem role.
+func (plan Plan) MountForRole(role string) (BindMount, bool) {
+	for _, provenance := range plan.Provenance {
+		for _, candidate := range provenance.Roles {
+			if candidate == role {
+				return provenance.Mount, true
+			}
+		}
+	}
+	return BindMount{}, false
 }
 
 type rolePolicy struct {
@@ -133,7 +166,11 @@ func Resolve(
 	}
 
 	logical := make([]logicalMount, 0, len(config.Common.Mounts))
+	roles := make([]string, 0, len(config.Common.Mounts))
 	for _, mount := range config.Common.Mounts {
+		if !containsRole(roles, mount.Role) {
+			roles = append(roles, mount.Role)
+		}
 		if mount.Role == projectenv.RoleHostMCPChannel {
 			continue
 		}
@@ -170,9 +207,19 @@ func Resolve(
 			WorkingDir:  project.RequestedDir,
 			Mounts:      physical,
 			Provenance:  provenance,
+			Roles:       roles,
 		},
 		Degradations: degradations,
 	}, nil
+}
+
+func containsRole(roles []string, role string) bool {
+	for _, candidate := range roles {
+		if candidate == role {
+			return true
+		}
+	}
+	return false
 }
 
 func managedRoleMap(mounts []projectenv.MountConfig, source string) (map[string]projectenv.MountConfig, error) {
@@ -319,58 +366,6 @@ func mountContains(parent, child BindMount) bool {
 	return sourceRelative == targetRelative
 }
 
-// Build converts a discovered Git project into a validated container launch plan.
-func Build(project gitproject.Project) (Plan, error) {
-	if err := validateWorkingDirectory(project.RequestedDir, project.WorktreeRoot); err != nil {
-		return Plan{}, err
-	}
-
-	mounts := make([]BindMount, 0, 3)
-	if project.Linked {
-		mounts = append(mounts,
-			BindMount{Source: project.PrimaryRoot, Target: project.PrimaryRoot, ReadOnly: true},
-			BindMount{Source: project.CommonGitDir, Target: project.CommonGitDir},
-			BindMount{Source: project.WorktreeRoot, Target: project.WorktreeRoot},
-		)
-	} else {
-		mounts = append(mounts, BindMount{Source: project.WorktreeRoot, Target: project.WorktreeRoot})
-	}
-	configured, err := projectenv.LoadMounts(project.WorktreeRoot)
-	if err != nil {
-		return Plan{}, err
-	}
-	mounts, err = addConfiguredMounts(mounts, configured)
-	if err != nil {
-		return Plan{}, err
-	}
-
-	normalized, err := normalizeMounts(mounts)
-	if err != nil {
-		return Plan{}, err
-	}
-
-	return Plan{
-		ProjectRoot: project.WorktreeRoot,
-		WorkingDir:  project.RequestedDir,
-		Mounts:      normalized,
-	}, nil
-}
-
-func addConfiguredMounts(mounts []BindMount, sources []string) ([]BindMount, error) {
-	for _, source := range sources {
-		if err := ValidateMountPath("configured mount", source); err != nil {
-			return nil, err
-		}
-		for _, existing := range mounts {
-			if PathsOverlap(source, existing.Source) {
-				return nil, fmt.Errorf("configured mount %q overlaps mount %q", source, existing.Source)
-			}
-		}
-		mounts = append(mounts, BindMount{Source: source, Target: source})
-	}
-	return mounts, nil
-}
-
 // PathsOverlap reports whether either canonical absolute path contains the other or they are equal.
 func PathsOverlap(first string, second string) bool {
 	return pathContains(first, second) || pathContains(second, first)
@@ -397,38 +392,6 @@ func validateWorkingDirectory(workingDir string, worktreeRoot string) error {
 		return fmt.Errorf("working directory %q is outside working-tree root %q", workingDir, worktreeRoot)
 	}
 	return nil
-}
-
-func normalizeMounts(mounts []BindMount) ([]BindMount, error) {
-	normalized := make([]BindMount, 0, len(mounts))
-	byTarget := make(map[string]BindMount, len(mounts))
-
-	for _, mount := range mounts {
-		if err := ValidateMountPath("mount source", mount.Source); err != nil {
-			return nil, err
-		}
-		if err := ValidateMountPath("mount target", mount.Target); err != nil {
-			return nil, err
-		}
-
-		existing, found := byTarget[mount.Target]
-		if found {
-			if existing == mount {
-				continue
-			}
-			return nil, fmt.Errorf(
-				"conflicting mounts for target %q: %+v and %+v",
-				mount.Target,
-				existing,
-				mount,
-			)
-		}
-
-		byTarget[mount.Target] = mount
-		normalized = append(normalized, mount)
-	}
-
-	return normalized, nil
 }
 
 // ValidateMountPath verifies one canonical absolute host or container path used in a bind-mount contract.

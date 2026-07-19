@@ -1,13 +1,14 @@
 package smoke_test
 
 import (
-	"fmt"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
@@ -64,7 +65,7 @@ while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	observed := parseReport(t, report)
 	require.Equal(t, "unset", observed["codex_home"], "agents-safe must omit CODEX_HOME when the host source is absent")
 	inspection := fixture.docker.inspectContainer()
-	require.Equal(t, launcher.CodexHomeAbsent, inspection.Config.Labels["codex-safe.codex-home"])
+	require.Equal(t, "absent", inspection.Config.Labels["codex-safe.codex-home"])
 	for _, mount := range inspection.Mounts {
 		require.NotEqual(t, fixture.project.codexHome, mount.Destination,
 			"agents-safe must not create a Codex-home bind mount when the source is absent")
@@ -76,7 +77,7 @@ while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	fixture.docker.waitForContainerRemoval()
 }
 
-// TestSysboxConfiguredMount proves local config adds an external read-write directory even when an
+// TestSysboxConfiguredMount proves typed local config adds an external read-write directory even when an
 // explicit image bypasses project Dockerfile discovery.
 func TestSysboxConfiguredMount(t *testing.T) {
 	if os.Getenv(goSmokeEnv) != "1" {
@@ -89,9 +90,20 @@ func TestSysboxConfiguredMount(t *testing.T) {
 		"configured mount input must be written")
 	contextPath := filepath.Join(fixture.project.worktree, projectenv.Directory)
 	require.NoError(t, os.Mkdir(contextPath, 0o755), "project environment directory must be created")
+	project, err := gitproject.Discover(t.Context(), fixture.project.worktree)
+	require.NoError(t, err, "fixture Git project must be discoverable")
+	config, err := launcher.DefaultProjectConfig(project, launcher.HostEnvironment{
+		HomeDir: fixture.project.hostHome, GitConfig: fixture.project.hostGit, CodexHome: fixture.project.codexHome,
+	}, goSmokeImage)
+	require.NoError(t, err, "fixture defaults must be serializable")
+	config.Common.Mounts = append(config.Common.Mounts, projectenv.MountConfig{
+		Role: projectenv.RoleAdditional, Source: external, Target: external,
+	})
+	var encoded bytes.Buffer
+	require.NoError(t, projectenv.Encode(config, &encoded), "fixture config must encode")
 	require.NoError(t, os.WriteFile(
 		filepath.Join(contextPath, projectenv.ConfigName),
-		[]byte(fmt.Sprintf("mounts = [%q]\n", external)),
+		encoded.Bytes(),
 		0o600,
 	), "configured mount file must be written")
 

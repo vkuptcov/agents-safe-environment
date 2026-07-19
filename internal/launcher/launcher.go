@@ -42,24 +42,12 @@ type DockerLauncher struct {
 	// HostHome is the absolute host home path recreated as a container-local directory.
 	// The directory itself is not mounted from the host.
 	HostHome string
-	// HostGitConfig is the canonical host path mounted read-only as the container's global Git config.
-	// It is empty when the invoking environment has no $HOME/.gitconfig file.
-	HostGitConfig string
 	// HostEnvironment is the Docker-free host snapshot shared with project-default generation.
 	HostEnvironment HostEnvironment
 	// AllocateTTY controls whether Docker allocates a terminal for the command.
 	AllocateTTY bool
-	// CanPrompt reports whether stdin and the diagnostic stream can service an interactive host
-	// prompt. It is intentionally independent from AllocateTTY, which also requires terminal stdout.
-	CanPrompt bool
-	// LookupEnv reads host environment variables during user-mount resolution.
+	// LookupEnv reads host environment variables during host-MCP channel allocation.
 	LookupEnv func(string) (string, bool)
-	// CodexHomePolicy controls how a missing Codex home is handled.
-	CodexHomePolicy CodexHomePolicy
-
-	// resolveUserMounts overrides host user-mount resolution in tests. Production launchers leave it
-	// nil and resolve from the filesystem; see resolveMounts.
-	resolveUserMounts func(launchplan.Plan) (userMountResolution, error)
 }
 
 // launchAttempt carries the values that stay fixed for one Launch: the Docker client and the
@@ -84,7 +72,7 @@ type launchAttempt struct {
 }
 
 // NewDockerLauncher creates a launcher backed by the host Docker CLI and current process streams.
-func NewDockerLauncher(codexHomePolicy CodexHomePolicy) (*DockerLauncher, error) {
+func NewDockerLauncher() (*DockerLauncher, error) {
 	hostUID := os.Getuid()
 	hostGID := os.Getgid()
 	hostUser, err := user.LookupId(strconv.Itoa(hostUID))
@@ -114,12 +102,9 @@ func NewDockerLauncher(codexHomePolicy CodexHomePolicy) (*DockerLauncher, error)
 		HostUser:        hostUser.Username,
 		HostGroup:       hostGroup.Name,
 		HostHome:        hostEnvironment.HomeDir,
-		HostGitConfig:   hostEnvironment.GitConfig,
 		HostEnvironment: hostEnvironment,
 		AllocateTTY:     terminal.IsTerminal(os.Stdin) && terminal.IsTerminal(os.Stdout),
-		CanPrompt:       terminal.IsTerminal(os.Stdin) && terminal.IsTerminal(os.Stderr),
 		LookupEnv:       os.LookupEnv,
-		CodexHomePolicy: codexHomePolicy,
 	}
 	return docker, nil
 }
@@ -130,107 +115,6 @@ func (docker *DockerLauncher) lookupEnv() func(string) (string, bool) {
 		return docker.LookupEnv
 	}
 	return os.LookupEnv
-}
-
-// resolveMounts resolves this launch's user mounts through the test seam when one is injected, and
-// from the host filesystem otherwise.
-func (docker *DockerLauncher) resolveMounts(plan launchplan.Plan) (userMountResolution, error) {
-	if docker.resolveUserMounts != nil {
-		return docker.resolveUserMounts(plan)
-	}
-	return docker.defaultResolveUserMounts(plan)
-}
-
-func (docker *DockerLauncher) defaultResolveUserMounts(plan launchplan.Plan) (userMountResolution, error) {
-	lookup := docker.LookupEnv
-	if lookup == nil {
-		lookup = os.LookupEnv
-	}
-	return inspectUserMounts(UserMountInputs{
-		LookupEnv:       lookup,
-		HomeDir:         docker.HostHome,
-		WritableSources: writableMountSources(plan.Mounts),
-		CodexHomePolicy: docker.CodexHomePolicy,
-	})
-}
-
-// confirmCreateCodexHome offers to create a missing default Codex home after Docker preflight.
-func (docker *DockerLauncher) confirmCreateCodexHome(path string) (bool, error) {
-	if !docker.CanPrompt {
-		return false, nil
-	}
-	fmt.Fprintf(docker.Stderr, "Codex home %q does not exist. Create it now? [Y/n] ", path)
-	line, err := readPromptLine(docker.Stdin)
-	if errors.Is(err, io.EOF) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read Codex-home confirmation: %w", err)
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "", "y", "yes":
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			return false, fmt.Errorf("create Codex home %q: %w", path, err)
-		}
-		fmt.Fprintf(docker.Stderr, "Created Codex home %q\n", path)
-		return true, nil
-	default:
-		return false, nil
-	}
-}
-
-func readPromptLine(reader io.Reader) (string, error) {
-	var line strings.Builder
-	var buffer [1]byte
-	for {
-		count, err := reader.Read(buffer[:])
-		if count == 1 {
-			if buffer[0] == '\n' {
-				return line.String(), nil
-			}
-			line.WriteByte(buffer[0])
-		}
-		if err != nil {
-			return line.String(), err
-		}
-		if count == 0 {
-			return line.String(), io.ErrNoProgress
-		}
-	}
-}
-
-func (docker *DockerLauncher) materializeUserMounts(
-	plan launchplan.Plan,
-	resolution userMountResolution,
-) (UserMounts, error) {
-	if resolution.missingCodexHome == "" {
-		return resolution.mounts, nil
-	}
-	created, err := docker.confirmCreateCodexHome(resolution.missingCodexHome)
-	if err != nil {
-		return UserMounts{}, err
-	}
-	if !created {
-		return UserMounts{}, fmt.Errorf("Codex home %q does not exist", resolution.missingCodexHome)
-	}
-	resolved, err := docker.resolveMounts(plan)
-	if err != nil {
-		return UserMounts{}, err
-	}
-	if resolved.missingCodexHome != "" {
-		return UserMounts{}, fmt.Errorf("Codex home %q does not exist", resolved.missingCodexHome)
-	}
-	return resolved.mounts, nil
-}
-
-func writableMountSources(mounts []launchplan.BindMount) []string {
-	sources := make([]string, 0, len(mounts))
-	for _, mount := range mounts {
-		if !mount.ReadOnly {
-			sources = append(sources, mount.Source)
-		}
-	}
-	return sources
 }
 
 // Launch runs one command in the deterministic project container, creating it when necessary.
@@ -260,17 +144,13 @@ func (docker *DockerLauncher) Launch(
 		projectKey:    ProjectKey(docker.HostUID, plan.ProjectRoot),
 		noHostMCP:     options.NoHostMCP,
 	}
-	resolution, err := docker.resolveMounts(plan)
-	if err != nil {
-		return err
-	}
 	// Discovery runs during preflight, before a container is created or reused, and its channel must
 	// exist before either container because it is a bind mount.
-	if err := attempt.planHostMCP(resolution); err != nil {
+	if err := attempt.planHostMCP(); err != nil {
 		return err
 	}
 
-	containerID, userMounts, err := attempt.acquireContainer(ctx, resolution)
+	containerID, err := attempt.acquireContainer(ctx)
 	if err != nil {
 		// A candidate this attempt allocated and never handed off is this attempt's to unwind:
 		// stop its sidecar promptly rather than leaving it to its initial-lease timeout, and remove
@@ -281,14 +161,14 @@ func (docker *DockerLauncher) Launch(
 		return err
 	}
 
-	execErr := attempt.execCommand(ctx, command, containerID, userMounts)
+	execErr := attempt.execCommand(ctx, command, containerID)
 	if execErr == nil {
 		return nil
 	}
 	if !isRetryableExecError(execErr) {
 		return execErr
 	}
-	retry, retryErr := attempt.containerStoppedAfterExec(ctx, userMounts)
+	retry, retryErr := attempt.containerStoppedAfterExec(ctx)
 	if retryErr != nil {
 		return errors.Join(execErr, retryErr)
 	}
@@ -298,18 +178,18 @@ func (docker *DockerLauncher) Launch(
 
 	// The first session shut down. Its old generation belongs to its own sidecar, which removes it on
 	// lease EOF, so the replacement gets a fresh candidate rather than reusing a generation another
-	// sidecar may be cleaning up. The mounts are already materialized, so they reuse them as resolved.
+	// sidecar may be cleaning up.
 	if err := attempt.reallocateHostMCPCandidate(); err != nil {
 		return errors.Join(execErr, err)
 	}
-	containerID, userMounts, err = attempt.acquireContainer(ctx, userMountResolution{mounts: userMounts})
+	containerID, err = attempt.acquireContainer(ctx)
 	if err != nil {
 		if cleanupErr := attempt.cleanupCandidate(ctx); cleanupErr != nil {
 			return errors.Join(execErr, err, cleanupErr)
 		}
 		return errors.Join(execErr, err)
 	}
-	if err := attempt.execCommand(ctx, command, containerID, userMounts); err != nil {
+	if err := attempt.execCommand(ctx, command, containerID); err != nil {
 		return fmt.Errorf("exec in replacement Sysbox container: %w", err)
 	}
 	return nil

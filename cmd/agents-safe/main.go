@@ -25,7 +25,7 @@ const usage = `Usage: agents-safe init [--project PATH]
 Run a command for the current Git project inside an ephemeral Sysbox container.
 Options must appear before COMMAND; COMMAND is executed directly without a shell.
 
-The init command creates local .agents-safe templates and updates the root .gitignore.
+The init command creates local .agents-safe templates without modifying the root .gitignore.
 Use agents-safe -- init to execute a container command named init.
 
   --no-host-mcp  Do not forward host MCP servers into the container. By default a loopback
@@ -34,14 +34,14 @@ Use agents-safe -- init to execute a container command named init.
 
 const initUsage = `Usage: agents-safe init [--project PATH]
 
-Create local .agents-safe/Dockerfile.sample and .agents-safe/config.toml files at the selected
-Git worktree root and add exact rules for them to the root .gitignore.`
+Create local .agents-safe/Dockerfile.sample, .agents-safe/config.toml, and .agents-safe/.gitignore files at the
+selected Git worktree root. Initialization does not construct a Docker launcher or modify the root .gitignore.`
 
 type commandDependencies struct {
-	discover        func(context.Context, string) (gitproject.Project, error)
-	buildLaunchPlan func(gitproject.Project) (launchplan.Plan, error)
-	initialize      func(string) (string, error)
-	newLauncher     func() (cli.Launcher, error)
+	discover      func(context.Context, string) (gitproject.Project, error)
+	resolveConfig func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error)
+	initialize    func(gitproject.Project) (string, error)
+	newLauncher   func() (cli.Launcher, error)
 }
 
 // config returns the agents-safe launcher configuration. It is a function so tests can drive the
@@ -53,12 +53,13 @@ func config() cli.Config {
 		Usage:        usage,
 		// agents-safe requires a command; every argument stays a separate argv element and runs
 		// directly through the session wrapper without a shell.
-		BuildCommand: func(args []string) ([]string, error) {
+		ValidateInvocation: func(args []string) error {
 			if len(args) == 0 {
-				return nil, errors.New("command is required")
+				return errors.New("command is required")
 			}
-			return args, nil
+			return nil
 		},
+		BuildCommand: func(_ []string, args []string) []string { return args },
 	}
 }
 
@@ -68,11 +69,21 @@ func main() {
 
 func productionDependencies() commandDependencies {
 	return commandDependencies{
-		discover:        gitproject.Discover,
-		buildLaunchPlan: launchplan.Build,
-		initialize:      projectenv.Initialize,
+		discover:      gitproject.Discover,
+		resolveConfig: resolveProjectConfig,
+		initialize: func(project gitproject.Project) (string, error) {
+			host, err := launcher.ResolveHostEnvironment()
+			if err != nil {
+				return "", err
+			}
+			defaults, err := launcher.DefaultProjectConfig(project, host, defaultImage)
+			if err != nil {
+				return "", err
+			}
+			return projectenv.Initialize(project.WorktreeRoot, defaults)
+		},
 		newLauncher: func() (cli.Launcher, error) {
-			return launcher.NewDockerLauncher(launcher.CodexHomeOptional)
+			return launcher.NewDockerLauncher()
 		},
 	}
 }
@@ -88,11 +99,6 @@ func run(
 		return runInit(ctx, args[1:], stdout, stderr, dependencies)
 	}
 
-	docker, err := dependencies.newLauncher()
-	if err != nil {
-		fmt.Fprintf(stderr, "agents-safe: initialize Docker launcher: %v\n", err)
-		return 1
-	}
 	return cli.Run(
 		ctx,
 		config(),
@@ -100,9 +106,9 @@ func run(
 		stdout,
 		stderr,
 		cli.Dependencies{
-			Discover:        dependencies.discover,
-			BuildLaunchPlan: dependencies.buildLaunchPlan,
-			Launcher:        docker,
+			Discover:      dependencies.discover,
+			ResolveConfig: dependencies.resolveConfig,
+			NewLauncher:   dependencies.newLauncher,
 		},
 	)
 }
@@ -138,11 +144,30 @@ func runInit(
 		fmt.Fprintf(stderr, "agents-safe init: %v\n", err)
 		return 1
 	}
-	contextPath, err := dependencies.initialize(project.WorktreeRoot)
+	contextPath, err := dependencies.initialize(project)
 	if err != nil {
 		fmt.Fprintf(stderr, "agents-safe init: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "Initialized %s\n", contextPath)
 	return 0
+}
+
+func resolveProjectConfig(project gitproject.Project, overrides launchplan.Overrides) (cli.ResolvedConfig, error) {
+	host, err := launcher.ResolveHostEnvironment()
+	if err != nil {
+		return cli.ResolvedConfig{}, err
+	}
+	resolved, err := launcher.ResolveProjectConfig(project, host, defaultImage, overrides)
+	if err != nil {
+		return cli.ResolvedConfig{}, err
+	}
+	return cli.ResolvedConfig{
+		Plan:                resolved.Resolution.Plan,
+		Image:               resolved.Config.Common.Image,
+		Options:             resolved.Options,
+		CodexArguments:      resolved.Config.Codex.Arguments,
+		Degradations:        resolved.Resolution.Degradations,
+		DefaultCodexHomeSet: resolved.DefaultCodexHomeSet,
+	}, nil
 }

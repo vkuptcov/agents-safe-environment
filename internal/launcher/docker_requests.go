@@ -9,8 +9,11 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
+
+const mountAbsent = "absent"
 
 // Host identity is validated once by validateConfiguration before a launch starts, so the request
 // builders below assume it and check only what is specific to the request they encode.
@@ -19,7 +22,6 @@ func (docker *DockerLauncher) buildCreateRequest(
 	plan launchplan.Plan,
 	image string,
 	containerName string,
-	userMounts UserMounts,
 	forwarding hostMCPPlan,
 ) (dockercli.CreateRequest, error) {
 	if strings.TrimSpace(image) == "" {
@@ -28,22 +30,8 @@ func (docker *DockerLauncher) buildCreateRequest(
 	if err := validateSessionName(containerName); err != nil {
 		return dockercli.CreateRequest{}, err
 	}
-	if userMounts.CodexHome == "" {
-		return dockercli.CreateRequest{}, errors.New("resolved Codex home is required")
-	}
-
-	mounts := make([]dockercli.Mount, 0, len(plan.Mounts)+4)
-	if docker.HostGitConfig != "" {
-		mounts = append(mounts, dockercli.Mount{
-			Source:   docker.HostGitConfig,
-			Target:   filepath.Join(docker.HostHome, ".gitconfig"),
-			ReadOnly: true,
-		})
-	}
+	mounts := make([]dockercli.Mount, 0, len(plan.Mounts)+1)
 	for _, mount := range plan.Mounts {
-		mounts = append(mounts, dockercli.Mount(mount))
-	}
-	for _, mount := range userMountBindMounts(docker.HostHome, userMounts) {
 		mounts = append(mounts, dockercli.Mount(mount))
 	}
 
@@ -52,8 +40,8 @@ func (docker *DockerLauncher) buildCreateRequest(
 		{Key: projectPathLabel, Value: plan.ProjectRoot},
 		{Key: hostUIDLabel, Value: strconv.Itoa(docker.HostUID)},
 		{Key: managerProtocolLabel, Value: session.ProtocolVersion},
-		{Key: codexHomeLabel, Value: userMounts.codexHomeLabel()},
-		{Key: personalSkillsLabel, Value: userMounts.personalSkillsLabel()},
+		{Key: codexHomeLabel, Value: mountRoleLabel(plan, projectenv.RoleCodexHome)},
+		{Key: personalSkillsLabel, Value: mountRoleLabel(plan, projectenv.RolePersonalSkills)},
 		// Compared on reuse. It records `absent` for a session created with an empty set, which is
 		// what distinguishes "forwards nothing" from "predates this feature".
 		{Key: hostMCPLabel, Value: forwarding.set.Label()},
@@ -100,17 +88,16 @@ func (docker *DockerLauncher) buildExecRequest(
 	plan launchplan.Plan,
 	command []string,
 	containerID string,
-	userMounts UserMounts,
 ) (dockercli.ExecRequest, error) {
 	if len(command) == 0 {
 		return dockercli.ExecRequest{}, errors.New("command is required")
 	}
 
 	environment := []dockercli.KeyValue{{Key: "HOME", Value: docker.HostHome}}
-	if userMounts.CodexHomePresent() {
+	if mount, found := plan.MountForRole(projectenv.RoleCodexHome); found {
 		environment = append(environment, dockercli.KeyValue{
 			Key:   "CODEX_HOME",
-			Value: containerCodexHome(docker.HostHome),
+			Value: mount.Target,
 		})
 	}
 	wrappedCommand := append([]string{"codex-safe-session", "run", "--"}, command...)
@@ -125,27 +112,16 @@ func (docker *DockerLauncher) buildExecRequest(
 	}, nil
 }
 
+func mountRoleLabel(plan launchplan.Plan, role string) string {
+	mount, found := plan.MountForRole(role)
+	if !found {
+		return mountAbsent
+	}
+	return mount.Source
+}
+
 // containerCodexHome is the container-local Codex home: both the Codex-home mount target and the
 // CODEX_HOME value the wrapped command sees. One definition keeps the two from drifting.
 func containerCodexHome(hostHome string) string {
 	return filepath.Join(hostHome, ".codex")
-}
-
-// userMountBindMounts returns the shared user-specific bind mounts for a launch.
-func userMountBindMounts(hostHome string, userMounts UserMounts) []launchplan.BindMount {
-	mounts := make([]launchplan.BindMount, 0, 2)
-	if userMounts.CodexHomePresent() {
-		mounts = append(mounts, launchplan.BindMount{
-			Source: userMounts.CodexHome,
-			Target: containerCodexHome(hostHome),
-		})
-	}
-	if userMounts.SkillsPresent() {
-		mounts = append(mounts, launchplan.BindMount{
-			Source:   userMounts.PersonalSkills,
-			Target:   filepath.Join(hostHome, ".agents", "skills"),
-			ReadOnly: true,
-		})
-	}
-	return mounts
 }

@@ -71,7 +71,7 @@ Done when: typed defaults, TOML overlay, role validation, normalized binds, and 
 
 ### Phase 2: Public Config and Init Cutover
 Purpose: Make both public commands and Docker requests consume the resolved typed configuration.
-Status: to be done
+Status: done
 Done when: init and launches use the typed resolver exclusively, with no flat config, root-ignore, or legacy mount path.
 
 1. Resolve config after usage validation and Git discovery; apply only flags marked changed by `pflag`.
@@ -151,3 +151,7 @@ review.
   as a product failure.
 - 2026-07-19: Phase 1 added the typed config overlay/encoder, Docker-free host snapshot, role-aware physical mount
   resolver with provenance, and configured Codex argv merge. Focused tests, `go test ./...`, and `go vet ./...` pass.
+- 2026-07-19: Phase 2 made both public commands resolve typed config after usage validation and Git discovery, made
+  launcher construction lazy, and moved init to local typed files without root-ignore edits. Docker now receives only
+  the resolved physical plan; the flat reader, user-mount prompt path, and independent mount assembly are removed.
+  Focused tests, `go test ./...`, `go vet ./...`, and `make test` pass.

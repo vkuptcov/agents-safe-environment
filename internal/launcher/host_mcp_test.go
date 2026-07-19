@@ -8,6 +8,8 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 func testChannel(t *testing.T) hostmcp.Channel {
@@ -180,7 +182,7 @@ func TestValidateRunningHostMCPTreatsMissingLabelAsAbsent(t *testing.T) {
 func TestBuildCreateRequestOmitsHostMCPForAnEmptySet(t *testing.T) {
 	t.Parallel()
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		testPlan(), "image", "codex-safe-aba8b4ca4ff345d5d0443c0c", testUserMounts(), hostMCPPlan{},
+		testPlan(), "image", "codex-safe-aba8b4ca4ff345d5d0443c0c", hostMCPPlan{},
 	)
 	if err != nil {
 		t.Fatalf("buildCreateRequest() error = %v", err)
@@ -213,7 +215,7 @@ func TestBuildCreateRequestAddsHostMCPForANonEmptySet(t *testing.T) {
 	set := oneEndpointSet(t)
 	forwarding := hostMCPPlan{set: set, channel: testChannel(t), candidate: true}
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		testPlan(), "image", "codex-safe-aba8b4ca4ff345d5d0443c0c", testUserMounts(), forwarding,
+		testPlan(), "image", "codex-safe-aba8b4ca4ff345d5d0443c0c", forwarding,
 	)
 	if err != nil {
 		t.Fatalf("buildCreateRequest() error = %v", err)
@@ -256,12 +258,11 @@ func TestPlanHostMCPWithNoHostMCPPerformsNoConfigRead(t *testing.T) {
 	codexHome := writeCodexHome(t, "this is not valid TOML [[[")
 	attempt := &launchAttempt{
 		docker:     hostLauncher(1000, 1000, "/home/developer", ""),
-		plan:       testPlan(),
+		plan:       testPlanWithHostMCP(codexHome),
 		projectKey: "key",
 		noHostMCP:  true,
 	}
-	resolution := userMountResolution{mounts: UserMounts{CodexHome: codexHome, PersonalSkills: PersonalSkillsAbsent}}
-	if err := attempt.planHostMCP(resolution); err != nil {
+	if err := attempt.planHostMCP(); err != nil {
 		t.Fatalf("--no-host-mcp must skip discovery entirely, but got %v", err)
 	}
 	if !attempt.hostMCP.set.Empty() {
@@ -276,13 +277,24 @@ func TestPlanHostMCPWithoutFlagReadsConfig(t *testing.T) {
 	codexHome := writeCodexHome(t, "this is not valid TOML [[[")
 	attempt := &launchAttempt{
 		docker:     hostLauncher(1000, 1000, "/home/developer", ""),
-		plan:       testPlan(),
+		plan:       testPlanWithHostMCP(codexHome),
 		projectKey: "key",
 	}
-	resolution := userMountResolution{mounts: UserMounts{CodexHome: codexHome, PersonalSkills: PersonalSkillsAbsent}}
-	if err := attempt.planHostMCP(resolution); err == nil {
+	if err := attempt.planHostMCP(); err == nil {
 		t.Fatal("a malformed config.toml must fail discovery when the flag is absent")
 	}
+}
+
+func testPlanWithHostMCP(codexHome string) launchplan.Plan {
+	plan := testPlan()
+	for index := range plan.Provenance {
+		if plan.Provenance[index].Mount.Target == "/home/developer/.codex" {
+			plan.Provenance[index].Mount.Source = codexHome
+			plan.Mounts[index].Source = codexHome
+		}
+	}
+	plan.Roles = append(plan.Roles, projectenv.RoleHostMCPChannel)
+	return plan
 }
 
 func writeCodexHome(t *testing.T, config string) string {

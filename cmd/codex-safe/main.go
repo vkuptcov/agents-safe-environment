@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/cli"
@@ -32,24 +31,43 @@ func config() cli.Config {
 		Usage:        usage,
 		// The product always runs the image-owned Codex binary. Arguments after -- are Codex
 		// arguments, never a standalone executable, so no arbitrary command reaches the container.
-		BuildCommand: func(args []string) ([]string, error) {
-			return launcher.DefaultCodexCommand(args), nil
-		},
+		BuildCommand:            launcher.CodexCommand,
+		WarnWhenCodexHomeAbsent: true,
 	}
 }
 
 func main() {
-	docker, err := launcher.NewDockerLauncher(launcher.CodexHomeRequired)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "codex-safe: initialize Docker launcher: %v\n", err)
-		os.Exit(1)
-	}
 	os.Exit(cli.Run(
 		context.Background(),
 		config(),
 		os.Args[1:],
 		os.Stdout,
 		os.Stderr,
-		cli.Dependencies{Discover: gitproject.Discover, BuildLaunchPlan: launchplan.Build, Launcher: docker},
+		cli.Dependencies{
+			Discover:      gitproject.Discover,
+			ResolveConfig: resolveProjectConfig,
+			NewLauncher: func() (cli.Launcher, error) {
+				return launcher.NewDockerLauncher()
+			},
+		},
 	))
+}
+
+func resolveProjectConfig(project gitproject.Project, overrides launchplan.Overrides) (cli.ResolvedConfig, error) {
+	host, err := launcher.ResolveHostEnvironment()
+	if err != nil {
+		return cli.ResolvedConfig{}, err
+	}
+	resolved, err := launcher.ResolveProjectConfig(project, host, defaultImage, overrides)
+	if err != nil {
+		return cli.ResolvedConfig{}, err
+	}
+	return cli.ResolvedConfig{
+		Plan:                resolved.Resolution.Plan,
+		Image:               resolved.Config.Common.Image,
+		Options:             resolved.Options,
+		CodexArguments:      resolved.Config.Codex.Arguments,
+		Degradations:        resolved.Resolution.Degradations,
+		DefaultCodexHomeSet: resolved.DefaultCodexHomeSet,
+	}, nil
 }

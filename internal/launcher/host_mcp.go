@@ -11,6 +11,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/mcpchannel"
 )
 
@@ -119,15 +120,14 @@ func sidecarName(projectKey string, channel hostmcp.Channel) string {
 // Discovery reads the Codex home this launch already resolved, so --no-host-mcp and a launch with no
 // Codex home both reduce to an empty set with no separate resolution path. An empty set allocates
 // nothing: no directory, no environment variable, no mount, no relay, and no banner line.
-func (attempt *launchAttempt) planHostMCP(resolution userMountResolution) error {
-	if attempt.noHostMCP {
-		// --no-host-mcp performs no config.toml read: discovery does not run at all.
+func (attempt *launchAttempt) planHostMCP() error {
+	if attempt.noHostMCP || !attempt.plan.HasRole(projectenv.RoleHostMCPChannel) {
+		// Disabled forwarding and an omitted logical channel role both perform no Codex config read.
 		return nil
 	}
-	codexHome := resolution.mounts.CodexHome
-	if !resolution.mounts.CodexHomePresent() {
-		// A missing home is resolved later, if at all; either way it carries no config.toml yet.
-		codexHome = ""
+	codexHome := ""
+	if mount, found := attempt.plan.MountForRole(projectenv.RoleCodexHome); found {
+		codexHome = mount.Source
 	}
 	set, err := hostmcp.Discover(codexHome)
 	if err != nil {
@@ -180,7 +180,6 @@ func (attempt *launchAttempt) resolveHostMCPImage(ctx context.Context) error {
 // order the design fixes: the generation directory exists, then the sidecar, then the session.
 func (attempt *launchAttempt) createSessionWithHostMCP(
 	ctx context.Context,
-	userMounts UserMounts,
 ) (string, bool, error) {
 	if !attempt.hostMCP.set.Empty() {
 		name := sidecarName(attempt.projectKey, attempt.hostMCP.channel)
@@ -202,7 +201,7 @@ func (attempt *launchAttempt) createSessionWithHostMCP(
 		defer cancel()
 		createCtx = bounded
 	}
-	containerID, conflict, err := attempt.createContainer(createCtx, userMounts)
+	containerID, conflict, err := attempt.createContainer(createCtx)
 	if err != nil || conflict {
 		return containerID, conflict, err
 	}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
@@ -14,6 +15,65 @@ type HostEnvironment struct {
 	GitConfig      string
 	CodexHome      string
 	PersonalSkills string
+}
+
+// ResolvedProjectConfig is the complete configuration and physical mount contract for one invocation.
+type ResolvedProjectConfig struct {
+	Config              projectenv.ProjectConfig
+	Defaults            projectenv.ProjectConfig
+	Resolution          launchplan.Resolution
+	Options             launchplan.Options
+	DefaultCodexHomeSet bool
+}
+
+// ResolveProjectConfig applies the documented defaults -> TOML -> explicit-flags order for one discovered project.
+func ResolveProjectConfig(
+	project gitproject.Project,
+	host HostEnvironment,
+	defaultImage string,
+	overrides launchplan.Overrides,
+) (ResolvedProjectConfig, error) {
+	defaults, err := DefaultProjectConfig(project, host, defaultImage)
+	if err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	config, err := projectenv.Load(project.WorktreeRoot, defaults)
+	if err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	if overrides.ImageOverride {
+		config.Common.Image = overrides.Image
+	}
+	if overrides.NoHostMCPOverride {
+		config.Common.NoHostMCP = overrides.NoHostMCP
+	}
+	if err := projectenv.Validate(config); err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	resolution, err := launchplan.Resolve(project, defaults, config)
+	if err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	_, defaultCodexHomeSet := findRole(defaults.Common.Mounts, projectenv.RoleCodexHome)
+	return ResolvedProjectConfig{
+		Config:     config,
+		Defaults:   defaults,
+		Resolution: resolution,
+		Options: launchplan.Options{
+			ImageOverride: overrides.ImageOverride,
+			NoHostMCP:     config.Common.NoHostMCP,
+		},
+		DefaultCodexHomeSet: defaultCodexHomeSet,
+	}, nil
+}
+
+func findRole(mounts []projectenv.MountConfig, role string) (projectenv.MountConfig, bool) {
+	for _, mount := range mounts {
+		if mount.Role == role {
+			return mount, true
+		}
+	}
+	return projectenv.MountConfig{}, false
 }
 
 // DefaultProjectConfig returns the full typed snapshot generated for one project and host environment.
