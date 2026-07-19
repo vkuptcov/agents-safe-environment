@@ -178,6 +178,141 @@ func TestBuildRejectsConfiguredMountOverlap(t *testing.T) {
 	})
 }
 
+func TestResolveRegularCheckoutNormalizesRequiredRoles(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	gitDir := filepath.Join(root, ".git")
+	if err := os.Mkdir(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	project := gitproject.Project{
+		RequestedDir: root,
+		WorktreeRoot: root,
+		PrimaryRoot:  root,
+		CommonGitDir: gitDir,
+	}
+	defaults := resolvedConfig(project, false)
+	resolution, err := Resolve(project, defaults, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMounts := []BindMount{{Source: root, Target: root}}
+	if !reflect.DeepEqual(resolution.Plan.Mounts, wantMounts) {
+		t.Fatalf("Mounts = %#v, want %#v", resolution.Plan.Mounts, wantMounts)
+	}
+	wantRoles := []string{projectenv.RolePrimaryCheckout, projectenv.RoleWorktree, projectenv.RoleCommonGitDir}
+	if !reflect.DeepEqual(resolution.Plan.Provenance[0].Roles, wantRoles) {
+		t.Errorf("roles = %#v, want %#v", resolution.Plan.Provenance[0].Roles, wantRoles)
+	}
+}
+
+func TestResolveLinkedWorktreePreservesNestedWritableGitMount(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	primary := filepath.Join(base, "primary")
+	worktree := filepath.Join(base, "worktree")
+	commonGit := filepath.Join(primary, ".git")
+	for _, path := range []string{primary, worktree, commonGit} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := gitproject.Project{
+		RequestedDir: worktree,
+		WorktreeRoot: worktree,
+		PrimaryRoot:  primary,
+		CommonGitDir: commonGit,
+		Linked:       true,
+	}
+	defaults := resolvedConfig(project, true)
+	resolution, err := Resolve(project, defaults, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []BindMount{
+		{Source: primary, Target: primary, ReadOnly: true},
+		{Source: commonGit, Target: commonGit},
+		{Source: worktree, Target: worktree},
+	}
+	if !reflect.DeepEqual(resolution.Plan.Mounts, want) {
+		t.Fatalf("Mounts = %#v, want %#v", resolution.Plan.Mounts, want)
+	}
+}
+
+func TestResolveRejectsOmittedRequiredRoleAndReportsOptionalDeletion(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	gitDir := filepath.Join(root, ".git")
+	if err := os.Mkdir(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitConfig := filepath.Join(root, "gitconfig")
+	if err := os.WriteFile(gitConfig, []byte("[user]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	project := gitproject.Project{
+		RequestedDir: root,
+		WorktreeRoot: root,
+		PrimaryRoot:  root,
+		CommonGitDir: gitDir,
+	}
+	defaults := resolvedConfig(project, false)
+	defaults.Common.Mounts = append([]projectenv.MountConfig{{
+		Role:     projectenv.RoleHostGitConfig,
+		Source:   gitConfig,
+		Target:   filepath.Join(root, "container-gitconfig"),
+		ReadOnly: true,
+	}}, defaults.Common.Mounts...)
+
+	withoutOptional := defaults
+	withoutOptional.Common.Mounts = withoutOptional.Common.Mounts[1:]
+	resolution, err := Resolve(project, defaults, withoutOptional)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Degradation{{Role: projectenv.RoleHostGitConfig}}; !reflect.DeepEqual(resolution.Degradations, want) {
+		t.Fatalf("Degradations = %#v, want %#v", resolution.Degradations, want)
+	}
+
+	withoutRequired := withoutOptional
+	withoutRequired.Common.Mounts = withoutRequired.Common.Mounts[1:]
+	_, err = Resolve(project, defaults, withoutRequired)
+	if err == nil || !strings.Contains(err.Error(), "required mount role") {
+		t.Fatalf("Resolve() error = %v, want required-role rejection", err)
+	}
+}
+
+func resolvedConfig(project gitproject.Project, linked bool) projectenv.ProjectConfig {
+	return projectenv.ProjectConfig{
+		Common: projectenv.CommonConfig{
+			Image: "test:image",
+			Mounts: []projectenv.MountConfig{
+				{
+					Role:     projectenv.RolePrimaryCheckout,
+					Source:   project.PrimaryRoot,
+					Target:   project.PrimaryRoot,
+					ReadOnly: linked,
+				},
+				{
+					Role:   projectenv.RoleCommonGitDir,
+					Source: project.CommonGitDir,
+					Target: project.CommonGitDir,
+				},
+				{
+					Role:   projectenv.RoleWorktree,
+					Source: project.WorktreeRoot,
+					Target: project.WorktreeRoot,
+				},
+				{
+					Role:   projectenv.RoleHostMCPChannel,
+					Source: projectenv.HostMCPChannelSource,
+					Target: projectenv.HostMCPChannelTarget,
+				},
+			},
+		},
+	}
+}
+
 func writeMountConfig(t *testing.T, root string, mounts ...string) {
 	t.Helper()
 	contextPath := filepath.Join(root, projectenv.Directory)

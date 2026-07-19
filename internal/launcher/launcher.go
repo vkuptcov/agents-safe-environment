@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/user"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -46,6 +45,8 @@ type DockerLauncher struct {
 	// HostGitConfig is the canonical host path mounted read-only as the container's global Git config.
 	// It is empty when the invoking environment has no $HOME/.gitconfig file.
 	HostGitConfig string
+	// HostEnvironment is the Docker-free host snapshot shared with project-default generation.
+	HostEnvironment HostEnvironment
 	// AllocateTTY controls whether Docker allocates a terminal for the command.
 	AllocateTTY bool
 	// CanPrompt reports whether stdin and the diagnostic stream can service an interactive host
@@ -94,18 +95,9 @@ func NewDockerLauncher(codexHomePolicy CodexHomePolicy) (*DockerLauncher, error)
 	if err != nil {
 		return nil, fmt.Errorf("look up host group %d: %w", hostGID, err)
 	}
-	hostHome, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("resolve host home directory: %w", err)
-	}
-	hostHome = filepath.Clean(hostHome)
-	if hostHome == "/" {
-		return nil, errors.New("host home directory cannot be the filesystem root")
-	}
-	if err := launchplan.ValidateMountPath("host home directory", hostHome); err != nil {
-		return nil, err
-	}
-	hostGitConfig, err := discoverHostGitConfig(hostHome)
+	// Construction stays limited to the historical identity/Git preflight. Optional Codex and skills discovery belongs
+	// to the typed resolver, which Phase 2 invokes only after CLI usage validation and Git discovery.
+	hostEnvironment, err := resolveHostIdentity(defaultHostEnvironmentInputs())
 	if err != nil {
 		return nil, err
 	}
@@ -121,8 +113,9 @@ func NewDockerLauncher(codexHomePolicy CodexHomePolicy) (*DockerLauncher, error)
 		HostGID:         hostGID,
 		HostUser:        hostUser.Username,
 		HostGroup:       hostGroup.Name,
-		HostHome:        hostHome,
-		HostGitConfig:   hostGitConfig,
+		HostHome:        hostEnvironment.HomeDir,
+		HostGitConfig:   hostEnvironment.GitConfig,
+		HostEnvironment: hostEnvironment,
 		AllocateTTY:     terminal.IsTerminal(os.Stdin) && terminal.IsTerminal(os.Stdout),
 		CanPrompt:       terminal.IsTerminal(os.Stdin) && terminal.IsTerminal(os.Stderr),
 		LookupEnv:       os.LookupEnv,

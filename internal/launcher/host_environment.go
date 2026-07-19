@@ -9,6 +9,87 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
+// HostEnvironmentInputs supplies the Docker-free host lookups used by both initialization and launcher construction.
+type HostEnvironmentInputs struct {
+	UserHomeDir       func() (string, error)
+	LookupEnv         func(string) (string, bool)
+	DiscoverGitConfig func(string) (string, error)
+}
+
+// ResolveHostEnvironment resolves canonical optional host paths without contacting Docker.
+func ResolveHostEnvironment() (HostEnvironment, error) {
+	return resolveHostEnvironment(defaultHostEnvironmentInputs())
+}
+
+func defaultHostEnvironmentInputs() HostEnvironmentInputs {
+	return HostEnvironmentInputs{
+		UserHomeDir:       os.UserHomeDir,
+		LookupEnv:         os.LookupEnv,
+		DiscoverGitConfig: discoverHostGitConfig,
+	}
+}
+
+func resolveHostEnvironment(inputs HostEnvironmentInputs) (HostEnvironment, error) {
+	if inputs.UserHomeDir == nil || inputs.LookupEnv == nil || inputs.DiscoverGitConfig == nil {
+		return HostEnvironment{}, errors.New("host environment inputs are incomplete")
+	}
+	environment, err := resolveHostIdentity(inputs)
+	if err != nil {
+		return HostEnvironment{}, err
+	}
+	resolution, err := inspectUserMounts(UserMountInputs{
+		LookupEnv:       inputs.LookupEnv,
+		HomeDir:         environment.HomeDir,
+		CodexHomePolicy: CodexHomeOptional,
+	})
+	if err != nil {
+		return HostEnvironment{}, err
+	}
+	if resolution.mounts.CodexHomePresent() {
+		environment.CodexHome = resolution.mounts.CodexHome
+	}
+	if resolution.mounts.SkillsPresent() {
+		environment.PersonalSkills = resolution.mounts.PersonalSkills
+	}
+	return environment, nil
+}
+
+func resolveHostIdentity(inputs HostEnvironmentInputs) (HostEnvironment, error) {
+	if inputs.UserHomeDir == nil || inputs.DiscoverGitConfig == nil {
+		return HostEnvironment{}, errors.New("host identity inputs are incomplete")
+	}
+	home, err := inputs.UserHomeDir()
+	if err != nil {
+		return HostEnvironment{}, fmt.Errorf("resolve host home directory: %w", err)
+	}
+	if !filepath.IsAbs(home) {
+		return HostEnvironment{}, fmt.Errorf("host home directory %q is not absolute", home)
+	}
+	home, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		return HostEnvironment{}, fmt.Errorf("canonicalize host home directory %q: %w", home, err)
+	}
+	home = filepath.Clean(home)
+	if home == string(filepath.Separator) {
+		return HostEnvironment{}, errors.New("host home directory cannot be the filesystem root")
+	}
+	info, err := os.Stat(home)
+	if err != nil {
+		return HostEnvironment{}, fmt.Errorf("inspect host home directory %q: %w", home, err)
+	}
+	if !info.IsDir() {
+		return HostEnvironment{}, fmt.Errorf("host home directory %q is not a directory", home)
+	}
+	if err := launchplan.ValidateMountPath("host home directory", home); err != nil {
+		return HostEnvironment{}, err
+	}
+	gitConfig, err := inputs.DiscoverGitConfig(home)
+	if err != nil {
+		return HostEnvironment{}, err
+	}
+	return HostEnvironment{HomeDir: home, GitConfig: gitConfig}, nil
+}
+
 func (docker *DockerLauncher) validateConfiguration() error {
 	if docker == nil {
 		return errors.New("Docker launcher is nil")

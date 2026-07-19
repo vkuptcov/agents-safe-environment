@@ -19,13 +19,34 @@ var codexDefaultSandboxArgs = []string{"--sandbox", "danger-full-access"}
 // never a standalone command. A default sandbox policy is applied unless the forwarded arguments
 // already select one, so an explicit user choice is never overridden.
 func DefaultCodexCommand(codexArgs []string) []string {
-	command := make([]string, 0, len(codexArgs)+len(codexDefaultSandboxArgs)+1)
-	command = append(command, CodexBinaryPath)
-	if !codexArgsSelectSandbox(codexArgs) {
-		command = append(command, codexDefaultSandboxArgs...)
+	return CodexCommand(codexDefaultSandboxArgs, codexArgs)
+}
+
+// CodexCommand combines project-configured and invocation arguments. An explicit invocation sandbox selection removes
+// only the configured default sandbox pair; every other configured argument remains in order.
+func CodexCommand(configuredArgs, invocationArgs []string) []string {
+	configured := append([]string(nil), configuredArgs...)
+	if codexArgsSelectSandbox(invocationArgs) {
+		configured = withoutDefaultSandbox(configured)
 	}
-	command = append(command, codexArgs...)
+	command := make([]string, 0, len(configured)+len(invocationArgs)+1)
+	command = append(command, CodexBinaryPath)
+	command = append(command, configured...)
+	command = append(command, invocationArgs...)
 	return command
+}
+
+func withoutDefaultSandbox(arguments []string) []string {
+	result := make([]string, 0, len(arguments))
+	for index := 0; index < len(arguments); index++ {
+		if index+1 < len(arguments) && arguments[index] == codexDefaultSandboxArgs[0] &&
+			arguments[index+1] == codexDefaultSandboxArgs[1] {
+			index++
+			continue
+		}
+		result = append(result, arguments[index])
+	}
+	return result
 }
 
 // codexArgsSelectSandbox reports whether the forwarded arguments already choose a Codex sandbox

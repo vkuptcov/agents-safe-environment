@@ -52,3 +52,25 @@ func TestDefaultCodexCommandKeepsExplicitSandboxChoice(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexCommandRetainsConfiguredArgumentsAndSuppressesOnlyDefaultSandbox(t *testing.T) {
+	t.Parallel()
+	configured := []string{"--sandbox", "danger-full-access", "--model", "gpt-5"}
+	got := CodexCommand(configured, []string{"exec", "--sandbox", "read-only"})
+	want := []string{CodexBinaryPath, "--model", "gpt-5", "exec", "--sandbox", "read-only"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("CodexCommand() = %#v, want %#v", got, want)
+	}
+	if !reflect.DeepEqual(configured, []string{"--sandbox", "danger-full-access", "--model", "gpt-5"}) {
+		t.Fatal("CodexCommand() mutated configured arguments")
+	}
+}
+
+func TestCodexCommandKeepsCustomConfiguredSandbox(t *testing.T) {
+	t.Parallel()
+	got := CodexCommand([]string{"--sandbox", "workspace-write"}, []string{"--sandbox", "read-only"})
+	want := []string{CodexBinaryPath, "--sandbox", "workspace-write", "--sandbox", "read-only"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("CodexCommand() = %#v, want %#v", got, want)
+	}
+}
