@@ -88,49 +88,49 @@ role = "host_git_config"
 source = "/home/alex/.gitconfig"
 target = "/home/alex/.gitconfig"
 read_only = true
-comment = "Optional: expose Git identity and includes without allowing the container to change them."
+comment = "Optional: expose host Git identity and includes read-only."
 
 [[common.mounts]]
 role = "primary_checkout"
 source = "/home/alex/sources/agents-safe-environment"
 target = "/home/alex/sources/agents-safe-environment"
 read_only = true
-comment = "Required: expose the primary checkout needed by the linked worktree without allowing branch changes there."
+comment = "Required: expose the primary checkout for Git topology."
 
 [[common.mounts]]
 role = "common_git_dir"
 source = "/home/alex/sources/agents-safe-environment/.git"
 target = "/home/alex/sources/agents-safe-environment/.git"
 read_only = false
-comment = "Required: keep shared Git refs, indexes, locks, and linked-worktree metadata writable."
+comment = "Required: keep shared Git metadata writable."
 
 [[common.mounts]]
 role = "worktree"
 source = "/home/alex/sources/agents-safe-environment-init-command-support"
 target = "/home/alex/sources/agents-safe-environment-init-command-support"
 read_only = false
-comment = "Required: expose the init-command-support branch worktree at the same absolute path used by host tools."
+comment = "Required: expose the selected worktree writable."
 
 [[common.mounts]]
 role = "codex_home"
 source = "/home/alex/.codex"
 target = "/home/alex/.codex"
 read_only = false
-comment = "Optional: persist Codex configuration, authentication, sessions, logs, and installed state."
+comment = "Optional: persist host Codex state."
 
 [[common.mounts]]
 role = "personal_skills"
 source = "/home/alex/.agents/skills"
 target = "/home/alex/.agents/skills"
 read_only = true
-comment = "Optional: expose personal skills without allowing the project to modify their source."
+comment = "Optional: expose personal skills read-only."
 
 [[common.mounts]]
 role = "host_mcp_channel"
 source = "runtime://host-mcp-channel"
 target = "/run/codex-safe-host-mcp"
 read_only = false
-comment = "Optional: carry private Unix sockets to eligible host MCP relays."
+comment = "Optional: forward eligible host MCP endpoints."
 
 [codex]
 arguments = [

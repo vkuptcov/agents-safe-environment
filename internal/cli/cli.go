@@ -132,19 +132,19 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 }
 
 func printDegradationWarnings(cfg Config, resolved ResolvedConfig, stderr io.Writer) {
-	defaultCodexHomeOmitted := false
+	roles := make(map[string]bool, len(resolved.Degradations)+1)
 	for _, degradation := range resolved.Degradations {
-		message, found := degradationWarning(degradation.Role)
-		if !found {
+		roles[degradation.Role] = true
+	}
+	if cfg.WarnWhenCodexHomeAbsent && !resolved.DefaultCodexHomeSet {
+		roles["codex_home"] = true
+	}
+	for _, role := range []string{"host_git_config", "codex_home", "personal_skills", "host_mcp_channel"} {
+		if !roles[role] {
 			continue
 		}
-		if degradation.Role == "codex_home" {
-			defaultCodexHomeOmitted = true
-		}
+		message, _ := degradationWarning(role)
 		fmt.Fprintf(stderr, "%s: warning: %s\n", cfg.Name, message)
-	}
-	if cfg.WarnWhenCodexHomeAbsent && !resolved.DefaultCodexHomeSet && !defaultCodexHomeOmitted {
-		fmt.Fprintf(stderr, "%s: warning: %s\n", cfg.Name, degradationWarningCodexHome)
 	}
 }
 

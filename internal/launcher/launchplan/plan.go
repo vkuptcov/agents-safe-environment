@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
@@ -317,9 +316,7 @@ func normalizeLogicalMounts(logical []logicalMount) ([]BindMount, []MountProvena
 		merged = append(merged, MountProvenance{Mount: item.mount, Roles: []string{item.role}})
 	}
 
-	sort.SliceStable(merged, func(first, second int) bool {
-		return mountContains(merged[first].Mount, merged[second].Mount)
-	})
+	merged = orderMountParentsFirst(merged)
 	retained := make([]MountProvenance, 0, len(merged))
 	for _, candidate := range merged {
 		redundant := false
@@ -352,6 +349,36 @@ func normalizeLogicalMounts(logical []logicalMount) ([]BindMount, []MountProvena
 		mounts = append(mounts, mount.Mount)
 	}
 	return mounts, retained, nil
+}
+
+// orderMountParentsFirst is a stable topological ordering of the mount-containment relation.
+// It chooses the first available input entry while ensuring every parent precedes each nested child.
+func orderMountParentsFirst(mounts []MountProvenance) []MountProvenance {
+	ordered := make([]MountProvenance, 0, len(mounts))
+	placed := make([]bool, len(mounts))
+	for len(ordered) < len(mounts) {
+		for candidate := range mounts {
+			if placed[candidate] {
+				continue
+			}
+			hasUnplacedParent := false
+			for parent := range mounts {
+				if parent == candidate || placed[parent] {
+					continue
+				}
+				if mountContains(mounts[parent].Mount, mounts[candidate].Mount) {
+					hasUnplacedParent = true
+					break
+				}
+			}
+			if hasUnplacedParent {
+				continue
+			}
+			ordered = append(ordered, mounts[candidate])
+			placed[candidate] = true
+		}
+	}
+	return ordered
 }
 
 func mountContains(parent, child BindMount) bool {

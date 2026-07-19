@@ -123,8 +123,7 @@ func TestBuildCreateRequestOmitsHostMCPForAnEmptySet(t *testing.T) {
 			t.Fatal("an empty set must add no host MCP mount")
 		}
 	}
-	// The compared label still records `absent`, which is how reuse tells "forwards nothing" from
-	// "predates this feature".
+	// The diagnostic label records `absent` for a session that forwards nothing.
 	assertLabel := func(want string) {
 		for _, label := range request.Labels {
 			if label.Key == hostMCPLabel && label.Value == want {

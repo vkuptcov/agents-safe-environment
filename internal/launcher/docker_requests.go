@@ -42,10 +42,10 @@ func (docker *DockerLauncher) buildCreateRequest(
 		{Key: hostUIDLabel, Value: strconv.Itoa(docker.HostUID)},
 		{Key: managerProtocolLabel, Value: session.ProtocolVersion},
 		{Key: launchConfigLabel, Value: launchFingerprint},
+		// These unhashed values are retained for operator diagnostics. Creation-time reuse compares
+		// only launchConfigLabel after the ownership and protocol checks.
 		{Key: codexHomeLabel, Value: mountRoleLabel(plan, projectenv.RoleCodexHome)},
 		{Key: personalSkillsLabel, Value: mountRoleLabel(plan, projectenv.RolePersonalSkills)},
-		// Compared on reuse. It records `absent` for a session created with an empty set, which is
-		// what distinguishes "forwards nothing" from "predates this feature".
 		{Key: hostMCPLabel, Value: forwarding.set.Label()},
 	}
 	environment := []dockercli.KeyValue{

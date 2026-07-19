@@ -111,9 +111,9 @@ example, run a non-interactive Codex turn:
 ```
 
 While Codex runs, another terminal reuses the same container for the same worktree. Each project/UID pair maps
-to one deterministic `codex-safe-<24-hex-key>` container name. The launcher inspects that exact name and validates
-`codex-safe.managed=true`, `codex-safe.project-path`, `codex-safe.host-uid`, `codex-safe.manager-protocol`,
-`codex-safe.codex-home`, and `codex-safe.personal-skills` before reuse. Every invocation, including the first, runs
+to one deterministic `codex-safe-<24-hex-key>` container name. The launcher inspects that exact name, validates the
+ownership and manager-protocol labels, and compares the `codex-safe.launch-config` creation fingerprint before
+reuse. Every invocation, including the first, runs
 `docker exec codex-safe-session run -- /usr/local/bin/codex [CODEX ARG...]`; no user command owns the container
 lifecycle.
 
@@ -139,15 +139,22 @@ Prepare an inactive project-environment template from anywhere inside a Git work
 ./bin/agents-safe init
 ```
 
-This creates `.agents-safe/Dockerfile.sample` and `.agents-safe/config.toml` at the worktree root without contacting
-Docker. It also adds exact rules for those two local files to the root `.gitignore`; an active
-`.agents-safe/Dockerfile` remains trackable. Repeated initialization preserves existing content.
+This creates `.agents-safe/Dockerfile.sample`, `.agents-safe/config.toml`, and `.agents-safe/.gitignore` without
+contacting Docker. The local ignore file ignores generated project-environment files while keeping itself and an
+activated `.agents-safe/Dockerfile` trackable; the worktree-root `.gitignore` is not modified. Repeated
+initialization preserves existing content.
 
 Edit the Dockerfile sample, then rename it to `.agents-safe/Dockerfile` to activate automatic project-image builds.
-List additional absolute host directories in `config.toml` when the project container needs them:
+Append an `additional` entry to the generated mount list when the project container needs another absolute host
+directory:
 
 ```toml
-mounts = ["/home/user/.cache/example-tool"]
+[[common.mounts]]
+role = "additional"
+source = "/home/user/.cache/example-tool"
+target = "/home/user/.cache/example-tool"
+read_only = false
+comment = "Expose the example-tool cache to the project environment."
 ```
 
 Configured directories are mounted read-write at the same absolute paths for new containers. They must exist and

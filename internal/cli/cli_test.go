@@ -126,6 +126,29 @@ func TestRunPrintsDegradationsInStableRoleOrder(t *testing.T) {
 	}
 }
 
+func TestRunOrdersSyntheticCodexHomeWarningWithDegradations(t *testing.T) {
+	t.Parallel()
+	stderr := new(bytes.Buffer)
+	config := testConfig()
+	config.WarnWhenCodexHomeAbsent = true
+	deps := dependenciesFor(&clitest.RecordingLauncher{})
+	deps.ResolveConfig = func(gitproject.Project, launchplan.Overrides) (cli.ResolvedConfig, error) {
+		resolved := testResolvedConfig()
+		resolved.DefaultCodexHomeSet = false
+		resolved.Degradations = []launchplan.Degradation{{Role: "personal_skills"}}
+		return resolved, nil
+	}
+	if exit := cli.Run(context.Background(), config, []string{"cmd"}, new(bytes.Buffer), stderr, deps); exit != 0 {
+		t.Fatalf("Run() = %d", exit)
+	}
+	got := stderr.String()
+	codex := strings.Index(got, "host Codex state")
+	personal := strings.Index(got, "personal skills")
+	if codex < 0 || personal < 0 || codex > personal {
+		t.Fatalf("warnings = %q, want codex_home before personal_skills", got)
+	}
+}
+
 func TestRunConstructsLauncherOnlyAfterResolution(t *testing.T) {
 	t.Parallel()
 	constructed := false

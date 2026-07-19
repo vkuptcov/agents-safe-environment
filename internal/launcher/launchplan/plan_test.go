@@ -72,6 +72,29 @@ func TestResolveLinkedWorktreePreservesNestedWritableGitMount(t *testing.T) {
 	}
 }
 
+func TestNormalizeLogicalMountsOrdersParentBeforeInterleavedChild(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	parent := BindMount{Source: filepath.Join(root, "parent"), Target: "/container/parent"}
+	child := BindMount{Source: filepath.Join(root, "parent", "child"), Target: "/container/parent/child"}
+	unrelated := BindMount{Source: filepath.Join(root, "unrelated"), Target: "/container/unrelated"}
+
+	mounts, provenance, err := normalizeLogicalMounts([]logicalMount{
+		{mount: child, role: "child"},
+		{mount: unrelated, role: "unrelated"},
+		{mount: parent, role: "parent"},
+	})
+	if err != nil {
+		t.Fatalf("normalizeLogicalMounts() error = %v", err)
+	}
+	if want := []BindMount{unrelated, parent}; !reflect.DeepEqual(mounts, want) {
+		t.Fatalf("mounts = %#v, want %#v", mounts, want)
+	}
+	if want := []string{"parent", "child"}; !reflect.DeepEqual(provenance[1].Roles, want) {
+		t.Fatalf("parent roles = %#v, want %#v", provenance[1].Roles, want)
+	}
+}
+
 func TestResolveRejectsOmittedRequiredRoleAndReportsOptionalDeletion(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
