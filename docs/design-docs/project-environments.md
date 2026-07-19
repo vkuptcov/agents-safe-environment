@@ -9,7 +9,6 @@ Scope:
 - project-owned system toolchains and packages needed inside `codex-safe` and `agents-safe` sessions;
 - initialization of an inactive `.agents-safe/Dockerfile.sample` template;
 - automatic host-side builds from `.agents-safe/Dockerfile`;
-- local read-write mounts declared in `.agents-safe/config.toml`;
 - stable project-image naming, static compatibility checks, and active-session reuse;
 - precedence of the existing explicit `--image` override.
 
@@ -49,58 +48,16 @@ There is no additional launcher prompt or trust database.
 
 ## Contract
 
-### 1. Project initialization
+### 1. Dockerfile activation
 
-`agents-safe init [--project PATH]` discovers the selected Git worktree and creates:
+`agents-safe init` creates an inactive `Dockerfile.sample` as part of the project files specified by
+[Project Launcher Configuration](project-launcher-configuration.md#1-generated-files). The user reviews and edits the
+sample, then renames it to `.agents-safe/Dockerfile` to opt into the host-side build.
 
-```text
-<canonical-worktree-root>/.agents-safe/Dockerfile.sample
-<canonical-worktree-root>/.agents-safe/config.toml
-```
+Initialization does not inspect Docker, build an image, or start a session. A leading `init` selects the host
+subcommand; `agents-safe -- init` still launches a container command named `init`.
 
-Initialization is a host-side filesystem operation. It does not initialize Docker, inspect an image, build a project
-environment, or start a session. Invocation from a nested directory still writes to that worktree's root.
-
-The command creates `.agents-safe/` when absent, rejects that path when it is a symlink or non-directory, and never
-overwrites either generated file. Existing sibling files, including an active `Dockerfile`, are preserved. Repeated
-initialization creates only missing outputs.
-
-The sample is deliberately inactive. The user reviews and edits it, then renames it to `Dockerfile` to opt into the
-host-side build. A leading `init` selects this host subcommand; `agents-safe -- init` still launches a container
-command named `init`.
-
-The root `.gitignore` receives exact rules for `/.agents-safe/Dockerfile.sample` and
-`/.agents-safe/config.toml`. The command preserves all existing rules and does not ignore `.agents-safe/` or its
-active `Dockerfile`.
-
-### 2. Local mount configuration
-
-The generated configuration starts with an empty list:
-
-```toml
-# Additional host directories mounted read-write at the same absolute path in new project containers.
-mounts = []
-```
-
-Each entry is a literal absolute host directory. The launcher performs no tilde, environment-variable, glob, or
-relative-path expansion. It requires every source to exist, resolves symlinks to a canonical directory, rejects the
-filesystem root, and mounts the directory read-write at that same absolute path inside the Sysbox container.
-
-Configured mounts must not overlap the managed Git mounts or one another. This prevents a broad parent mount from
-overriding a narrower read-only or read-write boundary through Docker mount ordering. Duplicate canonical entries are
-ignored.
-
-The parser rejects unknown keys, malformed TOML, symlink or non-regular configuration files, missing sources, and
-non-directory sources. A missing `config.toml` keeps the existing no-additional-mount behavior.
-
-This file is local machine configuration, not a portable project contract. It is ignored by Git because absolute
-host paths differ between developers. It still lives in the writable worktree: project code can change it and affect
-a later cold launch. Users must review local mount changes before starting a new session.
-
-Configured mounts apply to both `codex-safe` and `agents-safe` only when a container is created. A live session keeps
-its immutable mount set until it exits; editing or removing the file does not add or revoke mounts in that container.
-
-### 3. Discovery and precedence
+### 2. Discovery and precedence
 
 The only project image definition is:
 
@@ -115,12 +72,12 @@ Rules:
 - The Dockerfile must be a regular file, not a symlink, device, socket, or directory.
 - The launcher does not search parent directories, the host home, or a linked worktree's primary checkout.
 - An explicitly supplied `--image` bypasses Dockerfile discovery and project-image building for that launch. It does
-  not bypass local mount configuration.
+  not bypass project launcher configuration.
 
 Nested context traversal, `.dockerignore`, `COPY`, and layer invalidation use Docker's own build-context semantics. The
 launcher does not compute a competing digest over the context.
 
-### 4. Build and cache
+### 3. Build and cache
 
 The launcher first checks for a reusable deterministic session. Only the new-container path builds a project image.
 
@@ -147,7 +104,7 @@ Build progress and diagnostics use launcher stderr. Stdout remains reserved for 
 The build receives no secret mounts, SSH forwarding, host environment copy, host home, Codex home, or Docker socket.
 Private build credentials require a separate design.
 
-### 5. Derived-image compatibility
+### 4. Derived-image compatibility
 
 After a successful build, the launcher inspects the stable tag and selects its immutable image ID. It rejects a
 derived image that changes any static base-image contract:
@@ -163,28 +120,26 @@ or broken runtime binaries fail without a base-image fallback.
 
 Validation does not make a Dockerfile trustworthy. The project opted into executing it by tracking the definition.
 
-### 6. Active-session reuse
+### 5. Active-session reuse
 
-Image selection applies only when the deterministic session container is created. A compatible running session is
-reused without building or inspecting a project image, even when:
+Image selection is a creation-time parameter under
+[Project Launcher Configuration](project-launcher-configuration.md#4-parameter-classes-and-active-containers). A
+running session is reused only when its recorded image reference and explicit-image intent match the current request.
+A mismatch fails without building, stopping, or replacing the active container.
 
-- `.agents-safe/Dockerfile` changed;
-- `.agents-safe/Dockerfile` was added or removed;
-- `.agents-safe/config.toml` changed or was removed;
-- a later invocation supplies an explicit `--image`.
-
-This matches the existing `--image` lifecycle: a later image choice does not replace an active container. The next
-cold create builds the current Dockerfile or returns to the selected base image when the Dockerfile is absent.
+Dockerfile content is not a config parameter. Changing, adding, or removing `.agents-safe/Dockerfile` does not mutate
+or invalidate an active container. After that container exits, the next cold create builds the current Dockerfile or
+uses the selected image directly when the Dockerfile is absent or explicitly bypassed.
 
 The launcher never terminates active commands, rebuilds a running container, or installs packages through
 `docker exec`.
 
-### 7. Failure and concurrency
+### 6. Failure and concurrency
 
 The launcher fails without fallback when:
 
 - discovery finds an invalid context directory or Dockerfile boundary;
-- local mount configuration is invalid or names an unsafe source;
+- project launcher configuration is invalid;
 - the base image cannot be made available;
 - Docker build fails;
 - the built tag cannot be inspected;
@@ -198,7 +153,7 @@ Concurrent cold callers may invoke duplicate builds against the same stable tag.
 container-name race still ensures that only one session container wins. Build serialization is an optimization, not
 a version-one host-state contract.
 
-### 8. Cache lifetime
+### 7. Cache lifetime
 
 The stable derived image and BuildKit layers remain in host Docker after a Sysbox session is removed. They consume
 disk until ordinary Docker cleanup removes them.
@@ -210,8 +165,9 @@ Version one does not persist:
 - npm package caches;
 - nested-Docker images, containers, or volumes.
 
-The launcher never discovers or mounts global host package-manager directories implicitly. A user may expose a narrow
-directory explicitly through local mount configuration and accepts read-write project access to that path.
+The launcher never discovers or mounts global host package-manager directories implicitly. A user may add a narrow
+mount through [Project Launcher Configuration](project-launcher-configuration.md) and accepts the configured access
+mode for that path.
 
 ## Repository Example
 
@@ -253,9 +209,6 @@ This design excludes:
 Focused tests prove:
 
 - initialization creates the exact inactive sample without constructing a Docker launcher;
-- initialization is idempotent, preserves existing files, and adds exact `.gitignore` rules;
-- mount configuration accepts canonical directories and rejects malformed, unknown, missing, root, file, and overlap
-  cases;
 - absent, valid, and invalid discovery boundaries;
 - stable per-project image naming;
 - explicit `--image` bypass;
@@ -266,7 +219,6 @@ Focused tests prove:
 
 Real-host smoke proves:
 
-- a configured external directory is visible read-write at the same absolute path in the Sysbox container;
 - the public no-`--image` path builds a dependency-free v1 fixture;
 - changing the Dockerfile to v2 does not mutate the active v1 session;
 - the next cold create rebuilds the stable tag and executes v2;
@@ -276,9 +228,8 @@ Real-host smoke proves:
 
 - `internal/cli/`: preserves whether `--image` was explicitly supplied.
 - `cmd/agents-safe/`: dispatches the host-side `init` subcommand before Docker launcher construction.
-- `internal/launcher/projectenv/`: initializes local resources, parses configured mounts, discovers the fixed build
-  context, and names the stable image tag.
-- `internal/launcher/launchplan/`: merges validated configured mounts with the managed Git topology.
+- `internal/launcher/projectenv/`: discovers the fixed build context and names the stable image tag; initialization
+  and launcher config are owned by [Project Launcher Configuration](project-launcher-configuration.md).
 - `internal/launcher/`: runs build orchestration, validates the result, and selects its immutable ID.
 - `internal/launcher/dockercli/`: provides typed Docker build and image-inspection transport.
 - `tests/smoke/`: provides real Docker and Sysbox proof.

@@ -129,8 +129,8 @@ agents-safe [launcher options] [--] command [argument ...]
 - `--image` selects an image only when creating a new container; it does not replace an active environment.
 - An explicit `--image` bypasses `.agents-safe/Dockerfile` discovery; otherwise project-image behavior is owned by
   [Project-Specific Agent Environments](project-environments.md).
-- Local directories listed in `.agents-safe/config.toml` are added only when a new container is created; `--image`
-  does not bypass this mount configuration.
+- The typed `.agents-safe/config.toml` is resolved as specified by
+  [Project Launcher Configuration](project-launcher-configuration.md); mount changes apply only to a new container.
 - Interactive mode attaches stdin, stdout, stderr, and the terminal to the container process.
 - After successful environment setup, the Codex exit code becomes the `codex-safe` exit code.
 
@@ -143,9 +143,9 @@ through the session wrapper. For example, `agents-safe bash` runs image-provided
 `agents-safe bash -c 'make test'` passes the script to that Bash. `agents-safe` does not invoke a shell implicitly.
 It can execute only programs available in the image or explicitly mounted project paths.
 
-`agents-safe init` is the only host-side subcommand. It creates an inactive project-environment sample as specified
-by [Project-Specific Agent Environments](project-environments.md) and returns without initializing Docker. Because a
-leading `init` is reserved for that operation, `agents-safe -- init` executes a container command named `init`.
+`agents-safe init` is the only host-side subcommand. It creates the files specified by
+[Project Launcher Configuration](project-launcher-configuration.md) and returns without initializing Docker. Because
+a leading `init` is reserved for that operation, `agents-safe -- init` executes a container command named `init`.
 
 Both commands use the same project discovery, mount plan, image selection, session-reuse validation, terminal
 attachment, and exit-code propagation. The lower-level session wrapper remains command-agnostic for container-local
@@ -232,14 +232,13 @@ Every regular-checkout and linked-worktree launch receives the same user mounts:
 
 #### Local project-configured mounts
 
-`.agents-safe/config.toml` may list additional existing host directories. Each source is canonicalized and mounted
-read-write at the same absolute container path. The launcher rejects root, managed-mount overlaps, configured-mount
-overlaps, malformed TOML, and unknown settings before it contacts Docker.
+The resolved mount topology above is serialized with explicit roles, paths, modes, and descriptions in
+`.agents-safe/config.toml`. The file is an authoritative host-specific snapshot; required roles and security-sensitive
+modes are validated before Docker creation. Syntax, layering, and CLI precedence are owned by
+[Project Launcher Configuration](project-launcher-configuration.md).
 
-The configuration is local and Git-ignored, but it remains writable project content. A process with worktree access
-can modify it for a later cold launch, so it is explicit operator trust rather than a project-enforced security policy.
-The full syntax and immutable active-session behavior are owned by
-[Project-Specific Agent Environments](project-environments.md).
+The file is local and Git-ignored, but it remains writable project content. A process with worktree access can modify
+it for a later cold launch, so every configured writable source is explicit operator trust.
 
 #### Host home path and Git configuration
 
@@ -488,19 +487,21 @@ to the host MCP servers named by the resolved Codex home is owned by
 A new container has a deterministic name derived from the canonical worktree root and invoking host UID. The
 launcher inspects that exact name, then validates `codex-safe.managed`, `codex-safe.project-path`,
 `codex-safe.host-uid`, `codex-safe.manager-protocol`, `codex-safe.codex-home`, `codex-safe.personal-skills`, and
-`codex-safe.host-mcp`. The `codex-safe.codex-home` and `codex-safe.personal-skills` labels each contain the
-canonical resolved source or the literal `absent`, so reuse validation matches an absent Codex home or absent skills.
-`codex-safe.host-mcp` is owned by [`host-mcp-forwarding.md`](host-mcp-forwarding.md) and follows the same rule. That
-design also sets `codex-safe.host-mcp-channel`, which locates a running container's MCP channel and is read rather
-than compared.
+`codex-safe.host-mcp`. It also validates `codex-safe.launch-config`, the deterministic fingerprint of all
+creation-time parameters defined by
+[Project Launcher Configuration](project-launcher-configuration.md#4-parameter-classes-and-active-containers).
+
+The `codex-safe.codex-home` and `codex-safe.personal-skills` labels each contain the canonical resolved source or the
+literal `absent`. `codex-safe.host-mcp` is owned by [`host-mcp-forwarding.md`](host-mcp-forwarding.md). That design also
+sets `codex-safe.host-mcp-channel`, which locates a running container's MCP channel and is read rather than compared.
 A compatible running container receives the new command through `docker exec`; an absent name is created with detached
 `docker run --rm`. Different worktrees continue to use distinct Docker daemons and writable layers.
 
-User mounts are fixed when the container is created and cannot be changed by `docker exec`. If a later invocation
-resolves a different `CODEX_HOME` or personal-skills directory, it must not reuse the live container. The launcher
-reports the mismatch and asks the user to finish the active session before retrying; it does not silently use stale
-configuration or terminate another command. Ownership or protocol label mismatches remain name conflicts. The
-companion session design defines the complete inspection algorithm and diagnostics.
+Creation-time parameters are fixed when the container is created and cannot be changed by `docker exec`. A fingerprint
+mismatch prevents reuse. The launcher reports the running and requested fingerprints and asks the user to finish the
+active session before retrying; it does not silently use stale configuration, terminate another command, or replace
+the container. Ownership or protocol label mismatches remain name conflicts. Command-time parameters are excluded
+from the fingerprint and apply to each new `docker exec`.
 
 A running container whose `codex-safe.codex-home` label is `absent` cannot satisfy a later `codex-safe` launch:
 `docker exec` cannot add the missing bind mount. The launcher reports that specific active-session condition and does
@@ -713,6 +714,7 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Verify terminal resize and interactive input.
 - Verify the deterministic name is derived from canonical worktree path and host UID, inspected directly, and reused
   through a wrapped `docker exec`.
+- Reject reuse when any creation-time parameter changes; prove command-time argument changes reuse the container.
 - Verify simultaneous first callers create one container and both commands register with its manager.
 - Verify the final managed command removes the container only after the idle timeout.
 - After each normal scenario, prove the Sysbox container and nested containers stopped and were removed.
