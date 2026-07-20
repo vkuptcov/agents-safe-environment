@@ -139,6 +139,7 @@ read_only = false
 func TestEncodeTypedConfigIsDeterministic(t *testing.T) {
 	t.Parallel()
 	config := typedDefaults(t)
+	config.Common.DependencyCaches = []DependencyCacheConfig{}
 	var first bytes.Buffer
 	if err := Encode(config, &first); err != nil {
 		t.Fatal(err)
@@ -152,6 +153,9 @@ func TestEncodeTypedConfigIsDeterministic(t *testing.T) {
 	}
 	if !strings.Contains(first.String(), "[common]") || !strings.Contains(first.String(), "[[common.mounts]]") {
 		t.Fatalf("Encode() = %q, want typed sections", first.String())
+	}
+	if !strings.Contains(first.String(), "dependency_caches = []") {
+		t.Fatalf("Encode() = %q, want explicit empty dependency-cache snapshot", first.String())
 	}
 }
 

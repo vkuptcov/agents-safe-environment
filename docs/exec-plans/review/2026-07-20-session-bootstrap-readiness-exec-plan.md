@@ -17,7 +17,7 @@ session must expose its command socket before the launcher runs the first user-o
 ## Done Criteria
 
 - A cold session waits for root bootstrap and the session-manager socket before its first unprivileged command.
-- Reused sessions keep their current direct command path.
+- Reused sessions run the root readiness check before their user command; established sessions return immediately.
 - A failed bootstrap reports a bounded readiness failure without running a user command.
 - Unit coverage pins root readiness before user exec, and the Sysbox smoke suite passes.
 
@@ -30,7 +30,7 @@ Detached `docker run` returns before `serve` has completed account reconciliatio
 
 - Use a container-local, root-only readiness command that waits for the already-owned session socket.
 - Keep the existing session protocol and user-command wrapper unchanged.
-- Apply readiness only after a newly created session; reuse already requires a running managed container.
+- Apply readiness after creation and adoption so a concurrent first caller cannot enter a bootstrapping account.
 
 ## Phases
 
@@ -49,7 +49,7 @@ Status: done
 Done when: every new session runs a root readiness exec before its first user command.
 
 1. Add a bounded root readiness request after successful session creation.
-2. Add launcher tests for the cold and reuse paths.
+2. Add launcher tests for cold creation, established reuse, and concurrent-create adoption.
 3. Preserve existing host-MCP readiness and cleanup behavior.
 
 ### Phase 3: Verification
@@ -84,3 +84,5 @@ Done when: focused checks and the complete smoke suite pass on this host.
 - 2026-07-20: Created after real Sysbox smoke logs showed `usermod` racing the first user-owned exec.
 - 2026-07-20: Added root `wait-ready`, cold-launch ordering coverage, and the session-manager contract update.
   `make test`, `make check-docs`, `git diff --check`, and `make test-smoke-go` passed on the Sysbox host.
+- 2026-07-20: Implementation review F-001 extended readiness to every running-session adoption path and added a
+  matching concurrent-create regression test.

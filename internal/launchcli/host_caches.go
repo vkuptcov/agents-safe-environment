@@ -92,7 +92,7 @@ func newHostCacheResolver(homeDir string) hostCacheResolver {
 
 func (resolver hostCacheResolver) resolve(ctx context.Context, selection HostCacheSelection) (HostCacheResolution, error) {
 	if len(selection.Kinds) == 0 {
-		return HostCacheResolution{}, nil
+		return HostCacheResolution{Caches: []projectenv.DependencyCacheConfig{}}, nil
 	}
 	probeContext, cancel := context.WithTimeout(ctx, hostCacheProbeTimeout)
 	defer cancel()

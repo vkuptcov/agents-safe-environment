@@ -74,9 +74,9 @@ func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
 	if len(runner.combinedCalls) != 1 {
 		t.Fatalf("CombinedOutput calls = %#v, want exact inspect only", runner.combinedCalls)
 	}
-	assertWrappedRun(t, runner.runCalls, containerID, []string{"make", "test"})
-	if !containsSequence(runner.runCalls[0], "exec", "--interactive", "--tty") {
-		t.Fatalf("exec does not preserve TTY: %#v", runner.runCalls[0])
+	assertSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"make", "test"})
+	if !containsSequence(runner.runCalls[1], "exec", "--interactive", "--tty") {
+		t.Fatalf("exec does not preserve TTY: %#v", runner.runCalls[1])
 	}
 }
 
@@ -90,9 +90,25 @@ func TestDockerLaunchIgnoresDiagnosticMountLabelsWhenFingerprintMatches(t *testi
 	if err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v, want fingerprint-controlled reuse", err)
 	}
-	if len(runner.runCalls) != 1 {
+	if len(runner.runCalls) != 2 {
 		t.Fatalf("Run calls = %#v, want reuse", runner.runCalls)
 	}
+}
+
+func TestDockerLaunchWaitsForReadinessAfterConcurrentCreateConflict(t *testing.T) {
+	containerID := strings.Repeat("8", 64)
+	plan := simplePlan()
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+		{output: []byte("Error response from daemon: Conflict. The container name is already in use"), err: fakeExitError{code: 125}},
+		{output: inspectionJSON(t, containerID, true, "running", matchingLabels(t, plan, 1000))},
+	}}
+	if err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	assertSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"true"})
 }
 
 func TestDockerLaunchRejectsMismatchedDeterministicNameOccupant(t *testing.T) {
@@ -360,6 +376,10 @@ func assertWrappedRun(t *testing.T, calls [][]string, containerID string, comman
 }
 
 func assertColdSessionReadyThenWrappedRun(t *testing.T, calls [][]string, containerID string, command []string) {
+	assertSessionReadyThenWrappedRun(t, calls, containerID, command)
+}
+
+func assertSessionReadyThenWrappedRun(t *testing.T, calls [][]string, containerID string, command []string) {
 	t.Helper()
 	if len(calls) != 2 {
 		t.Fatalf("Run calls = %#v, want root readiness then user command", calls)

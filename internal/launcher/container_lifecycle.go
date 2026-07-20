@@ -44,6 +44,9 @@ func (attempt *launchAttempt) acquireContainer(
 			if err := attempt.validateRunningFingerprint(inspection); err != nil {
 				return "", err
 			}
+			if err := attempt.awaitSessionReady(ctx, inspection.ID); err != nil {
+				return "", err
+			}
 			if err := attempt.reuseHostMCP(ctx, inspection); err != nil {
 				return "", err
 			}
@@ -54,6 +57,9 @@ func (attempt *launchAttempt) acquireContainer(
 			return "", err
 		}
 		if containerID != "" {
+			if err := attempt.awaitSessionReady(ctx, containerID); err != nil {
+				return "", err
+			}
 			if err := attempt.reuseHostMCPAfterWait(ctx); err != nil {
 				return "", err
 			}
@@ -85,6 +91,9 @@ func (attempt *launchAttempt) acquireContainer(
 			return "", err
 		}
 		if containerID != "" {
+			if err := attempt.awaitSessionReady(ctx, containerID); err != nil {
+				return "", err
+			}
 			if err := attempt.reuseHostMCPAfterWait(ctx); err != nil {
 				return "", err
 			}

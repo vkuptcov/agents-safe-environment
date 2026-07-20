@@ -1,6 +1,6 @@
 # Exec Plan: Go Host-Backed Dependency Caches
 
-- Status: active
+- Status: in review
 - Created: 2026-07-20
 - Design:
   - [`docs/design-docs/host-backed-dependency-caches.md`](../../design-docs/host-backed-dependency-caches.md)
@@ -161,7 +161,7 @@ Done when: new configs receive the requested snapshot once and existing configs 
 
 ### Phase 4: Real Go and Sysbox Boundary Proof
 Purpose: Prove the contract with actual Go commands and host bind mounts rather than request-shape tests alone.
-Status: in progress
+Status: done
 Done when: a Go-capable project image reuses both host caches safely across real Sysbox sessions.
 
 1. Add `tests/smoke/sysbox_go_caches_test.go` and minimal fixture helpers for init invocation, two cache directories,
@@ -180,7 +180,7 @@ Done when: a Go-capable project image reuses both host caches safely across real
 
 ### Phase 5: Documentation and Review Handoff
 Purpose: Make shipped behavior, deferred ecosystems, validation evidence, and remaining work unambiguous.
-Status: in progress
+Status: done
 Done when: docs describe the implemented Go slice accurately and the validated plan is ready for review.
 
 1. Update `README.md`, package READMEs, and `tests/smoke/README.md` with Go-only init, config, routing, and test
@@ -268,3 +268,6 @@ Done when: docs describe the implemented Go slice accurately and the validated p
   build-cache pair. Its real gate was attempted three times; each run failed before either ready marker with the same
   Sysbox `exit 137`/`OOMKilled=false` lifecycle failure, despite 64 GiB available host memory. The test compiles and
   the ordinary suite passes, but its real-runtime assertion remains environment-blocked.
+- 2026-07-20: The readiness fix removed the host-runtime race. The complete non-credentialed Sysbox suite now passes,
+  including concurrent Go cache worktrees. Implementation review F-001 through F-003 are fixed and the plan moved to
+  review for owner acceptance.

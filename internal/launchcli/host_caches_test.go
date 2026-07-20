@@ -133,7 +133,7 @@ func TestHostCacheResolverNoneSkipsProbe(t *testing.T) {
 	resolver := newHostCacheResolver(t.TempDir())
 	resolver.run = func(context.Context, string, ...string) ([]byte, error) { panic("probe must not run") }
 	got, err := resolver.resolve(context.Background(), HostCacheSelection{})
-	if err != nil || len(got.Caches) != 0 {
+	if err != nil || got.Caches == nil || len(got.Caches) != 0 {
 		t.Fatalf("resolve = %#v, %v", got, err)
 	}
 }

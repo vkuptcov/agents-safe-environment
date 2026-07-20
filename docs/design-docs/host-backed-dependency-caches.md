@@ -54,6 +54,9 @@ either side is available to the other side later. No copied or `agents-safe`-spe
 
 ### Mount Topology
 
+The diagram shows the complete design target. Only the Go build and module edges are implemented in the current
+milestone; uv, Maven, and Gradle remain deferred profiles.
+
 ```mermaid
 flowchart LR
     subgraph Host["Host"]
@@ -134,8 +137,8 @@ The current support policy is deliberately narrow:
 
 A live bind mount provides the best local hit rate and no duplication, but it creates two-way coupling. Container code
 can delete or poison entries later consumed by native host builds, while host cleanup or writes can disrupt a running
-container build. Sharing is therefore limited to one trust domain; unsupported concurrent writers require explicit
-Maven or Gradle kind selection as acknowledgement.
+container build. Sharing is therefore limited to one trust domain. Go coordinates concurrent cache access, but the
+launcher cannot prevent a trusted project from deleting or poisoning host-visible entries.
 
 ## Contract
 
@@ -168,8 +171,8 @@ Resolution follows these rules:
    resolve to no caches. The TOML overlay still uses `*[]DependencyCacheConfig` so presence remains explicit without
    permitting a future default to reintroduce implicit cache mounts.
 3. A present non-empty list replaces the whole cache list as one TOML value; entries are never merged.
-4. By default, `agents-safe init` discovers only existing concurrency-safe caches: uv, Go build, and Go modules. It
-   does not select Maven or Gradle, and it does not create a missing cache directory.
+4. By default, `agents-safe init` discovers only existing Go build and Go module caches. It does not create a missing
+   cache directory.
 5. Each kind may appear at most once. Unknown kinds and a legacy or hand-written `mode` key fail before Docker
    access; the launcher never accepts a user-supplied sharing policy.
 6. `source` is the selected host cache directory, not an expression to evaluate in the container. Init writes the
@@ -181,11 +184,7 @@ Resolution follows these rules:
 7. A source may be a standard live Go cache such as `$GOCACHE` or `$GOMODCACHE`. It cannot be `/`, the host home,
    an ancestor of the host home, or overlap a project, Git, Codex-home, personal-skills, host-MCP, or another cache.
 8. A source must be readable, writable, and searchable by the invoking host identity.
-9. A configured Gradle source must end in `/caches`; its parent is the managed `GRADLE_USER_HOME`. Only the `caches/`
-   subtree is mounted, so sibling settings, init scripts, wrapper state, and credentials remain container-local.
-10. A configured Maven source must contain no whitespace because the session wrapper must represent it as one
-    `MAVEN_OPTS` system-property token without invoking a shell.
-11. The launcher never runs recursive `chown`, repairs a cache layout, copies credentials, or weakens permissions.
+9. The launcher never runs recursive `chown`, repairs a cache layout, copies credentials, or weakens permissions.
 
 There is no launch-time CLI override. Cache bindings are persistent project intent and live only in the ignored
 `.agents-safe/config.toml`.
@@ -286,20 +285,21 @@ The remaining uv, Maven, and Gradle text in this section documents options consi
 current parser rejects their kinds and does not set their environment variables, create their mounts, or print their
 sharing-policy diagnostics.
 
-`shared_rw` is the diagnostic name for the policy derived for uv and Go. It relies on the package manager's own
-concurrent-cache contract. The launcher adds no coarse lock and does not make direct file edits.
+`shared_rw` is the implemented diagnostic policy for Go and the candidate policy for a future uv profile. It relies on
+the package manager's own concurrent-cache contract. The launcher adds no coarse lock and does not make direct file
+edits.
 
-`uncoordinated_rw` is the diagnostic name for the policy derived for Maven and Gradle. Explicitly selecting either
-kind acknowledges that the launcher cannot enforce one writer:
+`uncoordinated_rw` is a candidate policy for future Maven and Gradle profiles. If either profile is implemented,
+explicit selection would acknowledge that the launcher cannot enforce one writer:
 
-1. The user must name `maven` or `gradle` in `--host-caches` or add that kind to the project config; automatic
-   initialization never selects this policy.
-2. The launcher prints that native host processes, other session containers, and detached container processes may
-   access the same directory without coordination.
-3. The launcher does not acquire a lock or imply that sequential access was verified.
+1. The user would have to name `maven` or `gradle` explicitly; automatic initialization would never select this
+   policy.
+2. The launcher would print that native host processes, other session containers, and detached container processes
+   may access the same directory without coordination.
+3. The launcher would not acquire a lock or imply that sequential access was verified.
 4. The operator must avoid overlapping native and container writers. A dedicated cache is not required.
-5. Standard Maven and Gradle commands are accepted, but `mvnd`, Gradle daemons, and detached processes make the
-   overlap window harder to observe.
+5. Supporting standard Maven and Gradle commands would not make `mvnd`, Gradle daemons, or detached processes safe;
+   those processes make the overlap window harder to observe.
 
 A launcher-owned lock would not establish the claimed invariant. Native host tools would not honor it, another
 launcher version could omit it, and the current session contract waits only for the direct child of `docker exec`.
@@ -308,9 +308,8 @@ require every host and container client to use the same external coordinator.
 
 If concurrent native and container Maven builds are required, both Maven installations must use a compatible Maven
 Resolver file-lock implementation. The launcher does not silently change the host Maven configuration. Sequential
-reuse of a live Gradle cache remains supported after explicitly selecting the `gradle` kind. Overlapping writable
-Gradle processes across the container boundary are unsupported because they usually cannot communicate; use an
-artifact proxy instead.
+reuse is the only live Gradle-cache case a future profile could support. Overlapping writable Gradle processes across
+the container boundary are unsupported because they usually cannot communicate; use an artifact proxy instead.
 
 ### 6. Mount Plan and Session Reuse
 
@@ -354,7 +353,7 @@ For each cold or reused invocation, the launcher performs this sequence:
    policy.
 3. Build the normalized mount and per-command routing plan and compare it with any active session.
 4. On cold creation, mount cache sources with the invoking host identity's existing Sysbox translation.
-5. Print the uncoordinated-write warning, if any, inject managed routing, and run the requested command.
+5. Inject managed Go routing and run the requested command.
 
 Failures are explicit:
 
@@ -393,8 +392,8 @@ The Maven local repository is not only a download cache. It also contains locall
 snapshot metadata, resolution-error markers, and Resolver bookkeeping.
 
 A shared writable repository can therefore leak one project's `mvn install` output into another build under the same
-coordinates. Resolver locking also varies by version and configuration. The live `~/.m2/repository` is available only
-through explicit `maven` selection; every host and container project using it becomes one trust domain.
+coordinates. Resolver locking also varies by version and configuration. A future live-repository profile would have
+to require explicit selection and treat every host and container project using it as one trust domain.
 
 #### Gradle
 
@@ -406,9 +405,10 @@ Gradle changes metadata formats across version ranges. The live `caches/` tree c
 entries, and a different Gradle version may miss and contact the configured repository. The launcher neither infers
 compatibility nor promises a cross-version hit; it propagates Gradle failures unchanged.
 
-Explicit `gradle` selection may use the host's real `~/.gradle/caches` directory. Mounting all of `~/.gradle` remains
-forbidden: that directory also carries initialization scripts, properties, daemon state, logs, and potentially
-credentials or encryption material. Exposing it would add code execution and secret access unrelated to caching.
+A future explicit `gradle` profile could use the host's real `~/.gradle/caches` directory. Mounting all of `~/.gradle`
+would remain forbidden: that directory also carries initialization scripts, properties, daemon state, logs, and
+potentially credentials or encryption material. Exposing it would add code execution and secret access unrelated to
+caching.
 
 ### 9. Security, Integrity, and Operations
 
@@ -501,11 +501,11 @@ source control. It is a project policy, not a launcher cache feature.
 ### Configuration and plan tests
 
 - Decode and encode every supported kind; reject duplicates, unknown kinds, and any serialized `mode` key.
-- Discover every existing concurrency-safe cache during default init without creating missing directories or
-  selecting Maven or writable Gradle.
-- Keep `--host-caches=none` empty and resolve an explicit comma-separated subset, including Maven and writable Gradle.
+- Discover existing Go build and Go module caches during default init without creating missing directories.
+- Keep `--host-caches=none` explicitly empty and resolve an explicit Go cache subset.
 - Keep init non-interactive and prove discovery performs no Docker or network access.
-- Resolve each kind through host tool probe, environment, then Linux fallback; never consult container defaults.
+- Resolve each supported Go kind through the host probe, environment, then Linux fallback; never consult container
+  defaults.
 - Preserve an existing `config.toml` without rediscovery or rewrite.
 - Prove omitted and present-empty `dependency_caches` both resolve empty while a present non-empty list replaces the
   whole list through a presence-aware overlay.
@@ -514,32 +514,24 @@ source control. It is a project policy, not a launcher cache feature.
   configured absolute path as bind target and managed routing value.
 - Verify every target equals its normalized configured source and check mount flags, managed routing, ordering, and
   diagnostics.
-- Reject a configured Gradle source not ending in `/caches` and a configured Maven source containing whitespace.
 - Prove cache config changes alter the creation-time fingerprint while cache content changes do not.
 - Reject a missing source before Docker access.
-- Compose the Maven system property without importing host settings or credentials.
 - Override conflicting image-owned cache variables for configured kinds and preserve them for unconfigured kinds.
 - Accept standard live host-cache paths without creating an `agents-safe`-specific sibling cache.
 
 ### Concurrency and warning tests
 
-- Run concurrent uv and Go writers against one temporary shared cache and verify both complete without launcher locks.
-- Print one explicit warning for Maven or writable Gradle and prove the launcher creates no coordination artifact.
-- Prove Maven and writable Gradle are absent from `auto` and require explicit kind selection.
-- Allow two uncoordinated invocations without claiming that their package-manager operations are safe.
+- Run concurrent Go writers against one temporary shared cache and verify both complete without launcher locks.
 
 ### Integration tests on a Sysbox host
 
 - Warm each cache, destroy the session, disable network access, and prove a covered dependency is reused cold.
 - Warm with a native host command, consume from the container, then warm in the container and consume on the host.
 - Verify host ownership remains the invoking user's after cache writes and cleanup.
-- Run two worktrees concurrently against shared uv and Go caches.
-- Run Maven and writable Gradle sequentially against their live host caches and verify bidirectional reuse.
-- Demonstrate that a detached child can outlive its direct wrapper and keep the uncoordinated-write risk visible.
+- Run two worktrees concurrently against shared Go caches.
 - Exercise same-version and mixed-version host/container tools, accepting tool-owned misses while detecting
   corruption or launcher path drift, and cover the documented Go cgo invalidation procedure.
-- Inspect mounts and prove `.m2/settings.xml`, Gradle init scripts, host credentials, and unrelated home files are
-  absent.
+- Inspect mounts and prove host credentials and unrelated home files are absent.
 - Prove a cache config change rejects reuse of a live container.
 - Prove project-image builds and nested containers receive no cache access implicitly.
 

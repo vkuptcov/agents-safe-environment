@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -87,6 +88,24 @@ func TestInitializeLazySkipsProviderWhenConfigExists(t *testing.T) {
 	})
 	if err != nil || created || path != contextPath {
 		t.Fatalf("InitializeLazy() = %q, %t, %v", path, created, err)
+	}
+}
+
+func TestInitializeSerializesExplicitEmptyDependencyCaches(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	config := initializationConfig(t)
+	config.Common.DependencyCaches = []DependencyCacheConfig{}
+	contextPath, err := Initialize(root, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(contextPath, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "dependency_caches = []") {
+		t.Fatalf("config.toml = %q, want explicit empty dependency-cache snapshot", data)
 	}
 }
 
