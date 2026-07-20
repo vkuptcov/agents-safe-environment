@@ -3,10 +3,15 @@ package launcher
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"strings"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
+	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
+
+const sessionReadinessTimeout = session.DefaultStartupTimeout
 
 func (attempt *launchAttempt) execCommand(
 	ctx context.Context,
@@ -19,6 +24,22 @@ func (attempt *launchAttempt) execCommand(
 		return err
 	}
 	return attempt.cli.Exec(ctx, request, docker.Stdin, docker.Stdout, docker.Stderr)
+}
+
+// awaitSessionReady waits as root until serve has finished account bootstrap and published the
+// manager socket. The first user-owned exec must not start earlier: usermod cannot reconcile an
+// account that already owns that exec process.
+func (attempt *launchAttempt) awaitSessionReady(ctx context.Context, containerID string) error {
+	readyContext, cancel := context.WithTimeout(ctx, sessionReadinessTimeout)
+	defer cancel()
+	request, err := attempt.docker.buildReadinessRequest(attempt.plan, containerID)
+	if err != nil {
+		return err
+	}
+	if err := attempt.cli.Exec(readyContext, request, nil, io.Discard, attempt.docker.Stderr); err != nil {
+		return fmt.Errorf("wait for managed Sysbox session readiness: %w", err)
+	}
+	return nil
 }
 
 func isRetryableExecError(err error) bool {

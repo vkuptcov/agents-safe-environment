@@ -119,6 +119,24 @@ func (docker *DockerLauncher) buildExecRequest(
 	}, nil
 }
 
+// buildReadinessRequest builds the root-only cold-start barrier. It uses the container-local
+// session socket as the durable signal that account bootstrap completed; it never starts a managed
+// command or exposes the socket outside the container.
+func (docker *DockerLauncher) buildReadinessRequest(
+	plan launchplan.Plan,
+	containerID string,
+) (dockercli.ExecRequest, error) {
+	if containerID == "" {
+		return dockercli.ExecRequest{}, errors.New("container ID is required")
+	}
+	return dockercli.ExecRequest{
+		ContainerID: containerID,
+		User:        "0:0",
+		WorkingDir:  plan.WorkingDir,
+		Command:     []string{"codex-safe-session", "wait-ready"},
+	}, nil
+}
+
 func dependencyCacheLabel(plan launchplan.Plan, kind projectenv.DependencyCacheKind) string {
 	for _, cache := range plan.DependencyCaches {
 		if cache.Kind == kind {

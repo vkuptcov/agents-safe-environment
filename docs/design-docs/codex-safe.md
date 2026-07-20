@@ -539,6 +539,8 @@ sequenceDiagram
         Container->>InnerDocker: Start daemon
         Container->>InnerDocker: Wait for readiness
         Container->>Manager: Open local command registry
+        Launcher->>Container: docker exec root wait-ready
+        Container-->>Launcher: Session socket published
     end
     Launcher->>Container: docker exec codex-safe-session run -- command
     Container->>Wrapper: Start wrapper

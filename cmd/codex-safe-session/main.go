@@ -19,9 +19,10 @@ import (
 )
 
 type application struct {
-	serve func(context.Context, *log.Logger) error
-	run   func(context.Context, session.CommandConfig) error
-	relay func(context.Context, relay.Config) error
+	serve     func(context.Context, *log.Logger) error
+	run       func(context.Context, session.CommandConfig) error
+	waitReady func(context.Context, string) error
+	relay     func(context.Context, relay.Config) error
 }
 
 func main() {
@@ -31,7 +32,7 @@ func main() {
 		os.Stdin,
 		os.Stdout,
 		os.Stderr,
-		application{serve: serveManager, run: session.RunCommand, relay: relay.Run},
+		application{serve: serveManager, run: session.RunCommand, waitReady: session.WaitForSocket, relay: relay.Run},
 	))
 }
 
@@ -110,6 +111,16 @@ func runCLI(
 		}
 		fmt.Fprintf(stderr, "codex-safe-session: %v\n", err)
 		return 1
+	case "wait-ready":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "codex-safe-session: wait-ready accepts no arguments")
+			return 2
+		}
+		if err := app.waitReady(ctx, session.DefaultSocketPath); err != nil {
+			fmt.Fprintf(stderr, "codex-safe-session: wait for session readiness: %v\n", err)
+			return 1
+		}
+		return 0
 	default:
 		fmt.Fprintf(stderr, "codex-safe-session: unknown subcommand %q\n", args[0])
 		printUsage(stderr)
@@ -155,6 +166,7 @@ func serveManager(ctx context.Context, logger *log.Logger) error {
 func printUsage(output io.Writer) {
 	fmt.Fprintln(output, "Usage:")
 	fmt.Fprintln(output, "  codex-safe-session serve")
+	fmt.Fprintln(output, "  codex-safe-session wait-ready")
 	fmt.Fprintln(output, "  codex-safe-session run -- COMMAND [ARG...]")
 	fmt.Fprintln(output, "  codex-safe-session relay --generation DIR --endpoint HOST:PORT [--endpoint ...]")
 }

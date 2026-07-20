@@ -225,6 +225,9 @@ func (attempt *launchAttempt) createSessionWithHostMCP(
 	}
 	// The session now exists, so a later failure must stop it before removing the generation.
 	attempt.hostMCP.sessionID = containerID
+	if err := attempt.awaitSessionReady(ctx, containerID); err != nil {
+		return "", false, err
+	}
 	if err := attempt.awaitHostMCPReady(ctx, containerID); err != nil {
 		return "", false, err
 	}

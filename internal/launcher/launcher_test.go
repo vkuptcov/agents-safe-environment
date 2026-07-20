@@ -57,7 +57,7 @@ func TestDockerLaunchCreatesDetachedContainerThenExecutesResolvedPlan(t *testing
 	if !reflect.DeepEqual(runner.combinedCalls[:3], wantCalls) {
 		t.Fatalf("pre-create calls = %#v, want %#v", runner.combinedCalls[:3], wantCalls)
 	}
-	assertWrappedRun(t, runner.runCalls, containerID, []string{"echo", "safe"})
+	assertColdSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"echo", "safe"})
 }
 
 func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
@@ -151,8 +151,8 @@ func TestDockerLaunchBuildsProjectImageAndPinsCreate(t *testing.T) {
 	if err := docker.Launch(context.Background(), plan, "base:image", []string{"true"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
-	if len(runner.runCalls) != 2 {
-		t.Fatalf("Run calls = %#v, want build and exec", runner.runCalls)
+	if len(runner.runCalls) != 3 {
+		t.Fatalf("Run calls = %#v, want build, root readiness, and user exec", runner.runCalls)
 	}
 	build := runner.runCalls[0]
 	if !containsSequence(build, "build", "--tag") || build[len(build)-1] != contextPath {
@@ -357,6 +357,19 @@ func assertWrappedRun(t *testing.T, calls [][]string, containerID string, comman
 	if len(calls[0]) < len(wantSuffix) || !reflect.DeepEqual(calls[0][len(calls[0])-len(wantSuffix):], wantSuffix) {
 		t.Fatalf("wrapped exec = %#v, want suffix %#v", calls[0], wantSuffix)
 	}
+}
+
+func assertColdSessionReadyThenWrappedRun(t *testing.T, calls [][]string, containerID string, command []string) {
+	t.Helper()
+	if len(calls) != 2 {
+		t.Fatalf("Run calls = %#v, want root readiness then user command", calls)
+	}
+	ready := calls[0]
+	if !containsSequence(ready, "exec", "--user", "0:0", "--workdir", "/project/nested", containerID,
+		"codex-safe-session", "wait-ready") {
+		t.Fatalf("readiness exec = %#v", ready)
+	}
+	assertWrappedRun(t, calls[1:], containerID, command)
 }
 
 type commandResult struct {
