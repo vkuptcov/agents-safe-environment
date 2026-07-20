@@ -263,3 +263,8 @@ Done when: docs describe the implemented Go slice accurately and the validated p
   pre-existing `TestSysboxRegularCheckoutNormalizesProjectRoles` failed before its ready barrier with Sysbox exec
   `exit 137`; container inspection reported `OOMKilled=false`, `ExitCode=1`, and immediate removal. This host-runtime
   failure prevents completion of the aggregate smoke gate, but does not invalidate the focused Go cache evidence.
+- 2026-07-20: Added `TestSysboxConcurrentGoCacheWorktrees`: two distinct Git worktrees receive independent project
+  configuration and project images, start separate sessions, then compile offline concurrently against one module and
+  build-cache pair. Its real gate was attempted three times; each run failed before either ready marker with the same
+  Sysbox `exit 137`/`OOMKilled=false` lifecycle failure, despite 64 GiB available host memory. The test compiles and
+  the ordinary suite passes, but its real-runtime assertion remains environment-blocked.

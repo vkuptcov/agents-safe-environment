@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/client"
 	"github.com/stretchr/testify/require"
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
@@ -145,6 +146,74 @@ func TestSysboxGoCacheConfigMismatch(t *testing.T) {
 	fixture.docker.waitForContainerRemoval()
 }
 
+// TestSysboxConcurrentGoCacheWorktrees proves that independent worktrees may compile concurrently against one pair
+// of Go cache directories. The launcher must not introduce a cache-level lock between their distinct sessions.
+func TestSysboxConcurrentGoCacheWorktrees(t *testing.T) {
+	if os.Getenv(goSmokeEnv) != "1" {
+		t.Skipf("set %s=1 to run the real Sysbox Go cache test", goSmokeEnv)
+	}
+	fixture := newSmokeFixture(t)
+	buildCache := filepath.Join(fixture.project.hostHome, ".cache", "go-build")
+	moduleCache := filepath.Join(fixture.project.hostHome, "go", "pkg", "mod")
+	for _, path := range []string{buildCache, moduleCache} {
+		require.NoError(t, os.MkdirAll(path, 0o755), "shared host cache must exist before launch")
+	}
+	writeGoCacheProjectEnvironment(t, fixture, buildCache, moduleCache)
+	cleanupGoProjectImage(t, fixture)
+	makeTestCacheRemovable(t, buildCache, moduleCache)
+	proxy := writeGoModuleProxy(t, fixture.project.worktree)
+	writeGoCacheClient(t, fixture.project.worktree)
+	parallelWorktree := addConcurrentGoCacheWorktree(t, fixture)
+	writeGoCacheConfigAt(t, fixture, parallelWorktree, buildCache, moduleCache)
+	cleanupGoProjectImageAt(t, fixture, parallelWorktree)
+
+	firstReady := filepath.Join(fixture.project.worktree, "go-cache-first.ready")
+	firstRelease := filepath.Join(fixture.project.worktree, "go-cache-first.release")
+	secondReady := filepath.Join(parallelWorktree, "go-cache-second.ready")
+	secondRelease := filepath.Join(parallelWorktree, "go-cache-second.release")
+	first := fixture.launcher.startDefault(fixture.project.worktree,
+		"bash", "-c", `: > "$1"; while [[ ! -e "$2" ]]; do sleep 1; done`, "bash", firstReady, firstRelease,
+	)
+	second := fixture.launcher.startDefault(parallelWorktree,
+		"bash", "-c", `: > "$1"; while [[ ! -e "$2" ]]; do sleep 1; done`, "bash", secondReady, secondRelease,
+	)
+	fixture.waitForFile(firstReady, first)
+	fixture.waitForFile(secondReady, second)
+	runGoWithEnvironment(t, fixture.project.worktree, []string{
+		"GOCACHE=" + buildCache,
+		"GOMODCACHE=" + moduleCache,
+		"GOPROXY=file://" + proxy,
+		"GOSUMDB=off",
+	}, "mod", "tidy")
+	goSum, err := os.ReadFile(filepath.Join(fixture.project.worktree, "go.sum"))
+	require.NoError(t, err, "host Go seed must write go.sum")
+	require.NoError(t, os.WriteFile(filepath.Join(parallelWorktree, "go.sum"), goSum, 0o600), "parallel worktree must receive go.sum")
+	runGoWithEnvironment(t, fixture.project.worktree, []string{
+		"GOCACHE=" + buildCache,
+		"GOMODCACHE=" + moduleCache,
+	}, "clean", "-cache")
+
+	firstReport := filepath.Join(fixture.project.worktree, "go-cache-first.report")
+	secondReport := filepath.Join(parallelWorktree, "go-cache-second.report")
+	firstBuild := fixture.launcher.startDefault(fixture.project.worktree,
+		"bash", "-c", "GOPROXY=off GOSUMDB=off go run . > \"$1\"", "bash", firstReport,
+	)
+	secondBuild := fixture.launcher.startDefault(parallelWorktree,
+		"bash", "-c", "GOPROXY=off GOSUMDB=off go run . > \"$1\"", "bash", secondReport,
+	)
+	firstBuild.requireExit(t, "first concurrent Go cache command")
+	secondBuild.requireExit(t, "second concurrent Go cache command")
+	require.Equal(t, "cached dependency\n", readFile(t, firstReport))
+	require.Equal(t, "cached dependency\n", readFile(t, secondReport))
+	requireHostOwnership(t, buildCache, moduleCache)
+
+	fixture.release(firstRelease, first, "first concurrent Go cache holder")
+	fixture.release(secondRelease, second, "second concurrent Go cache holder")
+	fixture.docker.waitForContainerRemoval()
+	parallelContainer := launcher.ProjectContainerName(os.Getuid(), parallelWorktree)
+	waitForManagedContainerRemoval(t, fixture, parallelContainer)
+}
+
 // TestSysboxConfiguredGoCacheBinds isolates the public launcher cache-mount path from the test-only Go project image.
 func TestSysboxConfiguredGoCacheBinds(t *testing.T) {
 	if os.Getenv(goSmokeEnv) != "1" {
@@ -188,6 +257,7 @@ func TestSysboxGoProjectImageWithoutCaches(t *testing.T) {
 	dockerfile := "ARG AGENTS_SAFE_BASE=" + goSmokeImage + "\n" +
 		"FROM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS go-toolchain\n" +
 		"FROM ${AGENTS_SAFE_BASE}\n" +
+		"RUN test -z \"${GOCACHE:-}\" && test -z \"${GOMODCACHE:-}\"\n" +
 		"COPY --from=go-toolchain /usr/local/go /usr/local/go\n" +
 		"ENV PATH=/usr/local/go/bin:${PATH}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(contextPath, projectenv.DockerfileName), []byte(dockerfile), 0o600),
@@ -223,14 +293,18 @@ func writeGoCacheProjectEnvironment(t *testing.T, fixture *smokeFixture, buildCa
 }
 
 func writeGoCacheConfig(t *testing.T, fixture *smokeFixture, buildCache, moduleCache string) {
+	writeGoCacheConfigAt(t, fixture, fixture.project.worktree, buildCache, moduleCache)
+}
+
+func writeGoCacheConfigAt(t *testing.T, fixture *smokeFixture, worktree, buildCache, moduleCache string) {
 	t.Helper()
-	contextPath := filepath.Join(fixture.project.worktree, projectenv.Directory)
+	contextPath := filepath.Join(worktree, projectenv.Directory)
 	if _, err := os.Stat(contextPath); os.IsNotExist(err) {
 		require.NoError(t, os.Mkdir(contextPath, 0o755), "project environment directory must be created")
 	} else {
 		require.NoError(t, err, "project environment directory must be inspectable")
 	}
-	project, err := gitproject.Discover(t.Context(), fixture.project.worktree)
+	project, err := gitproject.Discover(t.Context(), worktree)
 	require.NoError(t, err, "fixture Git project must be discoverable")
 	config, err := launcher.DefaultProjectConfig(project, launcher.HostEnvironment{
 		HomeDir: fixture.project.hostHome, GitConfig: fixture.project.hostGit, CodexHome: fixture.project.codexHome,
@@ -247,7 +321,12 @@ func writeGoCacheConfig(t *testing.T, fixture *smokeFixture, buildCache, moduleC
 
 func cleanupGoProjectImage(t *testing.T, fixture *smokeFixture) {
 	t.Helper()
-	tag := projectenv.LocalImageName(launcher.ProjectKey(os.Getuid(), fixture.project.worktree))
+	cleanupGoProjectImageAt(t, fixture, fixture.project.worktree)
+}
+
+func cleanupGoProjectImageAt(t *testing.T, fixture *smokeFixture, worktree string) {
+	t.Helper()
+	tag := projectenv.LocalImageName(launcher.ProjectKey(os.Getuid(), worktree))
 	t.Cleanup(func() {
 		cleanupContext, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 		defer cancel()
@@ -257,6 +336,44 @@ func cleanupGoProjectImage(t *testing.T, fixture *smokeFixture) {
 			image.RemoveOptions{Force: true, PruneChildren: true},
 		)
 	})
+}
+
+func addConcurrentGoCacheWorktree(t *testing.T, fixture *smokeFixture) string {
+	t.Helper()
+	worktree := filepath.Join(fixture.project.root, "parallel cache worktree")
+	runInDir(t, fixture.project.primary, "git", "worktree", "add", "-b", "smoke/cache-parallel", worktree)
+	t.Cleanup(func() {
+		command := exec.Command("git", "worktree", "remove", "--force", worktree)
+		command.Dir = fixture.project.primary
+		_ = command.Run()
+	})
+	for _, name := range []string{"go.mod", "main.go"} {
+		data, err := os.ReadFile(filepath.Join(fixture.project.worktree, name))
+		require.NoError(t, err, "source worktree file %q must be readable", name)
+		require.NoError(t, os.WriteFile(filepath.Join(worktree, name), data, 0o600), "parallel worktree file %q must be written", name)
+	}
+	for _, name := range []string{projectenv.DockerfileName} {
+		data, err := os.ReadFile(filepath.Join(fixture.project.worktree, projectenv.Directory, name))
+		require.NoError(t, err, "source environment file %q must be readable", name)
+		target := filepath.Join(worktree, projectenv.Directory, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755), "parallel environment directory must be created")
+		require.NoError(t, os.WriteFile(target, data, 0o600), "parallel environment file %q must be written", name)
+	}
+	return worktree
+}
+
+func waitForManagedContainerRemoval(t *testing.T, fixture *smokeFixture, name string) {
+	t.Helper()
+	deadline := time.Now().Add(idleRemovalTimeout)
+	for time.Now().Before(deadline) {
+		_, err := fixture.docker.client.ContainerInspect(fixture.docker.ctx, name)
+		if client.IsErrNotFound(err) {
+			return
+		}
+		require.NoError(t, err, "parallel managed session must remain inspectable while awaiting cleanup")
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("parallel managed container %q was not removed after idle timeout", name)
 }
 
 func writeGoCacheClient(t *testing.T, directory string) {
