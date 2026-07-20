@@ -19,6 +19,8 @@ const (
 	managerProtocolLabel = "codex-safe.manager-protocol"
 	codexHomeLabel       = "codex-safe.codex-home"
 	personalSkillsLabel  = "codex-safe.personal-skills"
+	goBuildCacheLabel    = "codex-safe.go-build-cache"
+	goModulesCacheLabel  = "codex-safe.go-modules-cache"
 	managedLabelValue    = "true"
 
 	containerStateTimeout   = 20 * time.Second

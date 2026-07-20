@@ -100,7 +100,7 @@ Maven, Gradle, Docker images, BuildKit, or nested-container cache propagation.
 
 ### Phase 1: Go Milestone Contract and Host Resolver
 Purpose: Narrow the shipped contract and build a testable Docker-free resolver without exposing new config yet.
-Status: to be done
+Status: done
 Done when: Go cache selections resolve deterministically from the host and no production launch accepts cache config.
 
 1. Update the host-cache design's delivery matrix and resolver wording: only the two Go kinds are in this milestone,
@@ -119,7 +119,7 @@ Done when: Go cache selections resolve deterministically from the host and no pr
 
 ### Phase 2: Atomic Manual Configuration and Runtime Contract
 Purpose: Make a manually configured Go cache work end to end before init begins generating cache entries.
-Status: to be done
+Status: done
 Done when: accepted TOML produces safe binds, schema-v2 identity, diagnostics, and per-command Go routing.
 
 1. Add `CommonConfig.DependencyCaches`, presence-aware `*[]DependencyCacheConfig` overlay, deep cloning, deterministic
@@ -142,7 +142,7 @@ Done when: accepted TOML produces safe binds, schema-v2 identity, diagnostics, a
 
 ### Phase 3: Noninteractive Go Cache Initialization
 Purpose: Expose the working Go-only contract through idempotent `agents-safe init` UX.
-Status: to be done
+Status: done
 Done when: new configs receive the requested snapshot once and existing configs trigger no cache discovery.
 
 1. Add `--host-caches=auto|none|go_build,go_modules` to init usage and parse it before Git discovery. Do not add a
@@ -161,7 +161,7 @@ Done when: new configs receive the requested snapshot once and existing configs 
 
 ### Phase 4: Real Go and Sysbox Boundary Proof
 Purpose: Prove the contract with actual Go commands and host bind mounts rather than request-shape tests alone.
-Status: to be done
+Status: in progress
 Done when: a Go-capable project image reuses both host caches safely across real Sysbox sessions.
 
 1. Add `tests/smoke/sysbox_go_caches_test.go` and minimal fixture helpers for init invocation, two cache directories,
@@ -180,7 +180,7 @@ Done when: a Go-capable project image reuses both host caches safely across real
 
 ### Phase 5: Documentation and Review Handoff
 Purpose: Make shipped behavior, deferred ecosystems, validation evidence, and remaining work unambiguous.
-Status: to be done
+Status: in progress
 Done when: docs describe the implemented Go slice accurately and the validated plan is ready for review.
 
 1. Update `README.md`, package READMEs, and `tests/smoke/README.md` with Go-only init, config, routing, and test
@@ -251,3 +251,15 @@ Done when: docs describe the implemented Go slice accurately and the validated p
 - 2026-07-20: Created the Go-only implementation plan from the accepted broad design and current launcher code.
 - 2026-07-20: Read-only planning confirmed that per-exec Docker environment injection reaches the managed child, so
   no container/session runtime or base-image change is required.
+- 2026-07-20: Implemented Go-only config, host resolution, safe cache bind planning, schema-v2 fingerprints,
+  diagnostics, and `docker exec` routing. Focused tests, `make test`, lint, and documentation validation pass.
+- 2026-07-20: Implementation review fixed the test-only Go image to use the repository's pinned Go digest; see
+  `docs/reviews/feature-review/2026-07-20-go-host-backed-dependency-caches-implementation-review.md`.
+- 2026-07-20: Completed real Sysbox coverage for the Go cache contract: same-path writable mounts and routing,
+  host-native seeding from a local `file://` module proxy, offline reuse in a live session and a new cold session,
+  host-visible writes/ownership, nested-Docker environment isolation, and live-session fingerprint mismatch rejection.
+  `TestSysboxGoHostCaches` and `TestSysboxGoCacheConfigMismatch` pass on this Linux/Sysbox host.
+- 2026-07-20: `make test-smoke-go` rebuilt the base image and passed its first Go-independent smoke test, then the
+  pre-existing `TestSysboxRegularCheckoutNormalizesProjectRoles` failed before its ready barrier with Sysbox exec
+  `exit 137`; container inspection reported `OOMKilled=false`, `ExitCode=1`, and immediate removal. This host-runtime
+  failure prevents completion of the aggregate smoke gate, but does not invalidate the focused Go cache evidence.

@@ -1,10 +1,11 @@
 # Host-Backed Dependency Caches
 
-Status: Proposed
+Status: Partially implemented (Go milestone)
 
 Scope:
 
-- explicit reuse of existing host caches by uv, Go, Maven, and Gradle commands in the outer session container;
+- implemented: explicit reuse of existing host Go build and module caches in the outer session container;
+- deferred: uv, Maven, Gradle, Docker images, and BuildKit caches;
 - host-side cache resolution, explicit container tool routing, concurrency policies, active-session compatibility,
   and failure behavior;
 - the security and ownership consequences of sharing writable dependency state with project code.
@@ -35,13 +36,9 @@ cold session A -> download dependencies -> container removed -> cache lost
 cold session B -> download the same dependencies again
 ```
 
-After, the user opts into narrow host directories in the ignored project config:
+After the implemented Go milestone, the user opts into narrow host directories in the ignored project config:
 
 ```toml
-[[common.dependency_caches]]
-kind = "uv"
-source = "/home/alex/.cache/uv"
-
 [[common.dependency_caches]]
 kind = "go_build"
 source = "/home/alex/.cache/go-build"
@@ -50,13 +47,6 @@ source = "/home/alex/.cache/go-build"
 kind = "go_modules"
 source = "/home/alex/go/pkg/mod"
 
-[[common.dependency_caches]]
-kind = "maven"
-source = "/home/alex/.m2/repository"
-
-[[common.dependency_caches]]
-kind = "gradle"
-source = "/home/alex/.gradle/caches"
 ```
 
 The next cold session mounts the same physical directories used by native host commands. A cache miss written by
@@ -120,21 +110,18 @@ separately to identify and validate the physical host directory. The user choose
 the target nor policy can be overridden in TOML. Explicit tool routing, rather than a container home-directory
 convention, makes the mounted path authoritative.
 
-The initial support policy is deliberately asymmetric:
+The current support policy is deliberately narrow:
 
-- uv, the Go build cache, and the Go module cache support direct shared read-write access;
-- Maven exposes its live local repository only as explicitly uncoordinated read-write state;
-- Gradle exposes its live `caches/` subtree only as explicitly uncoordinated read-write state; Gradle owns
-  version-specific hits and misses.
+- Go build and Go module caches support direct shared read-write access;
+- uv, Maven, and Gradle remain design-only profiles and are rejected by the parser and typed configuration.
 
 ### Success Criteria
 
 - A user can reuse the same physical cache from host and container without a second `agents-safe` cache copy.
 - A user can persist dependency downloads across cold sessions without mounting a whole host home.
-- A default `agents-safe init` discovers existing concurrency-safe uv and Go caches without prompting and reports
+- A default `agents-safe init` discovers existing concurrency-safe Go caches without prompting and reports
   every enabled path.
-- Maven and writable Gradle caches are enabled only by an explicit kind selection that acknowledges uncoordinated
-  writes.
+- Unknown, deferred, duplicate, and policy-bearing cache entries fail before Docker access.
 - The generated mount and managed-routing plan is deterministic and visible before Docker creation.
 - Concurrent read-write access is supported only where the tool documents it; the launcher never claims to serialize
   native host and container writers.
@@ -170,8 +157,9 @@ type DependencyCacheConfig struct {
 }
 ```
 
-`DependencyCacheKind` accepts `uv`, `go_build`, `go_modules`, `maven`, and `gradle`. The launcher derives one fixed
-sharing policy for each kind according to the tool matrix below. There is no serialized mode or policy override.
+`DependencyCacheKind` accepts only `go_build` and `go_modules` in this milestone. The launcher derives the fixed
+`shared_rw` policy; there is no serialized mode or policy override. uv, Maven, and Gradle are deferred and fail as
+unknown kinds until their individual runtime contracts are implemented.
 
 Resolution follows these rules:
 
@@ -190,9 +178,8 @@ Resolution follows these rules:
    normalizes the path and uses it as the container target. It separately resolves symlinks to obtain the canonical
    physical bind source used for validation, labels, and the creation-time fingerprint. A symlink alias is therefore
    preserved as the tool-visible path without requiring the alias itself in the container.
-7. A source may be a standard live host cache such as `~/.cache/uv`, `$GOMODCACHE`, `~/.m2/repository`, or
-   `~/.gradle/caches`. It cannot be `/`, the host home, an ancestor of the host home, or overlap a project, Git,
-   Codex-home, personal-skills, host-MCP, or other cache mount.
+7. A source may be a standard live Go cache such as `$GOCACHE` or `$GOMODCACHE`. It cannot be `/`, the host home,
+   an ancestor of the host home, or overlap a project, Git, Codex-home, personal-skills, host-MCP, or another cache.
 8. A source must be readable, writable, and searchable by the invoking host identity.
 9. A configured Gradle source must end in `/caches`; its parent is the managed `GRADLE_USER_HOME`. Only the `caches/`
    subtree is mounted, so sibling settings, init scripts, wrapper state, and credentials remain container-local.
@@ -210,50 +197,36 @@ Cache discovery is an `agents-safe init` concern, not a launch concern:
 ```text
 agents-safe init
 agents-safe init --host-caches=none
-agents-safe init --host-caches=uv,go_build,go_modules
-agents-safe init --host-caches=uv,go_build,go_modules,maven,gradle
+agents-safe init --host-caches=go_build,go_modules
 ```
 
-The default is `--host-caches=auto`, which selects existing uv, Go build, and Go module caches. `none` writes an empty
+The default is `--host-caches=auto`, which selects existing Go build and Go module caches. `none` writes an empty
 list. A comma-separated kind list selects an explicit subset and fails if any selected source cannot be resolved or
-does not exist. Naming `maven` or `gradle` explicitly selects its live cache under the fixed uncoordinated-write
-policy.
+does not exist.
 
 Initialization remains non-interactive. It never changes behavior based on whether stdin is a terminal, and scripts
-do not need a `--yes` flag. Automatic discovery covers only the concurrency-safe kinds. Naming `maven` or `gradle`
-is the additional acknowledgement for uncoordinated writable state. `--host-caches=none` is the opt-out for projects
-that should see no host dependency state.
+do not need a `--yes` flag. `--host-caches=none` is the opt-out for projects that should see no host dependency state.
 
 Before returning success, init prints the exact persisted paths plus each kind's derived policy:
 
 ```text
 Host dependency caches:
-  uv          /home/alex/.cache/uv       shared_rw
   go_build    /home/alex/.cache/go-build shared_rw
   go_modules  /home/alex/go/pkg/mod      shared_rw
 ```
 
-An explicit Maven or Gradle selection adds its row and one warning that host and container writers are not
-coordinated. An empty result says `No existing shared read-write host dependency caches detected`; it is not an error
-in `auto` mode.
+An empty result says `No existing shared read-write host dependency caches detected`; it is not an error in `auto`
+mode.
 
-Resolution uses the invoking host identity and performs no network or Docker access. Automatic mode resolves only
-the first three kinds; an explicit kind list resolves every selected kind:
+Resolution uses the invoking host identity and performs no network or Docker access:
 
-- uv: use the absolute result of `uv cache dir` when uv is installed, then `UV_CACHE_DIR`,
-  `XDG_CACHE_HOME/uv`, and `<host-home>/.cache/uv` as no-binary fallbacks;
 - Go build: use the absolute `GOCACHE` reported by `go env`, then the standard user-cache fallback;
 - Go modules: use the absolute `GOMODCACHE` reported by `go env`, then `<host-home>/go/pkg/mod`;
-- Maven: use the configured `localRepository` when it can be read without executing Maven, then
-  `<host-home>/.m2/repository`;
-- Gradle: use `GRADLE_USER_HOME`, then `<host-home>/.gradle`, and append `caches`.
 
-These resolvers determine the tool's effective default for a native host command without invocation-specific flags
-or project overrides. Each resolver takes the first valid applicable result in its ordered tool-probe, configuration,
-environment, and host-platform fallback chain. Tool probes are bounded and read-only. A missing executable permits
-the next step; a failed probe, malformed output, relative path, unreadable settings file, or nonexistent final
-directory makes a concurrency-safe kind unavailable in `auto` mode and produces a concise diagnostic. The same
-condition is an error for every explicitly selected kind.
+The resolver runs one bounded `go env -json GOCACHE GOMODCACHE` probe. Only an absent `go` executable permits the
+environment and Linux-default fallback chain. A failed probe, malformed output, `off`, relative path, or nonexistent
+directory makes a kind unavailable in `auto` mode and produces a concise diagnostic. The same condition is an error
+for every explicitly selected kind.
 
 The first release implements only Linux host fallbacks because Linux with Sysbox is the supported runtime. It does
 not probe the container or apply the container image's home-directory conventions. Supporting another host platform
@@ -274,29 +247,16 @@ The launcher derives targets and managed routing settings; the TOML cannot overr
 
 | Kind | Persistent content | Managed container routing | Derived sharing policy |
 | --- | --- | --- | --- |
-| `uv` | uv download/build cache | `UV_CACHE_DIR=<container-target>` | `shared_rw` |
 | `go_build` | Go build, test, and fuzz cache | `GOCACHE=<container-target>` | `shared_rw` |
 | `go_modules` | downloaded Go modules | `GOMODCACHE=<container-target>` | `shared_rw` |
-| `maven` | Maven local repository | `MAVEN_OPTS += -Dmaven.repo.local=<container-target>` | `uncoordinated_rw` |
-| `gradle` | Gradle `caches/` directory | `GRADLE_USER_HOME=<parent-of-container-target>` | `uncoordinated_rw` |
 
 For a configured kind, the session wrapper sets the routing value on every managed command. It overrides an
-image-owned `UV_CACHE_DIR`, `GOCACHE`, `GOMODCACHE`, or `GRADLE_USER_HOME` with the configured target or its documented
-parent. The tool does not have to infer a cache from the container user, home, XDG directories, or OS defaults.
-Without that kind, the launcher leaves the image value untouched. Host values participate only in init discovery and
-are never copied wholesale into the container.
-
-The session wrapper appends `-Dmaven.repo.local=<configured-target>` to the container's existing `MAVEN_OPTS` value
-before starting a managed command. This preserves other image-owned JVM options, makes the managed property the last
-environment-supplied value, and does not import host `MAVEN_OPTS` or mount `~/.m2/settings.xml`.
+image-owned `GOCACHE` or `GOMODCACHE` with the configured target. The tool does not have to infer a cache from the
+container user, home, XDG directories, or OS defaults. Without that kind, the launcher leaves the image value
+untouched. Host values participate only in init discovery and are never copied wholesale into the container.
 
 These settings are routing defaults, not confinement. An explicit tool argument or project-owned configuration may
 override them and leave the attached cache unused; the launcher does not rewrite command argv or project files.
-
-The Gradle profile derives `GRADLE_USER_HOME` as the parent of the configured `caches/` source and mounts only that
-cache directory at the configured path. It does not expose host `gradle.properties`, `init.gradle`, `init.d/`, daemon
-state, wrapper credentials, or the rest of the host Gradle user home. Wrapper distributions are not part of the first
-contract.
 
 ### 4. Host and Container Compatibility
 
@@ -308,22 +268,23 @@ This contract does not attempt to share macOS or Windows cache trees with Linux.
 cross-architecture emulation remain out of scope. Explicit routing solves tool-path ambiguity after a mount exists;
 it does not make foreign host path syntax, filesystem semantics, or binary cache entries Linux-compatible.
 
-Host and container can still have different Linux distributions, libc versions, JDKs, Python interpreters, and tool
-versions. Each profile treats that difference separately:
+Host and container can still have different Linux distributions, libc versions, and Go tool versions. The implemented
+profiles treat that difference separately:
 
 | Kind | Cross-environment behavior | Decision |
 | --- | --- | --- |
-| `uv` | Cache buckets and wheel compatibility are versioned/tagged. | Share the live cache. |
 | `go_modules` | Downloaded source is independent of target OS and architecture. | Share the live cache. |
 | `go_build` | Keys include Go inputs and toolchain, but not changes in cgo C libraries. | Share with a cgo caveat. |
-| `maven` | Most artifacts are JVM-neutral; native artifacts should use classifiers. | Operator avoids overlap. |
-| `gradle` | Metadata formats are versioned and cross-version reuse may be partial. | Let Gradle decide hits. |
 
 An incompatibility should normally produce a miss or a parallel versioned entry, not installation of an artifact for
 the wrong platform. The exceptions are ecosystem packages published under insufficient platform coordinates and the
 documented Go cgo limitation; the launcher cannot repair either problem. It does not probe or compare tool versions.
 
-### 5. Derived Sharing Policies
+### 5. Deferred Profiles and Sharing Policies
+
+The remaining uv, Maven, and Gradle text in this section documents options considered for later milestones only. The
+current parser rejects their kinds and does not set their environment variables, create their mounts, or print their
+sharing-policy diagnostics.
 
 `shared_rw` is the diagnostic name for the policy derived for uv and Go. It relies on the package manager's own
 concurrent-cache contract. The launcher adds no coarse lock and does not make direct file edits.

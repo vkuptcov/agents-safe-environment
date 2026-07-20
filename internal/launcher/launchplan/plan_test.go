@@ -98,6 +98,70 @@ func TestResolveLinkedWorktreePreservesNestedWritableGitMount(t *testing.T) {
 	}
 }
 
+func TestResolveDependencyCachesPreservesTargetAndUsesPhysicalSource(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	root := filepath.Join(base, "project")
+	gitDir := filepath.Join(root, ".git")
+	physical := filepath.Join(home, "real-go-build")
+	alias := filepath.Join(home, "cache-alias")
+	modules := filepath.Join(home, "go", "pkg", "mod")
+	for _, path := range []string{home, root, gitDir, physical, modules} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(physical, alias); err != nil {
+		t.Fatal(err)
+	}
+	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	defaults := resolvedConfig(project, false)
+	config := defaults
+	config.Common.DependencyCaches = []projectenv.DependencyCacheConfig{
+		{Kind: projectenv.DependencyCacheGoModules, Source: modules},
+		{Kind: projectenv.DependencyCacheGoBuild, Source: alias},
+	}
+	resolution, err := ResolveWithHostHome(project, defaults, config, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []DependencyCache{
+		{Kind: projectenv.DependencyCacheGoBuild, Source: physical, Target: alias},
+		{Kind: projectenv.DependencyCacheGoModules, Source: modules, Target: modules},
+	}
+	if !reflect.DeepEqual(resolution.Plan.DependencyCaches, want) {
+		t.Fatalf("DependencyCaches = %#v, want %#v", resolution.Plan.DependencyCaches, want)
+	}
+	if got := resolution.Plan.Mounts[len(resolution.Plan.Mounts)-2:]; !reflect.DeepEqual(got, []BindMount{
+		{Source: physical, Target: alias}, {Source: modules, Target: modules},
+	}) {
+		t.Fatalf("cache mounts = %#v", got)
+	}
+}
+
+func TestResolveDependencyCachesRejectsProjectAndHomeOverlaps(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	root := filepath.Join(base, "project")
+	gitDir := filepath.Join(root, ".git")
+	for _, path := range []string{home, root, gitDir} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	defaults := resolvedConfig(project, false)
+	for _, source := range []string{home, root} {
+		config := defaults
+		config.Common.DependencyCaches = []projectenv.DependencyCacheConfig{{Kind: projectenv.DependencyCacheGoBuild, Source: source}}
+		if _, err := ResolveWithHostHome(project, defaults, config, home); err == nil || !strings.Contains(err.Error(), "dependency cache") {
+			t.Fatalf("ResolveWithHostHome(%q) error = %v", source, err)
+		}
+	}
+}
+
 func TestNormalizeLogicalMountsOrdersParentBeforeInterleavedChild(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

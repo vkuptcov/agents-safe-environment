@@ -2,10 +2,13 @@ package smoke_test
 
 import (
 	_ "embed"
+	"fmt"
+	"io"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,12 +112,29 @@ func (fixture *smokeFixture) waitForFile(path string, process *launcherProcess) 
 		}
 		select {
 		case <-process.done:
-			fixture.t.Fatalf("command exited before creating %q: %v\n%s", path, process.err, process.diagnostics())
+			fixture.t.Fatalf("command exited before creating %q: %v\n%s\n%s", path, process.err, process.diagnostics(), fixture.sessionDiagnostics())
 		case <-timer.C:
 			fixture.t.Fatalf("timed out waiting for %q\n%s", path, process.diagnostics())
 		case <-ticker.C:
 		}
 	}
+}
+
+func (fixture *smokeFixture) sessionDiagnostics() string {
+	inspection, err := fixture.docker.client.ContainerInspect(fixture.docker.ctx, fixture.docker.names.managed)
+	if err != nil {
+		return fmt.Sprintf("managed-container inspection unavailable: %v", err)
+	}
+	logs, err := fixture.docker.client.ContainerLogs(fixture.docker.ctx, inspection.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	if err != nil {
+		return fmt.Sprintf("managed-container state: %#v; logs unavailable: %v", inspection.State, err)
+	}
+	defer logs.Close()
+	data, err := io.ReadAll(logs)
+	if err != nil {
+		return fmt.Sprintf("managed-container state: %#v; read logs: %v", inspection.State, err)
+	}
+	return fmt.Sprintf("managed-container state: %#v\nmanaged-container logs:\n%s", inspection.State, data)
 }
 
 const reuseScript = `report=$1; release=$2

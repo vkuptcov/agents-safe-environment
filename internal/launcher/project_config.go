@@ -47,7 +47,7 @@ func ResolveProjectConfig(
 	if overrides.NoHostMCPOverride {
 		config.Common.NoHostMCP = overrides.NoHostMCP
 	}
-	resolution, err := launchplan.Resolve(project, defaults, config)
+	resolution, err := launchplan.ResolveWithHostHome(project, defaults, config, host.HomeDir)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/cli"
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
+	"github.com/vkuptcov/agents-safe-environment/internal/launchcli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 	"github.com/vkuptcov/agents-safe-environment/internal/testutil/clitest"
 )
@@ -56,9 +57,9 @@ func TestRunInitInitializesWithoutConstructingLauncher(t *testing.T) {
 	deps := testCommandDependencies(&clitest.RecordingLauncher{})
 	deps.discover = func(context.Context, string) (gitproject.Project, error) { return project, nil }
 	var initialized gitproject.Project
-	deps.initialize = func(got gitproject.Project) (string, error) {
+	deps.initialize = func(_ context.Context, got gitproject.Project, _ launchcli.HostCacheSelection) (initializationResult, error) {
 		initialized = got
-		return "/project/.agents-safe", nil
+		return initializationResult{Path: "/project/.agents-safe", Created: true}, nil
 	}
 	deps.newLauncher = func(string) (cli.Launcher, error) { panic("launcher must not be constructed") }
 	stdout := new(bytes.Buffer)
@@ -82,6 +83,21 @@ func TestRunInitRejectsArgumentsBeforeDiscovery(t *testing.T) {
 	}
 }
 
+func TestRunInitRejectsInvalidHostCachesBeforeDiscovery(t *testing.T) {
+	t.Parallel()
+	deps := testCommandDependencies(&clitest.RecordingLauncher{})
+	deps.discover = func(context.Context, string) (gitproject.Project, error) {
+		panic("discovery must not run")
+	}
+	stderr := new(bytes.Buffer)
+	if exit := run(context.Background(), []string{"init", "--host-caches=uv"}, new(bytes.Buffer), stderr, deps); exit != 2 {
+		t.Fatalf("run() = %d", exit)
+	}
+	if !strings.Contains(stderr.String(), "--host-caches accepts only") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func testCommandDependencies(launcher cli.Launcher) commandDependencies {
 	return commandDependencies{
 		discover: func(context.Context, string) (gitproject.Project, error) {
@@ -99,11 +115,11 @@ func testCommandDependencies(launcher cli.Launcher) commandDependencies {
 				CodexArguments: []string{"unused"},
 			}, nil
 		},
-		initialize: func(project gitproject.Project) (string, error) {
+		initialize: func(_ context.Context, project gitproject.Project, _ launchcli.HostCacheSelection) (initializationResult, error) {
 			if project.WorktreeRoot == "" {
-				return "", errors.New("missing worktree")
+				return initializationResult{}, errors.New("missing worktree")
 			}
-			return "/project/.agents-safe", nil
+			return initializationResult{Path: "/project/.agents-safe", Created: true}, nil
 		},
 		newLauncher: func(string) (cli.Launcher, error) { return launcher, nil },
 	}

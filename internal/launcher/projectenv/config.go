@@ -38,9 +38,25 @@ type ProjectConfig struct {
 
 // CommonConfig contains settings that affect both public launchers.
 type CommonConfig struct {
-	Image     string        `toml:"image"`
-	NoHostMCP bool          `toml:"no_host_mcp"`
-	Mounts    []MountConfig `toml:"mounts"`
+	Image            string                  `toml:"image"`
+	NoHostMCP        bool                    `toml:"no_host_mcp"`
+	Mounts           []MountConfig           `toml:"mounts"`
+	DependencyCaches []DependencyCacheConfig `toml:"dependency_caches"`
+}
+
+// DependencyCacheKind identifies a host dependency cache whose tool routing is owned by the launcher.
+type DependencyCacheKind string
+
+const (
+	DependencyCacheGoBuild   DependencyCacheKind = "go_build"
+	DependencyCacheGoModules DependencyCacheKind = "go_modules"
+)
+
+// DependencyCacheConfig stores a host cache path. Source remains the tool-visible container target; launch
+// resolution separately records the symlink-resolved physical bind source.
+type DependencyCacheConfig struct {
+	Kind   DependencyCacheKind `toml:"kind"`
+	Source string              `toml:"source"`
 }
 
 // CodexConfig contains command-time defaults for codex-safe.
@@ -67,9 +83,10 @@ type configOverlay struct {
 }
 
 type commonOverlay struct {
-	Image     *string        `toml:"image"`
-	NoHostMCP *bool          `toml:"no_host_mcp"`
-	Mounts    *[]MountConfig `toml:"mounts"`
+	Image            *string                  `toml:"image"`
+	NoHostMCP        *bool                    `toml:"no_host_mcp"`
+	Mounts           *[]MountConfig           `toml:"mounts"`
+	DependencyCaches *[]DependencyCacheConfig `toml:"dependency_caches"`
 }
 
 type codexOverlay struct {
@@ -148,6 +165,19 @@ func Validate(config ProjectConfig) error {
 			return err
 		}
 	}
+	seenCaches := make(map[DependencyCacheKind]struct{}, len(config.Common.DependencyCaches))
+	for index, cache := range config.Common.DependencyCaches {
+		if !supportedDependencyCacheKind(cache.Kind) {
+			return fmt.Errorf("common.dependency_caches[%d].kind %q is unsupported", index, cache.Kind)
+		}
+		if _, found := seenCaches[cache.Kind]; found {
+			return fmt.Errorf("common.dependency_caches repeats kind %q", cache.Kind)
+		}
+		seenCaches[cache.Kind] = struct{}{}
+		if err := ValidatePath(fmt.Sprintf("common.dependency_caches[%d].source", index), cache.Source, true); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -163,6 +193,9 @@ func applyOverlay(config *ProjectConfig, overlay configOverlay) {
 			config.Common.Mounts = make([]MountConfig, len(*overlay.Common.Mounts))
 			copy(config.Common.Mounts, *overlay.Common.Mounts)
 		}
+		if overlay.Common.DependencyCaches != nil {
+			config.Common.DependencyCaches = append([]DependencyCacheConfig(nil), (*overlay.Common.DependencyCaches)...)
+		}
 	}
 	if overlay.Codex != nil && overlay.Codex.Arguments != nil {
 		config.Codex.Arguments = append([]string(nil), (*overlay.Codex.Arguments)...)
@@ -171,8 +204,13 @@ func applyOverlay(config *ProjectConfig, overlay configOverlay) {
 
 func cloneConfig(config ProjectConfig) ProjectConfig {
 	config.Common.Mounts = append([]MountConfig(nil), config.Common.Mounts...)
+	config.Common.DependencyCaches = append([]DependencyCacheConfig(nil), config.Common.DependencyCaches...)
 	config.Codex.Arguments = append([]string(nil), config.Codex.Arguments...)
 	return config
+}
+
+func supportedDependencyCacheKind(kind DependencyCacheKind) bool {
+	return kind == DependencyCacheGoBuild || kind == DependencyCacheGoModules
 }
 
 func validateMount(index int, mount MountConfig) error {

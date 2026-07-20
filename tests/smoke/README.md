@@ -121,6 +121,14 @@ after a Dockerfile change, a BuildKit-backed rebuild on the next cold launch, an
 command with an explicit image, and verifies that an external directory is visible read-write at the same absolute
 path with `rprivate` propagation.
 
+`TestSysboxGoHostCaches` builds a test-only project image with the pinned Go toolchain, then verifies that configured
+`go_build` and `go_modules` sources are same-path writable binds, override image-owned Go cache defaults, and retain
+container writes for the host after a cold-session cleanup. It seeds a local `file://` module proxy through native Go,
+then proves the reused command, the host, and a new cold Sysbox session build offline from the shared cache. The test
+also verifies that nested Docker receives neither Go cache variable. `TestSysboxGoCacheConfigMismatch` proves that a
+changed cache configuration rejects reuse and leaves the active session untouched. The base runtime image intentionally
+remains Go-free.
+
 ## Probe synchronization
 
 Long-running probes communicate through files in the temporary linked worktree. That directory is visible to both

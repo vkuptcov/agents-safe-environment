@@ -17,34 +17,58 @@ const localIgnoreContent = "*\n!.gitignore\n!Dockerfile\n"
 
 // Initialize creates missing local project-environment files and preserves existing content.
 func Initialize(projectRoot string, config ProjectConfig) (string, error) {
+	path, _, err := InitializeLazy(projectRoot, func() (ProjectConfig, error) { return config, nil })
+	return path, err
+}
+
+// InitializeLazy calls config only when config.toml is absent, so init-only host discovery cannot rewrite or even
+// rediscover an existing snapshot.
+func InitializeLazy(projectRoot string, config func() (ProjectConfig, error)) (string, bool, error) {
 	contextPath, exists, err := inspectContextDirectory(projectRoot)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if !exists {
 		if err := os.Mkdir(contextPath, 0o755); err != nil {
-			return "", fmt.Errorf("create project environment %q: %w", contextPath, err)
+			return "", false, fmt.Errorf("create project environment %q: %w", contextPath, err)
 		}
 	}
 
-	var encodedConfig bytes.Buffer
-	if err := Encode(config, &encodedConfig); err != nil {
-		return "", fmt.Errorf("encode initialization config: %w", err)
+	configPath := filepath.Join(contextPath, ConfigName)
+	info, err := os.Lstat(configPath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", false, fmt.Errorf("inspect local project-environment file %q: %w", configPath, err)
+	}
+	if err == nil && !info.Mode().IsRegular() {
+		return "", false, fmt.Errorf("local project-environment file %q is not a regular file", configPath)
+	}
+	createdConfig := errors.Is(err, fs.ErrNotExist)
+	encodedConfig := ""
+	if createdConfig {
+		resolved, resolveErr := config()
+		if resolveErr != nil {
+			return "", false, resolveErr
+		}
+		var buffer bytes.Buffer
+		if encodeErr := Encode(resolved, &buffer); encodeErr != nil {
+			return "", false, fmt.Errorf("encode initialization config: %w", encodeErr)
+		}
+		encodedConfig = buffer.String()
 	}
 	resources := []struct {
 		name    string
 		content string
 	}{
 		{name: DockerfileSampleName, content: dockerfileSampleContent},
-		{name: ConfigName, content: encodedConfig.String()},
+		{name: ConfigName, content: encodedConfig},
 		{name: ".gitignore", content: localIgnoreContent},
 	}
 	for _, resource := range resources {
 		if err := createFileIfMissing(filepath.Join(contextPath, resource.name), resource.content); err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
-	return contextPath, nil
+	return contextPath, createdConfig, nil
 }
 
 func createFileIfMissing(path string, content string) error {

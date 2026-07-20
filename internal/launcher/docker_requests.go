@@ -47,6 +47,8 @@ func (docker *DockerLauncher) buildCreateRequest(
 		{Key: codexHomeLabel, Value: mountRoleLabel(plan, projectenv.RoleCodexHome)},
 		{Key: personalSkillsLabel, Value: mountRoleLabel(plan, projectenv.RolePersonalSkills)},
 		{Key: hostMCPLabel, Value: forwarding.set.Label()},
+		{Key: goBuildCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheGoBuild)},
+		{Key: goModulesCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheGoModules)},
 	}
 	environment := []dockercli.KeyValue{
 		{Key: "CODEX_SAFE_HOST_UID", Value: strconv.Itoa(docker.HostUID)},
@@ -102,6 +104,9 @@ func (docker *DockerLauncher) buildExecRequest(
 			Value: mount.Target,
 		})
 	}
+	for _, cache := range plan.DependencyCaches {
+		environment = append(environment, dockercli.KeyValue{Key: cache.EnvironmentKey(), Value: cache.Target})
+	}
 	wrappedCommand := append([]string{"codex-safe-session", "run", "--"}, command...)
 	return dockercli.ExecRequest{
 		ContainerID: containerID,
@@ -112,6 +117,15 @@ func (docker *DockerLauncher) buildExecRequest(
 		Interactive: true,
 		AllocateTTY: docker.AllocateTTY,
 	}, nil
+}
+
+func dependencyCacheLabel(plan launchplan.Plan, kind projectenv.DependencyCacheKind) string {
+	for _, cache := range plan.DependencyCaches {
+		if cache.Kind == kind {
+			return cache.Source
+		}
+	}
+	return mountAbsent
 }
 
 func mountRoleLabel(plan launchplan.Plan, role projectenv.MountRole) string {

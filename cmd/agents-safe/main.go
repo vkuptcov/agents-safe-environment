@@ -33,15 +33,23 @@ Use agents-safe -- init to execute a container command named init.
                  MCP server in the base config.toml is reached through a confined relay.
   --image        Explicitly select an image and bypass automatic .agents-safe/Dockerfile selection.`
 
-const initUsage = `Usage: agents-safe init [--project PATH]
+const initUsage = `Usage: agents-safe init [--project PATH] [--host-caches=auto|none|go_build,go_modules]
 
 Create local .agents-safe/Dockerfile.sample, .agents-safe/config.toml, and .agents-safe/.gitignore files at the
-selected Git worktree root. Initialization does not construct a Docker launcher or modify the root .gitignore.`
+selected Git worktree root. --host-caches defaults to auto and snapshots existing host Go caches only for a newly
+created config.toml. Initialization does not construct a Docker launcher or modify the root .gitignore.`
+
+type initializationResult struct {
+	Path        string
+	Created     bool
+	Caches      []projectenv.DependencyCacheConfig
+	Diagnostics []string
+}
 
 type commandDependencies struct {
 	discover      func(context.Context, string) (gitproject.Project, error)
 	resolveConfig func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error)
-	initialize    func(gitproject.Project) (string, error)
+	initialize    func(context.Context, gitproject.Project, launchcli.HostCacheSelection) (initializationResult, error)
 	newLauncher   func(string) (cli.Launcher, error)
 }
 
@@ -72,16 +80,32 @@ func productionDependencies() commandDependencies {
 	return commandDependencies{
 		discover:      gitproject.Discover,
 		resolveConfig: launchcli.ResolveConfig,
-		initialize: func(project gitproject.Project) (string, error) {
-			host, err := launcher.ResolveHostEnvironment()
+		initialize: func(ctx context.Context, project gitproject.Project, selection launchcli.HostCacheSelection) (initializationResult, error) {
+			result := initializationResult{}
+			path, created, err := projectenv.InitializeLazy(project.WorktreeRoot, func() (projectenv.ProjectConfig, error) {
+				host, err := launcher.ResolveHostEnvironment()
+				if err != nil {
+					return projectenv.ProjectConfig{}, err
+				}
+				defaults, err := launcher.DefaultProjectConfig(project, host, defaultImage)
+				if err != nil {
+					return projectenv.ProjectConfig{}, err
+				}
+				caches, err := launchcli.ResolveHostCaches(ctx, selection, host.HomeDir)
+				if err != nil {
+					return projectenv.ProjectConfig{}, err
+				}
+				defaults.Common.DependencyCaches = caches.Caches
+				result.Caches = caches.Caches
+				result.Diagnostics = caches.Diagnostics
+				return defaults, nil
+			})
 			if err != nil {
-				return "", err
+				return initializationResult{}, err
 			}
-			defaults, err := launcher.DefaultProjectConfig(project, host, defaultImage)
-			if err != nil {
-				return "", err
-			}
-			return projectenv.Initialize(project.WorktreeRoot, defaults)
+			result.Path = path
+			result.Created = created
+			return result, nil
 		},
 		newLauncher: func(hostHome string) (cli.Launcher, error) {
 			return launcher.NewDockerLauncher(hostHome)
@@ -125,6 +149,7 @@ func runInit(
 	flags.SetOutput(io.Discard)
 	flags.SetInterspersed(false)
 	projectPath := flags.String("project", ".", "Git project path")
+	hostCaches := flags.String("host-caches", "auto", "Host Go caches: auto, none, or go_build,go_modules")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			fmt.Fprintln(stdout, initUsage)
@@ -139,17 +164,35 @@ func runInit(
 		fmt.Fprintln(stderr, initUsage)
 		return 2
 	}
+	selection, err := launchcli.ParseHostCacheSelection(*hostCaches)
+	if err != nil {
+		fmt.Fprintf(stderr, "agents-safe init: %v\n", err)
+		return 2
+	}
 
 	project, err := dependencies.discover(ctx, *projectPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "agents-safe init: %v\n", err)
 		return 1
 	}
-	contextPath, err := dependencies.initialize(project)
+	result, err := dependencies.initialize(ctx, project, selection)
 	if err != nil {
 		fmt.Fprintf(stderr, "agents-safe init: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Initialized %s\n", contextPath)
+	fmt.Fprintf(stdout, "Initialized %s\n", result.Path)
+	if !result.Created {
+		fmt.Fprintln(stdout, "Existing config.toml preserved; host cache snapshot unchanged.")
+		return 0
+	}
+	if len(result.Caches) == 0 && selection.Auto {
+		fmt.Fprintln(stdout, "No existing shared read-write host dependency caches detected")
+	}
+	for _, diagnostic := range result.Diagnostics {
+		fmt.Fprintf(stderr, "agents-safe init: %s\n", diagnostic)
+	}
+	for _, cache := range result.Caches {
+		fmt.Fprintf(stdout, "Host dependency cache: %s  %s  shared_rw\n", cache.Kind, cache.Source)
+	}
 	return 0
 }

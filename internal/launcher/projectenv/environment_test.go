@@ -71,6 +71,25 @@ func TestInitializePreservesExistingLocalFiles(t *testing.T) {
 	}
 }
 
+func TestInitializeLazySkipsProviderWhenConfigExists(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	contextPath := filepath.Join(root, Directory)
+	if err := os.Mkdir(contextPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(contextPath, ConfigName), []byte("[common]\nimage = \"keep:image\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path, created, err := InitializeLazy(root, func() (ProjectConfig, error) {
+		t.Fatal("config provider must not run for an existing config")
+		return ProjectConfig{}, nil
+	})
+	if err != nil || created || path != contextPath {
+		t.Fatalf("InitializeLazy() = %q, %t, %v", path, created, err)
+	}
+}
+
 func TestInitializeRejectsSymlinkLocalFilesWithoutReadingRootIgnore(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
