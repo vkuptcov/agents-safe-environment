@@ -302,17 +302,14 @@ func resolveDependencyCaches(
 		return nil, err
 	}
 	result := make([]DependencyCache, 0, len(configured))
-	for _, kind := range []projectenv.DependencyCacheKind{projectenv.DependencyCacheGoBuild, projectenv.DependencyCacheGoModules} {
+	for _, kind := range projectenv.DependencyCacheKindOrder {
 		for _, cache := range configured {
 			if cache.Kind != kind {
 				continue
 			}
-			if err := validateDependencyCache(cache, hostHome, logical, result); err != nil {
-				return nil, err
-			}
-			physical, err := filepath.EvalSymlinks(cache.Source)
+			physical, err := validateDependencyCache(cache, hostHome, logical, result)
 			if err != nil {
-				return nil, fmt.Errorf("resolve dependency cache %q: %w", cache.Source, err)
+				return nil, err
 			}
 			result = append(result, DependencyCache{Kind: cache.Kind, Source: physical, Target: cache.Source})
 		}
@@ -325,29 +322,29 @@ func validateDependencyCache(
 	hostHome string,
 	logical []logicalMount,
 	resolved []DependencyCache,
-) error {
+) (string, error) {
 	if err := ValidateMountPath("dependency cache source", cache.Source); err != nil {
-		return err
+		return "", err
 	}
-	if cache.Source == string(filepath.Separator) || PathsOverlap(cache.Source, hostHome) && pathContains(cache.Source, hostHome) {
-		return fmt.Errorf("dependency cache %q cannot be the host home or its ancestor", cache.Source)
+	if cache.Source == string(filepath.Separator) || pathContains(cache.Source, hostHome) {
+		return "", fmt.Errorf("dependency cache %q cannot be the host home or its ancestor", cache.Source)
 	}
 	physical, err := filepath.EvalSymlinks(cache.Source)
 	if err != nil {
-		return fmt.Errorf("resolve dependency cache %q: %w", cache.Source, err)
+		return "", fmt.Errorf("resolve dependency cache %q: %w", cache.Source, err)
 	}
 	info, err := os.Stat(physical)
 	if err != nil {
-		return fmt.Errorf("inspect dependency cache %q: %w", cache.Source, err)
+		return "", fmt.Errorf("inspect dependency cache %q: %w", cache.Source, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("dependency cache %q is not a directory", cache.Source)
+		return "", fmt.Errorf("dependency cache %q is not a directory", cache.Source)
 	}
 	if err := checkEffectiveAccess(physical); err != nil {
-		return fmt.Errorf("dependency cache %q must be readable, writable, and searchable: %w", cache.Source, err)
+		return "", fmt.Errorf("dependency cache %q must be readable, writable, and searchable: %w", cache.Source, err)
 	}
-	if PathsOverlap(physical, hostHome) && pathContains(physical, hostHome) {
-		return fmt.Errorf("dependency cache %q resolves to the host home or its ancestor", cache.Source)
+	if pathContains(physical, hostHome) {
+		return "", fmt.Errorf("dependency cache %q resolves to the host home or its ancestor", cache.Source)
 	}
 	for _, mount := range logical {
 		if mount.role == projectenv.RoleHostMCPChannel {
@@ -355,18 +352,18 @@ func validateDependencyCache(
 		}
 		mountPhysical, evalErr := filepath.EvalSymlinks(mount.mount.Source)
 		if evalErr != nil {
-			return fmt.Errorf("resolve mount source %q while checking dependency cache: %w", mount.mount.Source, evalErr)
+			return "", fmt.Errorf("resolve mount source %q while checking dependency cache: %w", mount.mount.Source, evalErr)
 		}
 		if PathsOverlap(cache.Source, mount.mount.Target) || PathsOverlap(physical, mountPhysical) {
-			return fmt.Errorf("dependency cache %q overlaps mount %q", cache.Source, mount.mount.Source)
+			return "", fmt.Errorf("dependency cache %q overlaps mount %q", cache.Source, mount.mount.Source)
 		}
 	}
 	for _, existing := range resolved {
 		if PathsOverlap(cache.Source, existing.Target) || PathsOverlap(physical, existing.Source) {
-			return fmt.Errorf("dependency cache %q overlaps dependency cache %q", cache.Source, existing.Target)
+			return "", fmt.Errorf("dependency cache %q overlaps dependency cache %q", cache.Source, existing.Target)
 		}
 	}
-	return nil
+	return physical, nil
 }
 
 func managedRoleMap(

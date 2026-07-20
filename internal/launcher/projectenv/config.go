@@ -52,6 +52,10 @@ const (
 	DependencyCacheGoModules DependencyCacheKind = "go_modules"
 )
 
+// DependencyCacheKindOrder is the canonical ordering the launcher applies to configured caches. It is the
+// single source of truth for both init-time parsing and launch-time resolution, so the two cannot drift.
+var DependencyCacheKindOrder = []DependencyCacheKind{DependencyCacheGoBuild, DependencyCacheGoModules}
+
 // DependencyCacheConfig stores a host cache path. Source remains the tool-visible container target; launch
 // resolution separately records the symlink-resolved physical bind source.
 type DependencyCacheConfig struct {

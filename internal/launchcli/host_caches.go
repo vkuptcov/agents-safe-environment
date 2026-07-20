@@ -32,9 +32,7 @@ type HostCacheSelection struct {
 // ParseHostCacheSelection accepts the deliberately small Go-only init surface.
 func ParseHostCacheSelection(value string) (HostCacheSelection, error) {
 	if value == "" || value == "auto" {
-		return HostCacheSelection{Auto: true, Kinds: []projectenv.DependencyCacheKind{
-			projectenv.DependencyCacheGoBuild, projectenv.DependencyCacheGoModules,
-		}}, nil
+		return HostCacheSelection{Auto: true, Kinds: append([]projectenv.DependencyCacheKind(nil), projectenv.DependencyCacheKindOrder...)}, nil
 	}
 	if value == "none" {
 		return HostCacheSelection{}, nil
@@ -51,7 +49,7 @@ func ParseHostCacheSelection(value string) (HostCacheSelection, error) {
 		}
 		seen[kind] = true
 	}
-	for _, kind := range []projectenv.DependencyCacheKind{projectenv.DependencyCacheGoBuild, projectenv.DependencyCacheGoModules} {
+	for _, kind := range projectenv.DependencyCacheKindOrder {
 		if seen[kind] {
 			selection.Kinds = append(selection.Kinds, kind)
 		}
@@ -126,9 +124,6 @@ func (resolver hostCacheResolver) resolve(ctx context.Context, selection HostCac
 		}
 		result.Diagnostics = append(result.Diagnostics, fmt.Sprintf("%s unavailable: %v", kind, resolveErr))
 	}
-	if len(result.Diagnostics) != 0 && len(result.Caches) == 0 {
-		return result, nil
-	}
 	return result, nil
 }
 
@@ -145,7 +140,7 @@ func (resolver hostCacheResolver) cachePath(
 		}
 		path = resolver.fallbackPath(kind)
 	}
-	if path == "" || path == "off" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+	if path == "off" {
 		return "", fmt.Errorf("resolved path %q is not a canonical absolute directory", path)
 	}
 	if err := projectenv.ValidatePath("resolved Go cache", path, true); err != nil {
