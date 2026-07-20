@@ -2,6 +2,10 @@
 
 Use [README.md](README.md) for lifecycle rules, required sections, and the reusable plan template.
 
+## Active
+
+- [Go Host-Backed Dependency Caches](active/2026-07-20-go-host-backed-dependency-caches-exec-plan.md)
+
 ## Review
 
 - [Host Cache Design Review Fixes](review/2026-07-19-host-backed-dependency-caches-design-review-fixes-exec-plan.md)
