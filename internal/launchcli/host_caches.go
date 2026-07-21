@@ -3,6 +3,7 @@ package launchcli
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
@@ -29,7 +30,7 @@ func ParseHostCacheSelection(value string) (HostCacheSelection, error) {
 	selection := HostCacheSelection{}
 	for _, token := range strings.Split(value, ",") {
 		kind := projectenv.DependencyCacheKind(token)
-		if token == "" || !isSupportedHostCacheKind(kind) {
+		if token == "" || !slices.Contains(projectenv.DependencyCacheKindOrder, kind) {
 			return HostCacheSelection{}, fmt.Errorf("--host-caches accepts only auto, none, go_build, go_modules, and uv")
 		}
 		if seen[kind] {
@@ -43,15 +44,6 @@ func ParseHostCacheSelection(value string) (HostCacheSelection, error) {
 		}
 	}
 	return selection, nil
-}
-
-func isSupportedHostCacheKind(kind projectenv.DependencyCacheKind) bool {
-	for _, supported := range projectenv.DependencyCacheKindOrder {
-		if kind == supported {
-			return true
-		}
-	}
-	return false
 }
 
 // HostCacheResolution is the persisted snapshot and non-fatal auto-discovery diagnostics.
@@ -72,7 +64,8 @@ func ResolveHostCaches(
 		resolveGo: dependencies.ResolveGoCaches,
 		resolveUV: dependencies.ResolveUVCache,
 		validate: func(caches []projectenv.DependencyCacheConfig) error {
-			config := cloneConfigWithCaches(defaults, caches)
+			config := defaults
+			config.Common.DependencyCaches = caches
 			_, err := launchplan.ResolveWithHostHome(project, defaults, config, homeDir)
 			return err
 		},
@@ -102,6 +95,9 @@ func resolveHostCaches(
 	}
 	if err := inputs.validate(nil); err != nil {
 		return HostCacheResolution{}, fmt.Errorf("validate project cache baseline: %w", err)
+	}
+	if len(selection.Kinds) == 0 {
+		return HostCacheResolution{Caches: []projectenv.DependencyCacheConfig{}}, nil
 	}
 
 	goKinds := make([]projectenv.DependencyCacheKind, 0, len(selection.Kinds))
@@ -136,35 +132,17 @@ func resolveHostCaches(
 		result.Diagnostics = append(result.Diagnostics, uvResult.Diagnostics...)
 	}
 
-	for _, kind := range projectenv.DependencyCacheKindOrder {
-		for _, candidate := range candidates {
-			if candidate.Kind != kind {
-				continue
+	// Go resolves its kinds canonically, and the uv candidate follows the Go family.
+	for _, candidate := range candidates {
+		proposed := append(slices.Clone(result.Caches), candidate)
+		if err := inputs.validate(proposed); err != nil {
+			if !selection.Auto {
+				return HostCacheResolution{}, fmt.Errorf("validate %s cache: %w", candidate.Kind, err)
 			}
-			proposed := append(append([]projectenv.DependencyCacheConfig(nil), result.Caches...), candidate)
-			if err := inputs.validate(proposed); err != nil {
-				if !selection.Auto {
-					return HostCacheResolution{}, fmt.Errorf("validate %s cache: %w", candidate.Kind, err)
-				}
-				result.Diagnostics = append(result.Diagnostics, fmt.Sprintf("%s unavailable: %v", candidate.Kind, err))
-				continue
-			}
-			result.Caches = proposed
+			result.Diagnostics = append(result.Diagnostics, fmt.Sprintf("%s unavailable: %v", candidate.Kind, err))
+			continue
 		}
-	}
-	if !selection.Auto && len(selection.Kinds) == 0 {
-		result.Caches = []projectenv.DependencyCacheConfig{}
+		result.Caches = proposed
 	}
 	return result, nil
-}
-
-func cloneConfigWithCaches(
-	defaults projectenv.ProjectConfig,
-	caches []projectenv.DependencyCacheConfig,
-) projectenv.ProjectConfig {
-	config := defaults
-	config.Common.Mounts = append([]projectenv.MountConfig(nil), defaults.Common.Mounts...)
-	config.Common.DependencyCaches = append([]projectenv.DependencyCacheConfig(nil), caches...)
-	config.Codex.Arguments = append([]string(nil), defaults.Codex.Arguments...)
-	return config
 }

@@ -244,8 +244,8 @@ Resolution uses the invoking host identity and performs no network or Docker acc
 - Go modules: use the effective absolute `GOMODCACHE` reported by `go env`; only when `go` is absent, fall back to
   `$GOMODCACHE`, then the first `$GOPATH` entry plus `/pkg/mod`, then `<host-home>/go/pkg/mod`;
 - uv: run a bounded `uv cache dir --directory <project-root>` probe so host environment and uv configuration select
-  the same project-effective directory. Only when `uv` is absent, fall back to an absolute `UV_CACHE_DIR`, then
-  `$XDG_CACHE_HOME/uv`, then `<host-home>/.cache/uv`.
+  the same project-effective directory. Only when `uv` is absent, select the first non-empty value from
+  `UV_CACHE_DIR`, `$XDG_CACHE_HOME/uv`, and `<host-home>/.cache/uv`, then require that selected path to be absolute.
 
 ```mermaid
 flowchart TD
@@ -303,10 +303,10 @@ flowchart TD
     Selected["Selected uv cache"] --> Probe["Run bounded uv cache dir<br/>--directory project-root"]
     Probe --> ProbeResult{"Command result"}
     ProbeResult -->|"success"| Decode["Trim one stdout path"]
-    ProbeResult -->|"uv executable absent"| Env{"Absolute UV_CACHE_DIR set?"}
+    ProbeResult -->|"uv executable absent"| Env{"UV_CACHE_DIR set?"}
     ProbeResult -->|"timeout or nonzero exit"| Unavailable["uv cache unavailable"]
     Env -->|"yes"| EnvCache["Use UV_CACHE_DIR"]
-    Env -->|"no"| XDG{"Absolute XDG_CACHE_HOME set?"}
+    Env -->|"no"| XDG{"XDG_CACHE_HOME set?"}
     XDG -->|"yes"| XDGCache["Use XDG_CACHE_HOME/uv"]
     XDG -->|"no"| HomeCache["Use host-home/.cache/uv"]
     Decode --> Validate
@@ -322,6 +322,9 @@ flowchart TD
     SelectionMode -->|"auto"| Omit["Omit uv and emit diagnostic"]
     SelectionMode -->|"explicit"| Fail["Fail initialization"]
 ```
+
+A relative non-empty `UV_CACHE_DIR` or `XDG_CACHE_HOME` is the selected fallback and fails validation; resolution does
+not skip a configured but unsafe value to try a lower-precedence default.
 
 The probe returns exactly one path on stdout. Empty, multi-line, relative, nonexistent, inaccessible, or unsafe
 output is unavailable. In particular, `--no-cache`, `UV_NO_CACHE`, or `no-cache = true` causes uv to choose a

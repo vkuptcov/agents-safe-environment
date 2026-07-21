@@ -119,8 +119,9 @@ exposure constraint; no intermediate release accepted `uv` without a complete la
    distinctly enough for useful errors.
 4. Accept one trimmed absolute path. Reject empty or multi-line output, unsafe lexical forms, a missing/non-directory
    path, and failed read/write/search access.
-5. On `exec.ErrNotFound` only, resolve `UV_CACHE_DIR`, then `$XDG_CACHE_HOME/uv`, then
-   `<host-home>/.cache/uv`; require absolute environment bases and the same directory/access validation.
+5. On `exec.ErrNotFound` only, select the first non-empty fallback from `UV_CACHE_DIR`, `$XDG_CACHE_HOME/uv`, and
+   `<host-home>/.cache/uv`; reject a selected relative environment value instead of skipping it, then apply the same
+   directory/access validation.
 6. Return one typed candidate or the same auto diagnostic versus explicit error shape used by the Go resolver. Do not
    create a directory and do not hide the underlying probe cause.
 7. Add `uv_deps_test.go` cases for success, CRLF trimming, multi-line output, timeout, cancellation, nonzero exit,
@@ -296,5 +297,6 @@ Done when: docs describe Go plus uv as implemented, Maven/Gradle as deferred, an
   coverage, docs, and focused tests without changing the base runtime image.
 - 2026-07-21: Owner approved the digest-pinned uv/Python image exclusively for temporary smoke project images. Real
   Sysbox tests passed for reuse, bind isolation, concurrent worktrees, and live configuration mismatch.
-- 2026-07-21: Implementation review fixed F-001 through F-004; the final re-review has no open findings. This plan
+- 2026-07-21: Implementation review fixed F-001 through F-005. The final pass simplified resolver orchestration and
+  smoke helpers, then passed lint, unit/vet, docs, and the complete real Sysbox gate with no open findings. This plan
   awaits owner acceptance in `review/`.

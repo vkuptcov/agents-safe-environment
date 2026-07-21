@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -219,12 +220,7 @@ func cloneConfig(config ProjectConfig) ProjectConfig {
 }
 
 func supportedDependencyCacheKind(kind DependencyCacheKind) bool {
-	for _, supported := range DependencyCacheKindOrder {
-		if kind == supported {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(DependencyCacheKindOrder, kind)
 }
 
 func validateMount(index int, mount MountConfig) error {

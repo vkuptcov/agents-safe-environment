@@ -57,21 +57,9 @@ func newUVCacheResolver(homeDir string, projectRoot string) uvCacheResolver {
 }
 
 func (resolver uvCacheResolver) resolve(ctx context.Context, auto bool) (UVCacheResolution, error) {
-	probeContext, cancel := context.WithTimeout(ctx, uvCacheProbeTimeout)
-	defer cancel()
-	output, err := resolver.run(probeContext, "uv", "cache", "dir", "--directory", resolver.projectRoot)
-
-	var path string
+	path, err := resolver.cachePath(ctx)
 	if err == nil {
-		path, err = parseUVCachePath(output)
-	} else if errors.Is(err, exec.ErrNotFound) {
-		path = resolver.fallbackPath()
-		err = nil
-	} else {
-		err = fmt.Errorf("run uv cache dir: %w", err)
-	}
-	if err == nil {
-		err = resolver.validate(path)
+		err = validateExistingCacheDirectory("resolved uv cache", path, resolver.stat, resolver.access)
 	}
 	if err != nil {
 		if !auto {
@@ -82,6 +70,19 @@ func (resolver uvCacheResolver) resolve(ctx context.Context, auto bool) (UVCache
 	return UVCacheResolution{Caches: []projectenv.DependencyCacheConfig{{
 		Kind: projectenv.DependencyCacheUV, Source: path,
 	}}}, nil
+}
+
+func (resolver uvCacheResolver) cachePath(ctx context.Context) (string, error) {
+	probeContext, cancel := context.WithTimeout(ctx, uvCacheProbeTimeout)
+	defer cancel()
+	output, err := resolver.run(probeContext, "uv", "cache", "dir", "--directory", resolver.projectRoot)
+	if errors.Is(err, exec.ErrNotFound) {
+		return resolver.fallbackPath(), nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("run uv cache dir: %w", err)
+	}
+	return parseUVCachePath(output)
 }
 
 func parseUVCachePath(output []byte) (string, error) {
@@ -101,8 +102,4 @@ func (resolver uvCacheResolver) fallbackPath() string {
 		return filepath.Join(xdg, "uv")
 	}
 	return filepath.Join(resolver.homeDir, ".cache", "uv")
-}
-
-func (resolver uvCacheResolver) validate(path string) error {
-	return validateExistingCacheDirectory("resolved uv cache", path, resolver.stat, resolver.access)
 }

@@ -4,12 +4,12 @@ import (
 	"archive/zip"
 	"crypto/sha256"
 	"encoding/base64"
-	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -92,8 +92,8 @@ func TestSysboxUVHostCacheReuse(t *testing.T) {
 	writeUVCacheProjectEnvironment(t, fixture, sharedCache)
 
 	indexRoot := filepath.Join(fixture.project.worktree, "uv-simple-index")
-	firstRequirement := writeUVWheel(t, indexRoot, "uvhostcachepkg", "uvhostcachepkg", "host-to-container")
-	secondRequirement := writeUVWheel(t, indexRoot, "uvcontainercachepkg", "uvcontainercachepkg", "container-to-host")
+	firstRequirement := writeUVWheel(t, indexRoot, "uvhostcachepkg", "host-to-container")
+	secondRequirement := writeUVWheel(t, indexRoot, "uvcontainercachepkg", "container-to-host")
 
 	hostServer := startLoopbackFileServer(t, indexRoot)
 	hostSeedVenv := filepath.Join(fixture.project.worktree, ".venv-host-seed")
@@ -173,8 +173,8 @@ func TestSysboxConcurrentUVCacheWorktrees(t *testing.T) {
 
 	firstIndex := filepath.Join(fixture.project.worktree, "uv-concurrent-index")
 	secondIndex := filepath.Join(parallelWorktree, "uv-concurrent-index")
-	firstRequirement := writeUVWheel(t, firstIndex, "uvconcurrentfirstpkg", "uvconcurrentfirstpkg", "first")
-	secondRequirement := writeUVWheel(t, secondIndex, "uvconcurrentsecondpkg", "uvconcurrentsecondpkg", "second")
+	firstRequirement := writeUVWheel(t, firstIndex, "uvconcurrentfirstpkg", "first")
+	secondRequirement := writeUVWheel(t, secondIndex, "uvconcurrentsecondpkg", "second")
 	port := reserveLoopbackPort(t)
 	url := "http://127.0.0.1:" + port + "/simple"
 
@@ -281,33 +281,34 @@ func createHostUVVenv(t *testing.T, directory, cache, venv string) {
 
 func installHostUVPackage(t *testing.T, directory, cache, venv, indexURL, requirement string, offline bool) {
 	t.Helper()
-	args := []string{"pip", "install", "--no-config", "--no-build", "--index-url", indexURL,
-		"--python", filepath.Join(venv, "bin", "python")}
-	if offline {
-		args = append(args, "--offline")
-	}
-	runHostUV(t, directory, cache, append(args, requirement)...)
+	runHostUV(t, directory, cache, hostUVInstallArgs(venv, indexURL, requirement, offline)...)
 }
 
 func requireHostUVInstallFailure(t *testing.T, directory, cache, venv, indexURL, requirement string) {
 	t.Helper()
-	args := []string{"pip", "install", "--offline", "--no-config", "--no-build", "--index-url", indexURL,
-		"--python", filepath.Join(venv, "bin", "python"), requirement}
-	command := exec.Command("uv", args...)
+	command := exec.Command("uv", hostUVInstallArgs(venv, indexURL, requirement, true)...)
 	command.Dir = directory
 	command.Env = uvEnvironment(cache)
 	output, err := command.CombinedOutput()
 	require.Error(t, err, "empty native uv cache must not satisfy %s: %s", requirement, output)
 }
 
-func runHostUV(t *testing.T, directory, cache string, args ...string) string {
+func hostUVInstallArgs(venv, indexURL, requirement string, offline bool) []string {
+	args := []string{"pip", "install", "--no-config", "--no-build", "--index-url", indexURL,
+		"--python", filepath.Join(venv, "bin", "python")}
+	if offline {
+		args = append(args, "--offline")
+	}
+	return append(args, requirement)
+}
+
+func runHostUV(t *testing.T, directory, cache string, args ...string) {
 	t.Helper()
 	command := exec.Command("uv", args...)
 	command.Dir = directory
 	command.Env = uvEnvironment(cache)
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "uv %s must succeed: %s", strings.Join(args, " "), output)
-	return string(output)
 }
 
 func uvEnvironment(cache string) []string {
@@ -388,13 +389,13 @@ type uvWheelEntry struct {
 	data []byte
 }
 
-func writeUVWheel(t *testing.T, indexRoot, name, module, value string) string {
+func writeUVWheel(t *testing.T, indexRoot, name, value string) string {
 	t.Helper()
 	const version = "1.0.0"
 	distInfo := name + "-" + version + ".dist-info"
 	filename := name + "-" + version + "-py3-none-any.whl"
 	entries := []uvWheelEntry{
-		{path: module + "/__init__.py", data: []byte("VALUE = " + fmt.Sprintf("%q", value) + "\n")},
+		{path: name + "/__init__.py", data: []byte("VALUE = " + strconv.Quote(value) + "\n")},
 		{path: distInfo + "/METADATA", data: []byte("Metadata-Version: 2.1\nName: " + name + "\nVersion: " + version + "\n\n")},
 		{path: distInfo + "/WHEEL", data: []byte("Wheel-Version: 1.0\nGenerator: agents-safe smoke\nRoot-Is-Purelib: true\nTag: py3-none-any\n")},
 	}
@@ -410,7 +411,7 @@ func writeUVWheel(t *testing.T, indexRoot, name, module, value string) string {
 		_, writeErr := file.Write(entry.data)
 		require.NoError(t, writeErr, "wheel entry %q must be written", entry.path)
 		digest := sha256.Sum256(entry.data)
-		record = append(record, entry.path+",sha256="+base64.RawURLEncoding.EncodeToString(digest[:])+","+fmt.Sprint(len(entry.data)))
+		record = append(record, entry.path+",sha256="+base64.RawURLEncoding.EncodeToString(digest[:])+","+strconv.Itoa(len(entry.data)))
 	}
 	recordPath := distInfo + "/RECORD"
 	record = append(record, recordPath+",,")
@@ -436,13 +437,7 @@ uv venv --no-project --no-config --no-python-downloads --python python "$venv"
 uv pip install --offline --no-config --no-build --index-url "$index" --python "$venv/bin/python" "$requirement"
 "$venv/bin/python" -c "import ${requirement%%==*}; print(${requirement%%==*}.VALUE)" > "$report"`
 
-const uvLoopbackInstallScript = `port=$1
-root=$2
-venv=$3
-index=$4
-requirement=$5
-report=$6
-python -m http.server "$port" --bind 127.0.0.1 --directory "$root" >/tmp/uv-smoke-index.log 2>&1 &
+const uvStartLoopbackIndexScript = `python -m http.server "$port" --bind 127.0.0.1 --directory "$root" >/tmp/uv-smoke-index.log 2>&1 &
 server=$!
 trap 'kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true' EXIT
 for attempt in {1..50}; do
@@ -455,7 +450,15 @@ PY
   then break; fi
   sleep 0.1
 done
-uv venv --no-project --no-config --no-python-downloads --python python "$venv"
+`
+
+const uvLoopbackInstallScript = `port=$1
+root=$2
+venv=$3
+index=$4
+requirement=$5
+report=$6
+` + uvStartLoopbackIndexScript + `uv venv --no-project --no-config --no-python-downloads --python python "$venv"
 uv pip install --no-config --no-build --index-url "$index" --python "$venv/bin/python" "$requirement"
 "$venv/bin/python" -c "import ${requirement%%==*}; print(${requirement%%==*}.VALUE)" > "$report"`
 
@@ -467,20 +470,7 @@ requirement=$5
 report=$6
 ready=$7
 release=$8
-python -m http.server "$port" --bind 127.0.0.1 --directory "$root" >/tmp/uv-smoke-concurrent-index.log 2>&1 &
-server=$!
-trap 'kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true' EXIT
-for attempt in {1..50}; do
-  if python - "$port" <<'PY'
-import socket
-import sys
-with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=0.2):
-    pass
-PY
-  then break; fi
-  sleep 0.1
-done
-: > "$ready"
+` + uvStartLoopbackIndexScript + `: > "$ready"
 while [[ ! -e "$release" ]]; do sleep 0.1; done
 uv venv --no-project --no-config --no-python-downloads --python python "$venv"
 uv pip install --no-config --no-build --index-url "$index" --python "$venv/bin/python" "$requirement"
