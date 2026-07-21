@@ -129,20 +129,25 @@ interactive Codex behaves as it does on the host.
 The generic command interface is:
 
 ```text
-agents-safe init [--project PATH]
+agents-safe init [--project PATH] [--host-caches=auto|none|go_build,go_modules]
 agents-safe [--project PATH] [--image REF] [--] COMMAND [ARG...]
 ```
 
 Prepare an inactive project-environment template from anywhere inside a Git worktree:
 
 ```bash
-./bin/agents-safe init
+./bin/agents-safe init --host-caches=auto
 ```
 
 This creates `.agents-safe/Dockerfile.sample`, `.agents-safe/config.toml`, and `.agents-safe/.gitignore` without
 contacting Docker. The local ignore file ignores generated project-environment files while keeping itself and an
 activated `.agents-safe/Dockerfile` trackable; the worktree-root `.gitignore` is not modified. Repeated
 initialization preserves existing content.
+
+The Go-only cache milestone snapshots existing `GOCACHE` and `GOMODCACHE` directories into a newly created config,
+mounts each at its configured host-visible path, and supplies `GOCACHE`/`GOMODCACHE` to every managed command. It
+never creates cache directories or rediscover/rewrite an existing config. uv, Maven, Gradle, Docker-image, and
+BuildKit caches are deferred; see [Host-Backed Dependency Caches](docs/design-docs/host-backed-dependency-caches.md).
 
 Edit the Dockerfile sample, then rename it to `.agents-safe/Dockerfile` to activate automatic project-image builds.
 Append an `additional` entry to the generated mount list when the project container needs another absolute host

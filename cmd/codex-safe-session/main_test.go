@@ -25,6 +25,7 @@ func TestRunCLIRequiresStrictRunSeparator(t *testing.T) {
 		{name: "run without separator", args: []string{"run", "bash"}},
 		{name: "run without command", args: []string{"run", "--"}},
 		{name: "serve arguments", args: []string{"serve", "extra"}},
+		{name: "wait-ready arguments", args: []string{"wait-ready", "extra"}},
 		{name: "help arguments", args: []string{"help", "extra"}},
 	}
 	for _, test := range tests {
@@ -139,6 +140,33 @@ func TestRunCLIServeTreatsSignalCancellationAsCleanExit(t *testing.T) {
 	}
 }
 
+func TestRunCLIWaitsForSessionReadiness(t *testing.T) {
+	app := unusedApplication()
+	var path string
+	app.waitReady = func(_ context.Context, got string) error {
+		path = got
+		return nil
+	}
+	if got := runCLI(context.Background(), []string{"wait-ready"}, nil, io.Discard, io.Discard, app); got != 0 {
+		t.Fatalf("exit code = %d, want 0", got)
+	}
+	if path != session.DefaultSocketPath {
+		t.Fatalf("socket path = %q, want %q", path, session.DefaultSocketPath)
+	}
+}
+
+func TestRunCLIReportsSessionReadinessFailure(t *testing.T) {
+	app := unusedApplication()
+	app.waitReady = func(context.Context, string) error { return errors.New("manager stopped") }
+	var stderr bytes.Buffer
+	if got := runCLI(context.Background(), []string{"wait-ready"}, nil, io.Discard, &stderr, app); got != 1 {
+		t.Fatalf("exit code = %d, want 1", got)
+	}
+	if !strings.Contains(stderr.String(), "manager stopped") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestRunCLIReportsInfrastructureFailure(t *testing.T) {
 	app := unusedApplication()
 	app.run = func(context.Context, session.CommandConfig) error {
@@ -195,6 +223,9 @@ func unusedApplication() application {
 		},
 		run: func(context.Context, session.CommandConfig) error {
 			return errors.New("unexpected run")
+		},
+		waitReady: func(context.Context, string) error {
+			return errors.New("unexpected wait-ready")
 		},
 		relay: func(context.Context, relay.Config) error {
 			return errors.New("unexpected relay")

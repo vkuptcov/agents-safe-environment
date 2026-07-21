@@ -260,9 +260,14 @@ checks it before and after connecting so a committed shutdown is reported immedi
 bootstrap that is still in progress. The marker is container-local and is not a host lease, lock, heartbeat, or
 additional discovery mechanism.
 
-The first wrapper may start before bootstrap finishes. It waits for the socket for a bounded startup interval, then
-connects and waits for the manager's acknowledgement. That acknowledgement is the readiness signal that account setup,
-the nested daemon, and the manager are ready.
+Before returning any eligible running session for user exec, the launcher executes `codex-safe-session wait-ready` as
+root. The command waits for the manager socket to exist and returns only after account setup, nested-daemon readiness,
+and manager listener setup are complete. It does not connect to the manager, register a command, or change the idle
+timer. For an established session the socket already exists, so the check returns immediately.
+
+Only after that barrier does the launcher execute an unprivileged `codex-safe-session run`. This ordering keeps root
+account reconciliation ahead of every process using the recreated UID, including a concurrent first caller that loses
+the deterministic-name create race and adopts the winner while it is still bootstrapping.
 
 The manager starts the same 5-second idle timer used after commands finish. A wrapper already waiting for the socket
 connects as soon as the manager listens. If the creating launcher dies before `docker exec`, the unused manager exits
@@ -479,6 +484,7 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 - Derive different names for different worktrees or UIDs.
 - Verify direct inspection of the deterministic name and the exact identity and user-mount labels.
 - Verify detached `docker run --rm` uses that name.
+- Verify cold creation and running-session adoption run root `wait-ready` before the user-owned wrapper.
 - Verify first and subsequent commands receive the same wrapper prefix.
 - Handle matching name conflicts by reuse and ownership or protocol mismatches by a name-conflict diagnostic.
 - Reject a running container with different Codex-home or personal-skills labels using the active-session diagnostic.

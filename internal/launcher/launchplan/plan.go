@@ -61,6 +61,24 @@ type Plan struct {
 	Provenance []MountProvenance
 	// HostMCPChannel reports whether the validated logical host_mcp_channel role is present.
 	HostMCPChannel bool
+	// DependencyCaches keeps cache identity distinct from generic mount normalization. Source is the
+	// symlink-resolved host bind source; Target is the configured tool-visible container path.
+	DependencyCaches []DependencyCache
+}
+
+// DependencyCache is the ordered, validated Go cache routing contract.
+type DependencyCache struct {
+	Kind   projectenv.DependencyCacheKind
+	Source string
+	Target string
+}
+
+// EnvironmentKey returns the managed variable for this cache kind.
+func (cache DependencyCache) EnvironmentKey() string {
+	if cache.Kind == projectenv.DependencyCacheGoBuild {
+		return "GOCACHE"
+	}
+	return "GOMODCACHE"
 }
 
 // MountProvenance traces one physical bind to the logical roles that required it.
@@ -169,6 +187,16 @@ func Resolve(
 	defaults projectenv.ProjectConfig,
 	config projectenv.ProjectConfig,
 ) (Resolution, error) {
+	return ResolveWithHostHome(project, defaults, config, "")
+}
+
+// ResolveWithHostHome additionally applies the cache trust boundary that depends on the invoking host home.
+func ResolveWithHostHome(
+	project gitproject.Project,
+	defaults projectenv.ProjectConfig,
+	config projectenv.ProjectConfig,
+	hostHome string,
+) (Resolution, error) {
 	if err := validateWorkingDirectory(project.RequestedDir, project.WorktreeRoot); err != nil {
 		return Resolution{}, err
 	}
@@ -227,6 +255,14 @@ func Resolve(
 	if err != nil {
 		return Resolution{}, err
 	}
+	caches, err := resolveDependencyCaches(config.Common.DependencyCaches, hostHome, logical)
+	if err != nil {
+		return Resolution{}, err
+	}
+	for _, cache := range caches {
+		physical = append(physical, BindMount{Source: cache.Source, Target: cache.Target})
+		provenance = append(provenance, MountProvenance{Mount: BindMount{Source: cache.Source, Target: cache.Target}, Roles: []projectenv.MountRole{}})
+	}
 
 	_, hostMCPChannel := configRoles[projectenv.RoleHostMCPChannel]
 	degradations := make([]Degradation, 0, len(degradableRoleOrder))
@@ -240,14 +276,94 @@ func Resolve(
 	}
 	return Resolution{
 		Plan: Plan{
-			ProjectRoot:    project.WorktreeRoot,
-			WorkingDir:     project.RequestedDir,
-			Mounts:         physical,
-			Provenance:     provenance,
-			HostMCPChannel: hostMCPChannel,
+			ProjectRoot:      project.WorktreeRoot,
+			WorkingDir:       project.RequestedDir,
+			Mounts:           physical,
+			Provenance:       provenance,
+			HostMCPChannel:   hostMCPChannel,
+			DependencyCaches: caches,
 		},
 		Degradations: degradations,
 	}, nil
+}
+
+func resolveDependencyCaches(
+	configured []projectenv.DependencyCacheConfig,
+	hostHome string,
+	logical []logicalMount,
+) ([]DependencyCache, error) {
+	if len(configured) == 0 {
+		return nil, nil
+	}
+	if hostHome == "" {
+		return nil, fmt.Errorf("host home is required when dependency caches are configured")
+	}
+	if err := ValidateMountPath("host home", hostHome); err != nil {
+		return nil, err
+	}
+	result := make([]DependencyCache, 0, len(configured))
+	for _, kind := range projectenv.DependencyCacheKindOrder {
+		for _, cache := range configured {
+			if cache.Kind != kind {
+				continue
+			}
+			physical, err := validateDependencyCache(cache, hostHome, logical, result)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, DependencyCache{Kind: cache.Kind, Source: physical, Target: cache.Source})
+		}
+	}
+	return result, nil
+}
+
+func validateDependencyCache(
+	cache projectenv.DependencyCacheConfig,
+	hostHome string,
+	logical []logicalMount,
+	resolved []DependencyCache,
+) (string, error) {
+	if err := ValidateMountPath("dependency cache source", cache.Source); err != nil {
+		return "", err
+	}
+	if cache.Source == string(filepath.Separator) || pathContains(cache.Source, hostHome) {
+		return "", fmt.Errorf("dependency cache %q cannot be the host home or its ancestor", cache.Source)
+	}
+	physical, err := filepath.EvalSymlinks(cache.Source)
+	if err != nil {
+		return "", fmt.Errorf("resolve dependency cache %q: %w", cache.Source, err)
+	}
+	info, err := os.Stat(physical)
+	if err != nil {
+		return "", fmt.Errorf("inspect dependency cache %q: %w", cache.Source, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("dependency cache %q is not a directory", cache.Source)
+	}
+	if err := checkEffectiveAccess(physical); err != nil {
+		return "", fmt.Errorf("dependency cache %q must be readable, writable, and searchable: %w", cache.Source, err)
+	}
+	if pathContains(physical, hostHome) {
+		return "", fmt.Errorf("dependency cache %q resolves to the host home or its ancestor", cache.Source)
+	}
+	for _, mount := range logical {
+		if mount.role == projectenv.RoleHostMCPChannel {
+			continue
+		}
+		mountPhysical, evalErr := filepath.EvalSymlinks(mount.mount.Source)
+		if evalErr != nil {
+			return "", fmt.Errorf("resolve mount source %q while checking dependency cache: %w", mount.mount.Source, evalErr)
+		}
+		if PathsOverlap(cache.Source, mount.mount.Target) || PathsOverlap(physical, mountPhysical) {
+			return "", fmt.Errorf("dependency cache %q overlaps mount %q", cache.Source, mount.mount.Source)
+		}
+	}
+	for _, existing := range resolved {
+		if PathsOverlap(cache.Source, existing.Target) || PathsOverlap(physical, existing.Source) {
+			return "", fmt.Errorf("dependency cache %q overlaps dependency cache %q", cache.Source, existing.Target)
+		}
+	}
+	return physical, nil
 }
 
 func managedRoleMap(

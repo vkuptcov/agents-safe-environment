@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -68,6 +69,43 @@ func TestInitializePreservesExistingLocalFiles(t *testing.T) {
 		if err != nil || string(data) != want {
 			t.Fatalf("%s = %q, %v; want %q", name, data, err, want)
 		}
+	}
+}
+
+func TestInitializeLazySkipsProviderWhenConfigExists(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	contextPath := filepath.Join(root, Directory)
+	if err := os.Mkdir(contextPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(contextPath, ConfigName), []byte("[common]\nimage = \"keep:image\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path, created, err := InitializeLazy(root, func() (ProjectConfig, error) {
+		t.Fatal("config provider must not run for an existing config")
+		return ProjectConfig{}, nil
+	})
+	if err != nil || created || path != contextPath {
+		t.Fatalf("InitializeLazy() = %q, %t, %v", path, created, err)
+	}
+}
+
+func TestInitializeSerializesExplicitEmptyDependencyCaches(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	config := initializationConfig(t)
+	config.Common.DependencyCaches = []DependencyCacheConfig{}
+	contextPath, err := Initialize(root, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(contextPath, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "dependency_caches = []") {
+		t.Fatalf("config.toml = %q, want explicit empty dependency-cache snapshot", data)
 	}
 }
 

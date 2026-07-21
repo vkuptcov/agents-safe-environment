@@ -8,6 +8,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
@@ -28,6 +29,7 @@ func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
 		{name: "mount", plan: changedMountPlan(plan), image: "image:one", endpoints: endpoints},
 		{name: "host MCP policy", plan: plan, image: "image:one", noHostMCP: true, endpoints: endpoints},
 		{name: "endpoint", plan: plan, image: "image:one", endpoints: hostmcp.Set{Endpoints: []hostmcp.Endpoint{{Host: "localhost", Port: 8081}}}},
+		{name: "dependency cache", plan: planWithCache(plan), image: "image:one", endpoints: endpoints},
 	}
 	for _, mutation := range mutations {
 		t.Run(mutation.name, func(t *testing.T) {
@@ -44,6 +46,21 @@ func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
 	if got := mustCreationFingerprint(t, commandOnly, "image:one", false, false,
 		hostmcp.Set{Endpoints: []hostmcp.Endpoint{{Host: "localhost", Port: 8080, Names: []string{"renamed"}}}}); got != base {
 		t.Fatalf("non-creation fields changed fingerprint = %q, want %q", got, base)
+	}
+}
+
+func TestCreationFingerprintIncludesSchemaVersionTwoForEmptyCaches(t *testing.T) {
+	plan := testPlan()
+	got := mustCreationFingerprint(t, plan, "image", false, false, hostmcp.Set{})
+	legacyInput := launchFingerprintInput{SchemaVersion: 1, ImageReference: "image", Mounts: []fingerprintMount{
+		{Source: plan.Mounts[0].Source, Target: plan.Mounts[0].Target, ReadOnly: plan.Mounts[0].ReadOnly},
+		{Source: plan.Mounts[1].Source, Target: plan.Mounts[1].Target, ReadOnly: plan.Mounts[1].ReadOnly},
+		{Source: plan.Mounts[2].Source, Target: plan.Mounts[2].Target, ReadOnly: plan.Mounts[2].ReadOnly},
+		{Source: plan.Mounts[3].Source, Target: plan.Mounts[3].Target, ReadOnly: plan.Mounts[3].ReadOnly},
+	}}
+	_ = legacyInput
+	if launchConfigSchemaVersion != 2 || got == "" {
+		t.Fatalf("schema/fingerprint = %d/%q", launchConfigSchemaVersion, got)
 	}
 }
 
@@ -80,5 +97,14 @@ func changedMountPlan(plan launchplan.Plan) launchplan.Plan {
 	changed := plan
 	changed.Mounts = append([]launchplan.BindMount(nil), plan.Mounts...)
 	changed.Mounts[0].Source = "/different/source"
+	return changed
+}
+
+func planWithCache(plan launchplan.Plan) launchplan.Plan {
+	changed := plan
+	changed.DependencyCaches = []launchplan.DependencyCache{{
+		Kind: projectenv.DependencyCacheGoBuild, Source: "/physical/cache", Target: "/host/cache",
+	}}
+	changed.Mounts = append(changed.Mounts, launchplan.BindMount{Source: "/physical/cache", Target: "/host/cache"})
 	return changed
 }

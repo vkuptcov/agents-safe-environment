@@ -13,18 +13,25 @@ import (
 
 const (
 	launchConfigLabel         = "codex-safe.launch-config"
-	launchConfigSchemaVersion = 1
+	launchConfigSchemaVersion = 2
 )
 
 // launchFingerprintInput is deliberately an ordered struct: maps and TOML bytes would make an
 // otherwise-identical creation contract depend on incidental encoding details.
 type launchFingerprintInput struct {
-	SchemaVersion    int                `json:"schema_version"`
-	ImageReference   string             `json:"image_reference"`
-	ImageOverride    bool               `json:"image_override"`
-	Mounts           []fingerprintMount `json:"mounts"`
-	NoHostMCP        bool               `json:"no_host_mcp"`
-	HostMCPEndpoints []string           `json:"host_mcp_endpoints"`
+	SchemaVersion    int                          `json:"schema_version"`
+	ImageReference   string                       `json:"image_reference"`
+	ImageOverride    bool                         `json:"image_override"`
+	Mounts           []fingerprintMount           `json:"mounts"`
+	NoHostMCP        bool                         `json:"no_host_mcp"`
+	HostMCPEndpoints []string                     `json:"host_mcp_endpoints"`
+	DependencyCaches []fingerprintDependencyCache `json:"dependency_caches"`
+}
+
+type fingerprintDependencyCache struct {
+	Kind           string `json:"kind"`
+	PhysicalSource string `json:"physical_source"`
+	EnvironmentKey string `json:"environment_key"`
 }
 
 type fingerprintMount struct {
@@ -49,6 +56,12 @@ func creationFingerprint(
 			Source: mount.Source, Target: mount.Target, ReadOnly: mount.ReadOnly,
 		})
 	}
+	caches := make([]fingerprintDependencyCache, 0, len(plan.DependencyCaches))
+	for _, cache := range plan.DependencyCaches {
+		caches = append(caches, fingerprintDependencyCache{
+			Kind: string(cache.Kind), PhysicalSource: cache.Source, EnvironmentKey: cache.EnvironmentKey(),
+		})
+	}
 
 	orderedEndpoints := append([]hostmcp.Endpoint(nil), endpoints.Endpoints...)
 	sort.Slice(orderedEndpoints, func(first, second int) bool {
@@ -69,6 +82,7 @@ func creationFingerprint(
 		Mounts:           mounts,
 		NoHostMCP:        noHostMCP,
 		HostMCPEndpoints: addresses,
+		DependencyCaches: caches,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode launch fingerprint: %w", err)

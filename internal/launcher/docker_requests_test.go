@@ -7,6 +7,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
@@ -56,6 +57,23 @@ func TestExecRequestUsesResolvedCodexTarget(t *testing.T) {
 	}
 	if want := "CODEX_HOME=/container/codex"; !containsKeyValue(request.Environment, want) {
 		t.Fatalf("environment = %#v, want %q", request.Environment, want)
+	}
+}
+
+func TestExecRequestRoutesEveryConfiguredGoCache(t *testing.T) {
+	t.Parallel()
+	plan := testPlan()
+	plan.DependencyCaches = []launchplan.DependencyCache{
+		{Kind: projectenv.DependencyCacheGoBuild, Source: "/physical/build", Target: "/host/cache/build"},
+		{Kind: projectenv.DependencyCacheGoModules, Source: "/physical/modules", Target: "/host/go/pkg/mod"},
+	}
+	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildExecRequest(plan, []string{"go", "test"}, strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsKeyValue(request.Environment, "GOCACHE=/host/cache/build") ||
+		!containsKeyValue(request.Environment, "GOMODCACHE=/host/go/pkg/mod") {
+		t.Fatalf("environment = %#v", request.Environment)
 	}
 }
 

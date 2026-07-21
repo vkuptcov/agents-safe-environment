@@ -14,3 +14,5 @@ Use [README.md](README.md) for design-doc format and maintenance rules.
   BuildKit-owned caching, compatibility validation, and active-session reuse.
 - [Project Launcher Configuration](project-launcher-configuration.md): typed project defaults, TOML serialization,
   CLI precedence, creation-time reuse fingerprinting, and local `.agents-safe/.gitignore` behavior.
+- [Host-Backed Dependency Caches](host-backed-dependency-caches.md): explicit uv, Go, Maven, and Gradle cache
+  directories, tool-specific sharing policies, and host-state trust boundaries.

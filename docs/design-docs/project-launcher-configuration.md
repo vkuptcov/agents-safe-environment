@@ -27,8 +27,8 @@ Parameters have two lifecycle classes:
 
 | Class | Parameters | Running-container behavior |
 | --- | --- | --- |
-| Creation-time | image, mounts, host MCP | Must match; a mismatch fails without replacement. |
-| Command-time | Codex and agent argv | Applied immediately through `docker exec`. |
+| Creation-time | image, mounts, host MCP, dependency caches | Must match; a mismatch fails without replacement. |
+| Command-time | Codex and agent argv, managed Go cache routing | Applied immediately through `docker exec`. |
 
 `--project` is a bootstrap parameter: it selects the worktree and deterministic container identity before config
 resolution begins.
@@ -40,7 +40,7 @@ resolution begins.
 | Bootstrap | `--project .` | Discover the Git worktree from the current directory. |
 | Common | `image = "codex-safe-mvp:local"` | Base or direct session image. |
 | Common | `no_host_mcp = false` | Forward eligible host MCP servers. |
-| Common | resolved logical mount snapshot | Always describe the complete project/Git topology plus available optional host integrations. |
+| Common | resolved logical mount snapshot | Complete project/Git topology and available host integrations. |
 | Codex | `arguments = ['--sandbox', 'danger-full-access']` | Use the Sysbox container as the sandbox boundary. |
 | Agents | no default argv | Require a command on every `agents-safe` invocation. |
 
@@ -222,6 +222,23 @@ type MountConfig struct {
 `agents-safe` has launcher-specific defaults. `MountRole` gives role constants and downstream launch-plan APIs one
 shared domain type. `MountConfig.Comment` is serialized documentation and does not affect Docker arguments.
 
+The implemented Go milestone of [Host-Backed Dependency Caches](host-backed-dependency-caches.md) extends
+`CommonConfig` and increments the creation-time fingerprint schema to version 2:
+
+```go
+type CommonConfig struct {
+	Image            string                  `toml:"image"`
+	NoHostMCP        bool                    `toml:"no_host_mcp"`
+	Mounts           []MountConfig           `toml:"mounts"`
+	DependencyCaches []DependencyCacheConfig `toml:"dependency_caches"`
+}
+```
+
+`dependency_caches` is creation-time configuration. Its host-side resolvers, kind-derived sharing policies,
+path-preserving targets, managed container routing, and validation policy remain owned by the cache design; this
+document owns its typed schema, overlay behavior, and participation in container reuse. Only `go_build` and
+`go_modules` are implemented; the field is part of the version 2 fingerprint. uv, Maven, and Gradle are deferred.
+
 ### 3. File Layering
 
 The decoder starts from a complete default `ProjectConfig` and overlays the TOML file:
@@ -236,18 +253,48 @@ path. It compares the resolved list with the host-derived default roles: a missi
 missing degradable role remains absent and produces the warning defined below. Present entries always undergo full
 path and mode validation.
 
+The dependency-cache configuration extension adds presence-aware cache-list layering:
+
+- in-memory `common.dependency_caches` defaults are always empty;
+- omitted `common.dependency_caches` and a present empty list both resolve to no caches;
+- a present non-empty list replaces the whole list and is never merged by kind or index;
+- the decoding overlay uses `*[]DependencyCacheConfig` to represent presence without retaining or creating a default
+  cache snapshot.
+
+`agents-safe init` may place its one-time discovered cache snapshot into the config passed to the encoder. Later file
+loads never run discovery or synthesize entries when `dependency_caches` is omitted.
+
 ### 4. Parameter Classes and Active Containers
 
 The creation-time fingerprint is the SHA-256 digest of one versioned canonical structure:
 
 | Field | Canonical value |
 | --- | --- |
-| `schema_version` | Integer `1` for the initial schema; incremented whenever encoding or field meaning changes. |
+| `schema_version` | Integer `2`; incremented whenever encoding or field meaning changes. |
 | `image_reference` | Resolved requested image reference, before resolving or building an immutable image ID. |
-| `image_override` | Whether an explicit `--image` bypasses the project Dockerfile, even when the reference is unchanged. |
-| `mounts` | Ordered normalized physical filesystem binds, each containing canonical `source`, `target`, and `read_only`. |
+| `image_override` | Explicit `--image` bypasses the project Dockerfile, even when its reference is unchanged. |
+| `mounts` | Ordered physical binds with canonical `source`, `target`, and `read_only`. |
 | `no_host_mcp` | Resolved boolean after defaults, TOML, and explicit CLI overrides. |
 | `host_mcp_endpoints` | Eligible endpoints as canonical `host:port` strings, sorted by host and then port. |
+
+The host-backed dependency-cache implementation increments `schema_version` to `2` and appends one field after
+`host_mcp_endpoints`:
+
+| Field | Canonical value |
+| --- | --- |
+| `dependency_caches` | Canonical cache entries in deterministic kind order. |
+
+Each canonical entry contains kind, physical source, and the managed tool-routing contract. Sharing policy is not a
+separate field because it is fixed by kind. The cache target is not duplicated in this entry: the normalized `mounts`
+field records the configured host-visible target, while the routing contract points to that target explicitly.
+
+This is an extension of the existing canonical structure, not a second digest. Path-preserving physical cache binds
+also participate in `mounts`; `dependency_caches` additionally captures the tool identity and behavior that the bind
+list cannot express. Cache contents, timestamps, size, and hit rate remain excluded.
+
+Changing from schema version 1 to 2 makes every container created by an older launcher incompatible after upgrade,
+including projects whose resolved cache list is empty. The first version 2 invocation therefore follows the normal
+active-container mismatch path instead of reusing version 1 state.
 
 `mounts` uses the exact deterministic order passed to Docker after alias and nesting normalization. It excludes the
 materialized `host_mcp_channel` bind because that bind has a random generation-directory source;
@@ -280,6 +327,9 @@ reused container.
 
 Every future config field must declare one of these classes. A creation-time field must participate in the
 fingerprint; a command-time field must not.
+
+The dependency-cache implementation must update the typed schema, presence-aware overlay, schema-version constant,
+canonical fingerprint structure, and both owning design docs in one change.
 
 ### 5. CLI and Command Precedence
 
@@ -315,20 +365,20 @@ logical access modes; normalization may satisfy several logical roles with one p
 | Role | Default when | Mode | If absent | Motivation |
 | --- | --- | --- | --- | --- |
 | `worktree` | Always. | `rw` | Stop. | No project files or valid working directory. |
-| `primary_checkout` | Always. | `rw` when it equals `worktree`; otherwise `ro` | Stop. | The complete checkout topology must remain explicit; a distinct primary tree is visible without allowing branch-file changes there. |
+| `primary_checkout` | Always. | See below. | Stop. | Preserve primary-checkout topology. |
 | `common_git_dir` | Always. | `rw` | Stop. | Git refs, indexes, locks, and worktree metadata must remain writable. |
 | `host_git_config` | Host file exists. | `ro` | Warn and continue. | Host identity/includes/defaults disappear. |
-| `codex_home` | Host directory exists. | `rw` | Warn and continue. | Codex works with ephemeral state but loses host state. |
-| `personal_skills` | Skills directory exists. | `ro` | Warn and continue. | Core execution works without personal skills. |
+| `codex_home` | Host directory exists. | `rw` | Warn and continue. | Otherwise use ephemeral state. |
+| `personal_skills` | Skills directory exists. | `ro` | Warn and continue. | Otherwise omit personal skills. |
 | `host_mcp_channel` | Host MCP enabled. | `rw` | Warn and continue. | Project works without forwarded host services. |
-| `additional` | Never generated. | configured `ro` or `rw` | Ignore. | Deletion explicitly removes user-requested access. |
+| `additional` | Never generated. | configured `ro` or `rw` | Ignore. | User-requested access only. |
 
 The three project/Git roles are always generated and required. Their default paths and modes are:
 
 | Checkout kind | `worktree` | `primary_checkout` | `common_git_dir` | Physical result |
 | --- | --- | --- | --- | --- |
-| Regular | checkout root, `rw` | same checkout root, `rw` | `<checkout>/.git`, `rw` | One `rw` mount for the checkout root. |
-| Linked worktree | linked root, `rw` | primary root, `ro` | `<primary>/.git`, `rw` | Three mounts; the nested writable Git mount follows the read-only primary mount. |
+| Regular | root, `rw` | root, `rw` | `<root>/.git`, `rw` | One root bind. |
+| Linked worktree | linked root, `rw` | primary root, `ro` | `<primary>/.git`, `rw` | Three ordered binds. |
 
 For a regular checkout, the exact `worktree`/`primary_checkout` alias is deduplicated and the writable worktree mount
 already exposes the nested writable `.git` directory, so no separate `common_git_dir` bind is needed. For a linked
@@ -406,12 +456,19 @@ affect a later launch, so every writable source in the file must be treated as a
 - The resolution-order tests distinguish omitted flags from explicit boolean values.
 - Scalar overlay, omitted mounts, whole-list mount replacement, and validation of all three required project/Git
   roles are covered.
+- Dependency-cache overlay tests prove omitted and present-empty lists both resolve empty, while a present non-empty
+  list replaces the whole list without merging.
+- Dependency-cache initialization resolves host paths once; ordinary loads never probe the container or rediscover
+  host defaults.
 - Removing each required role fails before Docker access; removing each degradable role emits the exact warning and
   omits that mount from the effective plan.
 - A regular checkout serializes all three required roles and normalizes them to one writable physical mount; a linked
   worktree normalizes them to the three expected physical mounts in safe parent-before-child order.
 - An invalid or stale mount snapshot fails before Docker creation.
 - Creation-time fingerprints are stable, exclude comments and command argv, and cover every immutable config field.
+- Schema version 2 fingerprints include canonical cache entries, exclude cache contents, and never match a version 1
+  fingerprint.
+- Managed command routing points each configured tool to its mounted target and overrides conflicting image defaults.
 - A running-container fingerprint mismatch fails without reuse, stop, or replacement.
 - Config image and explicit CLI-image intent retain distinct project-Dockerfile behavior.
 - Explicit invocation sandbox arguments suppress the configured default sandbox pair.

@@ -57,7 +57,7 @@ func TestDockerLaunchCreatesDetachedContainerThenExecutesResolvedPlan(t *testing
 	if !reflect.DeepEqual(runner.combinedCalls[:3], wantCalls) {
 		t.Fatalf("pre-create calls = %#v, want %#v", runner.combinedCalls[:3], wantCalls)
 	}
-	assertWrappedRun(t, runner.runCalls, containerID, []string{"echo", "safe"})
+	assertColdSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"echo", "safe"})
 }
 
 func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
@@ -74,9 +74,9 @@ func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
 	if len(runner.combinedCalls) != 1 {
 		t.Fatalf("CombinedOutput calls = %#v, want exact inspect only", runner.combinedCalls)
 	}
-	assertWrappedRun(t, runner.runCalls, containerID, []string{"make", "test"})
-	if !containsSequence(runner.runCalls[0], "exec", "--interactive", "--tty") {
-		t.Fatalf("exec does not preserve TTY: %#v", runner.runCalls[0])
+	assertSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"make", "test"})
+	if !containsSequence(runner.runCalls[1], "exec", "--interactive", "--tty") {
+		t.Fatalf("exec does not preserve TTY: %#v", runner.runCalls[1])
 	}
 }
 
@@ -90,9 +90,25 @@ func TestDockerLaunchIgnoresDiagnosticMountLabelsWhenFingerprintMatches(t *testi
 	if err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v, want fingerprint-controlled reuse", err)
 	}
-	if len(runner.runCalls) != 1 {
+	if len(runner.runCalls) != 2 {
 		t.Fatalf("Run calls = %#v, want reuse", runner.runCalls)
 	}
+}
+
+func TestDockerLaunchWaitsForReadinessAfterConcurrentCreateConflict(t *testing.T) {
+	containerID := strings.Repeat("8", 64)
+	plan := simplePlan()
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+		{output: []byte("Error response from daemon: Conflict. The container name is already in use"), err: fakeExitError{code: 125}},
+		{output: inspectionJSON(t, containerID, true, "running", matchingLabels(t, plan, 1000))},
+	}}
+	if err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	assertSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"true"})
 }
 
 func TestDockerLaunchRejectsMismatchedDeterministicNameOccupant(t *testing.T) {
@@ -151,8 +167,8 @@ func TestDockerLaunchBuildsProjectImageAndPinsCreate(t *testing.T) {
 	if err := docker.Launch(context.Background(), plan, "base:image", []string{"true"}, launchplan.Options{}); err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
-	if len(runner.runCalls) != 2 {
-		t.Fatalf("Run calls = %#v, want build and exec", runner.runCalls)
+	if len(runner.runCalls) != 3 {
+		t.Fatalf("Run calls = %#v, want build, root readiness, and user exec", runner.runCalls)
 	}
 	build := runner.runCalls[0]
 	if !containsSequence(build, "build", "--tag") || build[len(build)-1] != contextPath {
@@ -357,6 +373,23 @@ func assertWrappedRun(t *testing.T, calls [][]string, containerID string, comman
 	if len(calls[0]) < len(wantSuffix) || !reflect.DeepEqual(calls[0][len(calls[0])-len(wantSuffix):], wantSuffix) {
 		t.Fatalf("wrapped exec = %#v, want suffix %#v", calls[0], wantSuffix)
 	}
+}
+
+func assertColdSessionReadyThenWrappedRun(t *testing.T, calls [][]string, containerID string, command []string) {
+	assertSessionReadyThenWrappedRun(t, calls, containerID, command)
+}
+
+func assertSessionReadyThenWrappedRun(t *testing.T, calls [][]string, containerID string, command []string) {
+	t.Helper()
+	if len(calls) != 2 {
+		t.Fatalf("Run calls = %#v, want root readiness then user command", calls)
+	}
+	ready := calls[0]
+	if !containsSequence(ready, "exec", "--user", "0:0", "--workdir", "/project/nested", containerID,
+		"codex-safe-session", "wait-ready") {
+		t.Fatalf("readiness exec = %#v", ready)
+	}
+	assertWrappedRun(t, calls[1:], containerID, command)
 }
 
 type commandResult struct {

@@ -40,6 +40,7 @@ both the module paths and document links.
 | `cmd/agents-safe/` | Host CLI for arbitrary container commands. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/cli/` | Shared launcher CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/launchcli/` | Composes host and project resolution into the CLI's resolved config. | [Launcher configuration][launcher-config] |
+| `internal/launchcli/dependencies/` | Resolves host dependency-cache locations without Docker. | [Host-backed dependency caches](docs/design-docs/host-backed-dependency-caches.md) |
 | `internal/gitproject/` | Git discovery. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/launcher/` | Managed-container lifecycle and host launch orchestration. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/launcher/launchplan/` | Validated worktree and bind-mount launch contract. | [Safe environment](docs/design-docs/codex-safe.md) |
