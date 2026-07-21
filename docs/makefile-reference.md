@@ -5,6 +5,7 @@ Run these commands from the repository root.
 | Target | Purpose |
 | --- | --- |
 | `make build` | Build host and container-side Go binaries under `bin/`. |
+| `make install` | Install the host launchers into Go's binary directory and build the local outer image. |
 | `make docker-build` | Build the local `codex-safe-mvp:local` outer image. |
 | `make install-tools` | Compile all tools declared by `tools/go.mod` into the ignored local `bin/` directory. |
 | `make lint` | Run the pinned GolangCI-Lint tool against the application module. |
@@ -21,5 +22,9 @@ missing or the tools module changes. This does not modify the application depend
 may download Go modules. `make lint-n-fix` rewrites files in place, so review its diff and run `make lint` and the
 applicable test gate afterward. The compiled linter still invokes the project Go toolchain to load and analyze Go
 packages, so the repository's required Go version must remain available when either lint target runs.
+
+`make install` uses the standard Go installation destination: `GOBIN` when it is set, otherwise the `bin`
+subdirectory of the first `GOPATH` entry. It installs only the host-side `codex-safe` and `agents-safe` launchers;
+the container-side `codex-safe-session` binary remains part of repository-local and image builds.
 
 Both documentation validators require Docker. Their first builds may require registry and package-index access.
