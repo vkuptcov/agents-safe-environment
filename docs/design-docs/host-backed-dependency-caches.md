@@ -1,11 +1,12 @@
 # Host-Backed Dependency Caches
 
-Status: Partially implemented (Go milestone)
+Status: Partially implemented (Go milestone; uv milestone specified)
 
 Scope:
 
 - implemented: explicit reuse of existing host Go build and module caches in the outer session container;
-- deferred: uv, Maven, Gradle, Docker images, and BuildKit caches;
+- specified next: explicit reuse of an existing host uv cache in the outer session container;
+- deferred: Maven, Gradle, Docker images, and BuildKit caches;
 - host-side cache resolution, explicit container tool routing, concurrency policies, active-session compatibility,
   and failure behavior;
 - the security and ownership consequences of sharing writable dependency state with project code.
@@ -52,10 +53,22 @@ source = "/home/alex/go/pkg/mod"
 The next cold session mounts the same physical directories used by native host commands. A cache miss written by
 either side is available to the other side later. No copied or `agents-safe`-specific cache is required.
 
+The uv milestone extends the same shape with one entry; it does not mount all of `~/.cache` or the host home:
+
+```toml
+[[common.dependency_caches]]
+kind = "uv"
+source = "/home/alex/.cache/uv"
+```
+
+The launcher mounts the physical uv cache read-write at the configured path and adds
+`UV_CACHE_DIR=/home/alex/.cache/uv` to every managed command. The project image must provide `uv`; configuring a
+cache does not install the tool in the base image.
+
 ### Mount Topology
 
-The diagram shows the complete design target. Only the Go build and module edges are implemented in the current
-milestone; uv, Maven, and Gradle remain deferred profiles.
+The diagram shows the complete design target. The Go build and module edges are implemented. The uv edge is the next
+milestone specified by this document; Maven and Gradle remain deferred profiles.
 
 ```mermaid
 flowchart LR
@@ -116,14 +129,15 @@ convention, makes the mounted path authoritative.
 The current support policy is deliberately narrow:
 
 - Go build and Go module caches support direct shared read-write access;
-- uv, Maven, and Gradle remain design-only profiles and are rejected by the parser and typed configuration.
+- uv has a complete `shared_rw` contract for the next milestone but remains rejected until that milestone ships;
+- Maven and Gradle remain design-only profiles and are rejected by the parser and typed configuration.
 
 ### Success Criteria
 
 - A user can reuse the same physical cache from host and container without a second `agents-safe` cache copy.
 - A user can persist dependency downloads across cold sessions without mounting a whole host home.
-- A default `agents-safe init` discovers existing concurrency-safe Go caches without prompting and reports
-  every enabled path.
+- After the uv milestone, a default `agents-safe init` discovers existing concurrency-safe Go and uv caches without
+  prompting and reports every enabled path.
 - Unknown, deferred, duplicate, and policy-bearing cache entries fail before Docker access.
 - The generated mount and managed-routing plan is deterministic and visible before Docker creation.
 - Concurrent read-write access is supported only where the tool documents it; the launcher never claims to serialize
@@ -137,14 +151,15 @@ The current support policy is deliberately narrow:
 
 A live bind mount provides the best local hit rate and no duplication, but it creates two-way coupling. Container code
 can delete or poison entries later consumed by native host builds, while host cleanup or writes can disrupt a running
-container build. Sharing is therefore limited to one trust domain. Go coordinates concurrent cache access, but the
-launcher cannot prevent a trusted project from deleting or poisoning host-visible entries.
+container build. Sharing is therefore limited to one trust domain. Go and uv coordinate concurrent cache access
+through their own implementations, but the launcher cannot prevent a trusted project from deleting or poisoning
+host-visible entries.
 
 ## Contract
 
 ### 1. Configuration and Resolution
 
-The project schema gains one optional list:
+The project schema contains one optional list:
 
 ```go
 type CommonConfig struct {
@@ -160,9 +175,15 @@ type DependencyCacheConfig struct {
 }
 ```
 
-`DependencyCacheKind` accepts only `go_build` and `go_modules` in this milestone. The launcher derives the fixed
-`shared_rw` policy; there is no serialized mode or policy override. uv, Maven, and Gradle are deferred and fail as
-unknown kinds until their individual runtime contracts are implemented.
+The implemented parser accepts `go_build` and `go_modules`. The uv milestone adds exactly one new kind, `uv`, with
+the same fixed `shared_rw` policy. There is no serialized mode or policy override. Until the uv milestone ships,
+`uv` continues to fail as unsupported; Maven and Gradle remain unsupported after it.
+
+The canonical kind order remains `go_build`, `go_modules`, then `uv`. Appending uv preserves the current ordering of
+Go-only snapshots, mounts, environment variables, labels, diagnostics, and fingerprint entries. The existing
+fingerprint schema version 2 already represents arbitrary typed cache entries, so adding uv does not require another
+schema-version increment. A configured uv entry still changes the fingerprint through its kind, physical source,
+mount, and `UV_CACHE_DIR` routing contract.
 
 Resolution follows these rules:
 
@@ -171,8 +192,8 @@ Resolution follows these rules:
    resolve to no caches. The TOML overlay still uses `*[]DependencyCacheConfig` so presence remains explicit without
    permitting a future default to reintroduce implicit cache mounts.
 3. A present non-empty list replaces the whole cache list as one TOML value; entries are never merged.
-4. By default, `agents-safe init` discovers only existing Go build and Go module caches. It does not create a missing
-   cache directory.
+4. After the uv milestone, default `agents-safe init` discovers existing Go build, Go module, and uv caches. It does
+   not create a missing cache directory.
 5. Each kind may appear at most once. Unknown kinds and a legacy or hand-written `mode` key fail before Docker
    access; the launcher never accepts a user-supplied sharing policy.
 6. `source` is the selected host cache directory, not an expression to evaluate in the container. Init writes the
@@ -181,8 +202,9 @@ Resolution follows these rules:
    normalizes the path and uses it as the container target. It separately resolves symlinks to obtain the canonical
    physical bind source used for validation, labels, and the creation-time fingerprint. A symlink alias is therefore
    preserved as the tool-visible path without requiring the alias itself in the container.
-7. A source may be a standard live Go cache such as `$GOCACHE` or `$GOMODCACHE`. It cannot be `/`, the host home,
-   an ancestor of the host home, or overlap a project, Git, Codex-home, personal-skills, host-MCP, or another cache.
+7. A source may be a standard live Go cache such as `$GOCACHE` or `$GOMODCACHE`, or the directory reported by
+   `uv cache dir`. It cannot be `/`, the host home, an ancestor of the host home, or overlap a project, Git,
+   Codex-home, personal-skills, host-MCP, or another cache.
 8. A source must be readable, writable, and searchable by the invoking host identity.
 9. The launcher never runs recursive `chown`, repairs a cache layout, copies credentials, or weakens permissions.
 
@@ -196,12 +218,12 @@ Cache discovery is an `agents-safe init` concern, not a launch concern:
 ```text
 agents-safe init
 agents-safe init --host-caches=none
-agents-safe init --host-caches=go_build,go_modules
+agents-safe init --host-caches=go_build,go_modules,uv
 ```
 
-The default is `--host-caches=auto`, which selects existing Go build and Go module caches. `none` writes an empty
-list. A comma-separated kind list selects an explicit subset and fails if any selected source cannot be resolved or
-does not exist.
+After the uv milestone, the default `--host-caches=auto` selects existing Go build, Go module, and uv caches. `none`
+writes an empty list. A comma-separated kind list selects an explicit subset and fails if any selected source cannot
+be resolved or does not exist.
 
 Initialization remains non-interactive. It never changes behavior based on whether stdin is a terminal, and scripts
 do not need a `--yes` flag. `--host-caches=none` is the opt-out for projects that should see no host dependency state.
@@ -212,6 +234,7 @@ Before returning success, init prints the exact persisted paths plus each kind's
 Host dependency caches:
   go_build    /home/alex/.cache/go-build shared_rw
   go_modules  /home/alex/go/pkg/mod      shared_rw
+  uv          /home/alex/.cache/uv       shared_rw
 ```
 
 An empty result says `No existing shared read-write host dependency caches detected`; it is not an error in `auto`
@@ -222,6 +245,9 @@ Resolution uses the invoking host identity and performs no network or Docker acc
 - Go build: use the absolute `GOCACHE` reported by `go env`, then the standard user-cache fallback;
 - Go modules: use the effective absolute `GOMODCACHE` reported by `go env`; only when `go` is absent, fall back to
   `$GOMODCACHE`, then the first `$GOPATH` entry plus `/pkg/mod`, then `<host-home>/go/pkg/mod`;
+- uv: run a bounded `uv cache dir --directory <project-root>` probe so host environment and uv configuration select
+  the same project-effective directory. Only when `uv` is absent, fall back to an absolute `UV_CACHE_DIR`, then
+  `$XDG_CACHE_HOME/uv`, then `<host-home>/.cache/uv`.
 
 ```mermaid
 flowchart TD
@@ -272,6 +298,48 @@ environment and Linux-default fallback chain. A failed probe, malformed output, 
 directory makes a kind unavailable in `auto` mode and produces a concise diagnostic. The same condition is an error
 for every explicitly selected kind.
 
+The uv resolver follows the same fail-closed boundary:
+
+```mermaid
+flowchart TD
+    Selected["Selected uv cache"] --> Probe["Run bounded uv cache dir<br/>--directory project-root"]
+    Probe --> ProbeResult{"Command result"}
+    ProbeResult -->|"success"| Decode["Trim one stdout path"]
+    ProbeResult -->|"uv executable absent"| Env{"Absolute UV_CACHE_DIR set?"}
+    ProbeResult -->|"timeout or nonzero exit"| Unavailable["uv cache unavailable"]
+    Env -->|"yes"| EnvCache["Use UV_CACHE_DIR"]
+    Env -->|"no"| XDG{"Absolute XDG_CACHE_HOME set?"}
+    XDG -->|"yes"| XDGCache["Use XDG_CACHE_HOME/uv"]
+    XDG -->|"no"| HomeCache["Use host-home/.cache/uv"]
+    Decode --> Validate
+    EnvCache --> Validate
+    XDGCache --> Validate
+    HomeCache --> Validate
+    Validate{"Canonical absolute existing directory<br/>with read, write, and search access"}
+    Validate -->|"yes"| ProjectScope{"Outside project and other<br/>forbidden mount scopes?"}
+    Validate -->|"no"| Unavailable
+    ProjectScope -->|"yes"| Persist["Persist kind=uv and source"]
+    ProjectScope -->|"no"| Unavailable
+    Unavailable --> SelectionMode{"Selection mode"}
+    SelectionMode -->|"auto"| Omit["Omit uv and emit diagnostic"]
+    SelectionMode -->|"explicit"| Fail["Fail initialization"]
+```
+
+The probe returns exactly one path on stdout. Empty, multi-line, relative, nonexistent, inaccessible, or unsafe
+output is unavailable. In particular, `--no-cache`, `UV_NO_CACHE`, or `no-cache = true` causes uv to choose a
+per-invocation temporary directory; that directory disappears when the probe exits and therefore fails the
+existing-directory check instead of being persisted. A failing or malformed installed `uv` never falls back to a
+different directory. The resolver does not parse uv TOML itself or create the reported path.
+
+The probe runs with the selected worktree as uv's directory. This makes a project-level `cache-dir` visible, including
+relative values resolved by uv. A path inside the project is rejected because the project mount already owns that
+tree; the user can select a separate host cache through `UV_CACHE_DIR`, uv configuration, or a manual `uv` entry.
+
+Before init encodes a new file, it passes the complete detected snapshot through the same Docker-free launch-plan
+validation used by an ordinary launch. This catches overlap with Git, Codex-home, skills, host-MCP, additional mounts,
+and another cache before persisting a configuration that could never launch. Auto mode omits an invalid detected kind
+with a diagnostic; explicit selection fails atomically and leaves `config.toml` absent.
+
 The first release implements only Linux host fallbacks because Linux with Sysbox is the supported runtime. It does
 not probe the container or apply the container image's home-directory conventions. Supporting another host platform
 requires a resolver for that platform and, when its path syntax cannot be used in Linux, a separate target-translation
@@ -289,18 +357,22 @@ implicit cache mounts.
 
 The launcher derives targets and managed routing settings; the TOML cannot override them.
 
-| Kind | Persistent content | Managed container routing | Derived sharing policy |
-| --- | --- | --- | --- |
-| `go_build` | Go build, test, and fuzz cache | `GOCACHE=<container-target>` | `shared_rw` |
-| `go_modules` | downloaded Go modules | `GOMODCACHE=<container-target>` | `shared_rw` |
+| Kind | Delivery | Persistent content | Managed container routing | Policy |
+| --- | --- | --- | --- | --- |
+| `go_build` | implemented | Go build, test, and fuzz cache | `GOCACHE=<container-target>` | `shared_rw` |
+| `go_modules` | implemented | downloaded Go modules | `GOMODCACHE=<container-target>` | `shared_rw` |
+| `uv` | next milestone | uv dependency and build cache | `UV_CACHE_DIR=<container-target>` | `shared_rw` |
 
 For a configured kind, the session wrapper sets the routing value on every managed command. It overrides an
-image-owned `GOCACHE` or `GOMODCACHE` with the configured target. The tool does not have to infer a cache from the
-container user, home, XDG directories, or OS defaults. Without that kind, the launcher leaves the image value
-untouched. Host values participate only in init discovery and are never copied wholesale into the container.
+image-owned `GOCACHE`, `GOMODCACHE`, or `UV_CACHE_DIR` with the configured target. The tool does not have to infer a
+cache from the container user, home, XDG directories, or OS defaults. Without that kind, the launcher leaves the
+image value untouched. Host values participate only in init discovery and are never copied wholesale into the
+container.
 
 These settings are routing defaults, not confinement. An explicit tool argument or project-owned configuration may
 override them and leave the attached cache unused; the launcher does not rewrite command argv or project files.
+For uv specifically, `--cache-dir` has higher precedence than `UV_CACHE_DIR`, while `--no-cache` or an effective
+`UV_NO_CACHE` bypasses the persistent directory. The launcher does not force caching or unset those choices.
 
 ### 4. Host and Container Compatibility
 
@@ -312,27 +384,29 @@ This contract does not attempt to share macOS or Windows cache trees with Linux.
 cross-architecture emulation remain out of scope. Explicit routing solves tool-path ambiguity after a mount exists;
 it does not make foreign host path syntax, filesystem semantics, or binary cache entries Linux-compatible.
 
-Host and container can still have different Linux distributions, libc versions, and Go tool versions. The implemented
-profiles treat that difference separately:
+Host and container can still have different Linux distributions, libc versions, and tool versions. The implemented
+and specified profiles treat that difference separately:
 
 | Kind | Cross-environment behavior | Decision |
 | --- | --- | --- |
 | `go_modules` | Downloaded source is independent of target OS and architecture. | Share the live cache. |
 | `go_build` | Keys include Go inputs and toolchain, but not changes in cgo C libraries. | Share with a cgo caveat. |
+| `uv` | Buckets are versioned; wheels and cached environments can remain platform-specific. | Share on Linux with tool-owned misses and compatibility checks. |
 
 An incompatibility should normally produce a miss or a parallel versioned entry, not installation of an artifact for
-the wrong platform. The exceptions are ecosystem packages published under insufficient platform coordinates and the
-documented Go cgo limitation; the launcher cannot repair either problem. It does not probe or compare tool versions.
+the wrong platform. Different uv releases can use one directory because incompatible cache buckets receive distinct
+versions, although the directory can retain duplicate entries. The exceptions are ecosystem packages published under
+insufficient platform coordinates and the documented Go cgo limitation; the launcher cannot repair either problem.
+It does not probe or compare tool versions.
 
-### 5. Deferred Profiles and Sharing Policies
+### 5. Sharing Policies and Deferred Profiles
 
-The remaining uv, Maven, and Gradle text in this section documents options considered for later milestones only. The
-current parser rejects their kinds and does not set their environment variables, create their mounts, or print their
-sharing-policy diagnostics.
+The current parser still rejects uv, Maven, and Gradle and does not set their environment variables, create their
+mounts, or print their sharing-policy diagnostics. The next milestone moves only uv into the supported set. Maven and
+Gradle remain design-only.
 
-`shared_rw` is the implemented diagnostic policy for Go and the candidate policy for a future uv profile. It relies on
-the package manager's own concurrent-cache contract. The launcher adds no coarse lock and does not make direct file
-edits.
+`shared_rw` is the implemented diagnostic policy for Go and the specified policy for uv. It relies on each tool's own
+concurrent-cache contract. The launcher adds no coarse lock and does not make direct file edits.
 
 `uncoordinated_rw` is a candidate policy for future Maven and Gradle profiles. If either profile is implemented,
 explicit selection would acknowledge that the launcher cannot enforce one writer:
@@ -362,8 +436,9 @@ Dependency caches are creation-time state because Docker cannot add a bind mount
 
 This design does not define a separate cache fingerprint. It extends the one versioned canonical structure owned by
 [Project Launcher Configuration](project-launcher-configuration.md#4-parameter-classes-and-active-containers).
-Implementation increments that structure from schema version 1 to version 2, which makes every session created by an
-older launcher incompatible after upgrade, even when the resolved cache list is empty.
+The implemented Go milestone incremented that structure from schema version 1 to version 2, which made every session
+created by an older launcher incompatible after upgrade, even when the resolved cache list was empty. The uv
+milestone reuses schema version 2 because the canonical cache-entry shape does not change.
 
 The version 2 structure appends `dependency_caches` after the existing fields. Its entries use deterministic kind
 order and contain:
@@ -380,8 +455,9 @@ and the tool contract.
 The cache contents, timestamps, size, and current hit rate are excluded. Normal cache writes therefore do not make a
 running session incompatible.
 
-The matching typed schema, presence-aware overlay, schema-version bump, and canonical fingerprint field are recorded
-in the owning launcher-configuration design and must ship in the same implementation change.
+The matching typed schema, presence-aware overlay, and canonical fingerprint field are recorded in the owning
+launcher-configuration design. The uv implementation must update that document's supported-kind contract in the same
+change, without claiming another schema-version bump.
 
 Changing, adding, or removing a cache while the project container is active produces the normal creation-time
 mismatch error and asks the user to finish the active session. It never replaces or mutates the live container.
@@ -398,7 +474,7 @@ For each cold or reused invocation, the launcher performs this sequence:
    policy.
 3. Build the normalized mount and per-command routing plan and compare it with any active session.
 4. On cold creation, mount cache sources with the invoking host identity's existing Sysbox translation.
-5. Inject managed Go routing and run the requested command.
+5. Inject managed routing for every configured Go and, after its milestone, uv cache, then run the requested command.
 
 Failures are explicit:
 
@@ -414,12 +490,27 @@ session is accessing that source.
 
 #### uv
 
-uv documents its cache as append-only and safe for concurrent readers and writers. It also versions incompatible
-cache buckets, so different uv releases may coexist but can retain duplicate entries.
+uv documents its cache as thread-safe and append-only, with file-based coordination for concurrent readers and
+writers. The launcher therefore uses `shared_rw`, adds no lock, and never edits cache files directly. `uv cache clean`
+and `uv cache prune` are tool-owned operations that wait for active uv processes; operators must run them through uv,
+not `rm`, and should avoid `--force` while host or container commands may still use the cache. The launcher does not
+change `UV_LOCK_TIMEOUT` or run cleanup automatically.
+
+uv versions incompatible cache buckets, so different releases can coexist but may retain duplicate entries. The
+cache can also hold built wheels, Git checkouts, script environments, and centralized project environments. Those
+entries can carry platform, Python, or external-library assumptions even when the cache format itself is compatible.
+The launcher treats an uv error as tool-owned and leaves recovery to `--refresh`, `--refresh-package`, or an
+appropriate `uv cache` command.
 
 If the cache and Python environment are on different filesystems, uv cannot use its fastest link strategy and falls
-back to copying. The container profile should set an explicit copy link mode only when a real-host probe confirms the
-bind and environment are on different filesystems; it must not assume this from path names alone.
+back to copying. Separate bind paths do not prove separate backing filesystems, and the final environment location can
+also be changed by uv configuration. The launcher therefore does not set `UV_LINK_MODE`. uv retains its normal
+clone/hardlink/copy behavior and warning; a project may select `copy` explicitly when its own deployment requires it.
+
+The uv cache is distinct from managed Python installations, tool installation state, credentials, and configuration.
+The `uv` profile mounts only the directory reported for the dependency cache and injects only `UV_CACHE_DIR`; it does
+not mount `UV_PYTHON_INSTALL_DIR`, `UV_TOOL_DIR`, configuration directories, keyring data, or the whole host cache
+parent.
 
 #### Go
 
@@ -546,11 +637,15 @@ source control. It is a project policy, not a launcher cache feature.
 ### Configuration and plan tests
 
 - Decode and encode every supported kind; reject duplicates, unknown kinds, and any serialized `mode` key.
-- Discover existing Go build and Go module caches during default init without creating missing directories.
-- Keep `--host-caches=none` explicitly empty and resolve an explicit Go cache subset.
+- Discover existing Go build, Go module, and uv caches during default init without creating missing directories.
+- Keep `--host-caches=none` explicitly empty and resolve an explicit cache subset in canonical kind order.
 - Keep init non-interactive and prove discovery performs no Docker or network access.
 - Resolve each supported Go kind through the host probe, environment, then Linux fallback; never consult container
   defaults.
+- Resolve uv through one bounded `uv cache dir --directory <project-root>` probe. Fall back to
+  `UV_CACHE_DIR`, `$XDG_CACHE_HOME/uv`, then `<host-home>/.cache/uv` only when the executable is absent.
+- Reject uv probe timeouts, nonzero exits, empty or multi-line output, relative paths, temporary `--no-cache` paths,
+  nonexistent directories, inaccessible directories, and project-overlapping cache directories.
 - Preserve an existing `config.toml` without rediscovery or rewrite.
 - Prove omitted and present-empty `dependency_caches` both resolve empty while a present non-empty list replaces the
   whole list through a presence-aware overlay.
@@ -561,12 +656,17 @@ source control. It is a project policy, not a launcher cache feature.
   diagnostics.
 - Prove cache config changes alter the creation-time fingerprint while cache content changes do not.
 - Reject a missing source before Docker access.
-- Override conflicting image-owned cache variables for configured kinds and preserve them for unconfigured kinds.
+- Override conflicting image-owned `GOCACHE`, `GOMODCACHE`, and `UV_CACHE_DIR` values for configured kinds and
+  preserve them for unconfigured kinds.
+- Prove uv routing does not add or change `UV_LINK_MODE`, `UV_NO_CACHE`, `UV_LOCK_TIMEOUT`, Python-install, tool,
+  authentication, or configuration variables.
 - Accept standard live host-cache paths without creating an `agents-safe`-specific sibling cache.
 
 ### Concurrency and warning tests
 
 - Run concurrent Go writers against one temporary shared cache and verify both complete without launcher locks.
+- Run concurrent uv commands from distinct environments against one temporary shared cache and verify both complete
+  without launcher locks or direct cache edits.
 
 ### Integration tests on a Sysbox host
 
@@ -574,8 +674,13 @@ source control. It is a project policy, not a launcher cache feature.
 - Warm with a native host command, consume from the container, then warm in the container and consume on the host.
 - Verify host ownership remains the invoking user's after cache writes and cleanup.
 - Run two worktrees concurrently against shared Go caches.
-- Exercise same-version and mixed-version host/container tools, accepting tool-owned misses while detecting
-  corruption or launcher path drift, and cover the documented Go cgo invalidation procedure.
+- Run two worktrees with separate Python environments concurrently against one shared uv cache.
+- For uv, prove the same-path bind and managed `UV_CACHE_DIR` with a project image that contains pinned uv and Python
+  tooling while the base runtime image remains uv- and Python-free.
+- Prove the launcher does not force `UV_LINK_MODE`; filesystem-specific clone, hardlink, and copy behavior remains an
+  uv concern rather than a launcher smoke prerequisite.
+- Use one approved uv toolchain for end-to-end proof. Accept tool-owned misses or errors without launcher compatibility
+  logic; cover the documented Go cgo invalidation procedure separately.
 - Inspect mounts and prove host credentials and unrelated home files are absent.
 - Prove a cache config change rejects reuse of a live container.
 - Prove project-image builds and nested containers receive no cache access implicitly.
@@ -588,13 +693,16 @@ Planned ownership:
 - `internal/launchcli/dependencies/`: tool-specific host-source resolution;
 - `internal/launchcli/`: cache-selection parsing and resolution orchestration;
 - `internal/launcher/launchplan/`: cache mounts, overlap policy, and canonical ordering;
-- `internal/launcher/`: creation fingerprint, diagnostic metadata, and uncoordinated-write warnings;
-- `internal/container/`: managed tool environment;
+- `internal/launcher/`: creation fingerprint and diagnostic metadata;
+- `internal/launcher/docker_requests.go`: managed per-command tool environment;
 - `tests/smoke/`: real Sysbox ownership, concurrency, persistence, and isolation proof.
 
 ## References
 
 - [uv caching](https://docs.astral.sh/uv/concepts/cache/)
+- [uv CLI reference](https://docs.astral.sh/uv/reference/cli/)
+- [uv settings](https://docs.astral.sh/uv/reference/settings/)
+- [uv storage](https://docs.astral.sh/uv/reference/storage/)
 - [uv in Docker](https://docs.astral.sh/uv/guides/integration/docker/)
 - [Go build and test caching](https://go.dev/cmd/go/#hdr-Build_and_test_caching)
 - [Go module cache](https://go.dev/ref/mod#module-cache)

@@ -4,7 +4,7 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
-No active execution plans.
+- [uv Host-Backed Dependency Cache](active/2026-07-21-uv-host-backed-dependency-cache-exec-plan.md)
 
 ## Review
 
