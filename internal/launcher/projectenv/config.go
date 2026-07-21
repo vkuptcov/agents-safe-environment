@@ -50,11 +50,16 @@ type DependencyCacheKind string
 const (
 	DependencyCacheGoBuild   DependencyCacheKind = "go_build"
 	DependencyCacheGoModules DependencyCacheKind = "go_modules"
+	DependencyCacheUV        DependencyCacheKind = "uv"
 )
 
 // DependencyCacheKindOrder is the canonical ordering the launcher applies to configured caches. It is the
 // single source of truth for both init-time parsing and launch-time resolution, so the two cannot drift.
-var DependencyCacheKindOrder = []DependencyCacheKind{DependencyCacheGoBuild, DependencyCacheGoModules}
+var DependencyCacheKindOrder = []DependencyCacheKind{
+	DependencyCacheGoBuild,
+	DependencyCacheGoModules,
+	DependencyCacheUV,
+}
 
 // DependencyCacheConfig stores a host cache path. Source remains the tool-visible container target; launch
 // resolution separately records the symlink-resolved physical bind source.
@@ -214,7 +219,12 @@ func cloneConfig(config ProjectConfig) ProjectConfig {
 }
 
 func supportedDependencyCacheKind(kind DependencyCacheKind) bool {
-	return kind == DependencyCacheGoBuild || kind == DependencyCacheGoModules
+	for _, supported := range DependencyCacheKindOrder {
+		if kind == supported {
+			return true
+		}
+	}
+	return false
 }
 
 func validateMount(index int, mount MountConfig) error {

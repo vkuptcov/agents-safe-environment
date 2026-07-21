@@ -107,7 +107,8 @@ func TestResolveDependencyCachesPreservesTargetAndUsesPhysicalSource(t *testing.
 	physical := filepath.Join(home, "real-go-build")
 	alias := filepath.Join(home, "cache-alias")
 	modules := filepath.Join(home, "go", "pkg", "mod")
-	for _, path := range []string{home, root, gitDir, physical, modules} {
+	uvCache := filepath.Join(home, ".cache", "uv")
+	for _, path := range []string{home, root, gitDir, physical, modules, uvCache} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -119,6 +120,7 @@ func TestResolveDependencyCachesPreservesTargetAndUsesPhysicalSource(t *testing.
 	defaults := resolvedConfig(project, false)
 	config := defaults
 	config.Common.DependencyCaches = []projectenv.DependencyCacheConfig{
+		{Kind: projectenv.DependencyCacheUV, Source: uvCache},
 		{Kind: projectenv.DependencyCacheGoModules, Source: modules},
 		{Kind: projectenv.DependencyCacheGoBuild, Source: alias},
 	}
@@ -129,12 +131,13 @@ func TestResolveDependencyCachesPreservesTargetAndUsesPhysicalSource(t *testing.
 	want := []DependencyCache{
 		{Kind: projectenv.DependencyCacheGoBuild, Source: physical, Target: alias},
 		{Kind: projectenv.DependencyCacheGoModules, Source: modules, Target: modules},
+		{Kind: projectenv.DependencyCacheUV, Source: uvCache, Target: uvCache},
 	}
 	if !reflect.DeepEqual(resolution.Plan.DependencyCaches, want) {
 		t.Fatalf("DependencyCaches = %#v, want %#v", resolution.Plan.DependencyCaches, want)
 	}
-	if got := resolution.Plan.Mounts[len(resolution.Plan.Mounts)-2:]; !reflect.DeepEqual(got, []BindMount{
-		{Source: physical, Target: alias}, {Source: modules, Target: modules},
+	if got := resolution.Plan.Mounts[len(resolution.Plan.Mounts)-3:]; !reflect.DeepEqual(got, []BindMount{
+		{Source: physical, Target: alias}, {Source: modules, Target: modules}, {Source: uvCache, Target: uvCache},
 	}) {
 		t.Fatalf("cache mounts = %#v", got)
 	}
@@ -159,6 +162,29 @@ func TestResolveDependencyCachesRejectsProjectAndHomeOverlaps(t *testing.T) {
 		if _, err := ResolveWithHostHome(project, defaults, config, home); err == nil || !strings.Contains(err.Error(), "dependency cache") {
 			t.Fatalf("ResolveWithHostHome(%q) error = %v", source, err)
 		}
+	}
+}
+
+func TestDependencyCacheEnvironmentKeyIsExplicit(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		kind projectenv.DependencyCacheKind
+		want string
+	}{
+		{projectenv.DependencyCacheGoBuild, "GOCACHE"},
+		{projectenv.DependencyCacheGoModules, "GOMODCACHE"},
+		{projectenv.DependencyCacheUV, "UV_CACHE_DIR"},
+	}
+	for _, test := range tests {
+		t.Run(string(test.kind), func(t *testing.T) {
+			got, err := (DependencyCache{Kind: test.kind}).EnvironmentKey()
+			if err != nil || got != test.want {
+				t.Fatalf("EnvironmentKey() = %q, %v; want %q", got, err, test.want)
+			}
+		})
+	}
+	if _, err := (DependencyCache{Kind: "future"}).EnvironmentKey(); err == nil {
+		t.Fatal("EnvironmentKey() accepted unknown kind")
 	}
 }
 

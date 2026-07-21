@@ -56,6 +56,12 @@ artifacts. Do not add packages merely for local convenience without documenting 
   `.agents-safe/Dockerfile`. It copies Go 1.26.0 from the same digest-pinned image used by the session-builder stage;
   no compiler packages or system build tools are installed into the shared runtime image.
 
+### Approved Smoke-Only Images
+
+- `ghcr.io/astral-sh/uv:0.8.14-python3.13-bookworm-slim@sha256:5b651a2084b59293d8a9327a5b91b2779c955ebeac9bfd40f95fe91e9bc06c43`
+  — approved by the owner on 2026-07-21 for the real Sysbox uv-cache tests. It provides the pinned uv/Python
+  toolchain only through a temporary test project image; it must not be added to `container/Dockerfile`.
+
 ## Documentation Tooling
 
 The Mermaid validator keeps its npm dependencies inside a Docker build under `harness/mermaid-check/`. The link

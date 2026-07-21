@@ -21,6 +21,7 @@ const (
 	personalSkillsLabel  = "codex-safe.personal-skills"
 	goBuildCacheLabel    = "codex-safe.go-build-cache"
 	goModulesCacheLabel  = "codex-safe.go-modules-cache"
+	uvCacheLabel         = "codex-safe.uv-cache"
 	managedLabelValue    = "true"
 
 	containerStateTimeout   = 20 * time.Second

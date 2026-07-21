@@ -129,7 +129,7 @@ interactive Codex behaves as it does on the host.
 The generic command interface is:
 
 ```text
-agents-safe init [--project PATH] [--host-caches=auto|none|go_build,go_modules]
+agents-safe init [--project PATH] [--host-caches=auto|none|go_build,go_modules,uv]
 agents-safe [--project PATH] [--image REF] [--] COMMAND [ARG...]
 ```
 
@@ -144,10 +144,12 @@ contacting Docker. The local ignore file ignores generated project-environment f
 activated `.agents-safe/Dockerfile` trackable; the worktree-root `.gitignore` is not modified. Repeated
 initialization preserves existing content.
 
-The Go-only cache milestone snapshots existing `GOCACHE` and `GOMODCACHE` directories into a newly created config,
-mounts each at its configured host-visible path, and supplies `GOCACHE`/`GOMODCACHE` to every managed command. It
-never creates cache directories or rediscover/rewrite an existing config. uv, Maven, Gradle, Docker-image, and
-BuildKit caches are deferred; see [Host-Backed Dependency Caches](docs/design-docs/host-backed-dependency-caches.md).
+Host-backed cache initialization snapshots existing `GOCACHE`, `GOMODCACHE`, and project-effective uv cache
+directories into a newly created config. The launcher mounts each at its configured host-visible path and supplies
+`GOCACHE`, `GOMODCACHE`, or `UV_CACHE_DIR` to every managed command. uv must be provided by the project image; the
+base runtime image stays uv- and Python-free. Initialization never creates cache directories or rediscover/rewrite an
+existing config. Maven, Gradle, Docker-image, and BuildKit caches are deferred; see
+[Host-Backed Dependency Caches](docs/design-docs/host-backed-dependency-caches.md).
 
 Edit the Dockerfile sample, then rename it to `.agents-safe/Dockerfile` to activate automatic project-image builds.
 Append an `additional` entry to the generated mount list when the project container needs another absolute host

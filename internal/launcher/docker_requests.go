@@ -49,6 +49,7 @@ func (docker *DockerLauncher) buildCreateRequest(
 		{Key: hostMCPLabel, Value: forwarding.set.Label()},
 		{Key: goBuildCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheGoBuild)},
 		{Key: goModulesCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheGoModules)},
+		{Key: uvCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheUV)},
 	}
 	environment := []dockercli.KeyValue{
 		{Key: "CODEX_SAFE_HOST_UID", Value: strconv.Itoa(docker.HostUID)},
@@ -105,7 +106,11 @@ func (docker *DockerLauncher) buildExecRequest(
 		})
 	}
 	for _, cache := range plan.DependencyCaches {
-		environment = append(environment, dockercli.KeyValue{Key: cache.EnvironmentKey(), Value: cache.Target})
+		key, err := cache.EnvironmentKey()
+		if err != nil {
+			return dockercli.ExecRequest{}, err
+		}
+		environment = append(environment, dockercli.KeyValue{Key: key, Value: cache.Target})
 	}
 	wrappedCommand := append([]string{"codex-safe-session", "run", "--"}, command...)
 	return dockercli.ExecRequest{

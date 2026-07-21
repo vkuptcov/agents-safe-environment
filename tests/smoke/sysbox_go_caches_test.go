@@ -32,7 +32,7 @@ func TestSysboxGoHostCaches(t *testing.T) {
 		require.NoError(t, os.MkdirAll(path, 0o755), "host cache must exist before init/launch")
 	}
 	writeGoCacheProjectEnvironment(t, fixture, buildCache, moduleCache)
-	cleanupGoProjectImage(t, fixture)
+	cleanupProjectImage(t, fixture)
 	makeTestCacheRemovable(t, buildCache, moduleCache)
 	proxy := writeGoModuleProxy(t, fixture.project.worktree)
 	writeGoCacheClient(t, fixture.project.worktree)
@@ -159,13 +159,13 @@ func TestSysboxConcurrentGoCacheWorktrees(t *testing.T) {
 		require.NoError(t, os.MkdirAll(path, 0o755), "shared host cache must exist before launch")
 	}
 	writeGoCacheProjectEnvironment(t, fixture, buildCache, moduleCache)
-	cleanupGoProjectImage(t, fixture)
+	cleanupProjectImage(t, fixture)
 	makeTestCacheRemovable(t, buildCache, moduleCache)
 	proxy := writeGoModuleProxy(t, fixture.project.worktree)
 	writeGoCacheClient(t, fixture.project.worktree)
 	parallelWorktree := addConcurrentGoCacheWorktree(t, fixture)
 	writeGoCacheConfigAt(t, fixture, parallelWorktree, buildCache, moduleCache)
-	cleanupGoProjectImageAt(t, fixture, parallelWorktree)
+	cleanupProjectImageAt(t, fixture, parallelWorktree)
 
 	firstReady := filepath.Join(fixture.project.worktree, "go-cache-first.ready")
 	firstRelease := filepath.Join(fixture.project.worktree, "go-cache-first.release")
@@ -251,7 +251,7 @@ func TestSysboxGoProjectImageWithoutCaches(t *testing.T) {
 		t.Skipf("set %s=1 to run the real Sysbox Go cache test", goSmokeEnv)
 	}
 	fixture := newSmokeFixture(t)
-	cleanupGoProjectImage(t, fixture)
+	cleanupProjectImage(t, fixture)
 	contextPath := filepath.Join(fixture.project.worktree, projectenv.Directory)
 	require.NoError(t, os.Mkdir(contextPath, 0o755), "project environment directory must be created")
 	dockerfile := "ARG AGENTS_SAFE_BASE=" + goSmokeImage + "\n" +
@@ -297,6 +297,18 @@ func writeGoCacheConfig(t *testing.T, fixture *smokeFixture, buildCache, moduleC
 }
 
 func writeGoCacheConfigAt(t *testing.T, fixture *smokeFixture, worktree, buildCache, moduleCache string) {
+	writeDependencyCacheConfigAt(t, fixture, worktree, []projectenv.DependencyCacheConfig{
+		{Kind: projectenv.DependencyCacheGoBuild, Source: buildCache},
+		{Kind: projectenv.DependencyCacheGoModules, Source: moduleCache},
+	})
+}
+
+func writeDependencyCacheConfigAt(
+	t *testing.T,
+	fixture *smokeFixture,
+	worktree string,
+	caches []projectenv.DependencyCacheConfig,
+) {
 	t.Helper()
 	contextPath := filepath.Join(worktree, projectenv.Directory)
 	if _, err := os.Stat(contextPath); os.IsNotExist(err) {
@@ -310,21 +322,18 @@ func writeGoCacheConfigAt(t *testing.T, fixture *smokeFixture, worktree, buildCa
 		HomeDir: fixture.project.hostHome, GitConfig: fixture.project.hostGit, CodexHome: fixture.project.codexHome,
 	}, goSmokeImage)
 	require.NoError(t, err, "fixture defaults must be serializable")
-	config.Common.DependencyCaches = []projectenv.DependencyCacheConfig{
-		{Kind: projectenv.DependencyCacheGoBuild, Source: buildCache},
-		{Kind: projectenv.DependencyCacheGoModules, Source: moduleCache},
-	}
+	config.Common.DependencyCaches = append([]projectenv.DependencyCacheConfig(nil), caches...)
 	var encoded bytes.Buffer
 	require.NoError(t, projectenv.Encode(config, &encoded), "fixture config must encode")
 	require.NoError(t, os.WriteFile(filepath.Join(contextPath, projectenv.ConfigName), encoded.Bytes(), 0o600), "config must be written")
 }
 
-func cleanupGoProjectImage(t *testing.T, fixture *smokeFixture) {
+func cleanupProjectImage(t *testing.T, fixture *smokeFixture) {
 	t.Helper()
-	cleanupGoProjectImageAt(t, fixture, fixture.project.worktree)
+	cleanupProjectImageAt(t, fixture, fixture.project.worktree)
 }
 
-func cleanupGoProjectImageAt(t *testing.T, fixture *smokeFixture, worktree string) {
+func cleanupProjectImageAt(t *testing.T, fixture *smokeFixture, worktree string) {
 	t.Helper()
 	tag := projectenv.LocalImageName(launcher.ProjectKey(os.Getuid(), worktree))
 	t.Cleanup(func() {
@@ -441,15 +450,39 @@ func makeTestCacheRemovable(t *testing.T, paths ...string) {
 	t.Helper()
 	t.Cleanup(func() {
 		for _, root := range paths {
-			_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-				if err != nil || info == nil {
-					return err
-				}
-				if info.IsDir() {
-					return os.Chmod(path, 0o755)
-				}
-				return os.Chmod(path, 0o600)
-			})
+			require.NoError(t, makeCacheTreeRemovable(root), "cache %q must remain removable by the host test user", root)
+			require.NoError(t, os.RemoveAll(root), "cache %q must be removable before the temporary fixture cleanup", root)
 		}
 	})
+}
+
+// makeCacheTreeRemovable walks directory entries explicitly. uv writes directories with restrictive permissions;
+// applying a mode before descending ensures the host test user can remove a temporary cache at test cleanup.
+func makeCacheTreeRemovable(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	if !info.IsDir() {
+		return os.Chmod(path, 0o600)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := makeCacheTreeRemovable(filepath.Join(path, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return os.Chmod(path, 0o755)
 }

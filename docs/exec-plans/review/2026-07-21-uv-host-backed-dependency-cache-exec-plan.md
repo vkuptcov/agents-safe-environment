@@ -1,8 +1,11 @@
 # Exec Plan: uv Host-Backed Dependency Cache
 
-- Status: active
+- Status: in review
 - Created: 2026-07-21
 - Target executor: GPT-5.6 Terra
+- Progress: All six phases are complete. The owner approved the digest-pinned uv/Python image only for temporary
+  smoke project images; real Sysbox tests prove bidirectional offline reuse, cold-session persistence, ownership,
+  concurrency, mismatch rejection, project-image isolation, and nested-Docker isolation.
 - Design:
   - [`docs/design-docs/host-backed-dependency-caches.md`](../../design-docs/host-backed-dependency-caches.md)
   - [`docs/design-docs/project-launcher-configuration.md`](../../design-docs/project-launcher-configuration.md)
@@ -100,9 +103,12 @@ must not install uv in the base image or broaden support to Maven, Gradle, neste
 ## Phases
 
 ### Phase 1: Docker-Free uv Resolver
-Purpose: Resolve and validate an existing host uv cache without making `uv` a launchable config kind.
-Status: to be done
-Done when: resolver tests cover the complete probe and fallback contract while production config still rejects uv.
+Purpose: Resolve and validate an existing host uv cache before init persistence.
+Status: done
+Done when: resolver tests cover the complete probe and fallback contract; acceptance landed atomically with Phase 2.
+
+Implementation note: the Phase 1 resolver and Phase 2 typed routing shipped together to preserve the plan's atomic
+exposure constraint; no intermediate release accepted `uv` without a complete launch contract.
 
 1. Add `DependencyCacheUV` in `internal/launcher/projectenv/config.go`, but leave the supported-kind predicate and
    canonical order Go-only until Phase 2.
@@ -124,7 +130,7 @@ Done when: resolver tests cover the complete probe and fallback contract while p
 
 ### Phase 2: Atomic uv Launch Contract
 Purpose: Make a manually configured uv cache safe and effective before init can generate one.
-Status: to be done
+Status: done
 Done when: accepted `kind = "uv"` config produces the validated bind, diagnostics, fingerprint, and per-command routing.
 
 1. Append `DependencyCacheUV` to `DependencyCacheKindOrder` and accept it in
@@ -148,7 +154,7 @@ Done when: accepted `kind = "uv"` config produces the validated bind, diagnostic
 
 ### Phase 3: Noninteractive uv Initialization
 Purpose: Add uv to new-project cache discovery without changing existing-config idempotence.
-Status: to be done
+Status: done
 Done when: auto and explicit init persist only safe canonical snapshots and never probe an existing config.
 
 1. Generalize `ParseHostCacheSelection` to accept exactly `go_build`, `go_modules`, and `uv`; keep sentinels,
@@ -172,7 +178,7 @@ Done when: auto and explicit init persist only safe canonical snapshots and neve
 
 ### Phase 4: Real uv and Sysbox Boundary Proof
 Purpose: Prove bidirectional uv cache reuse with real tools and mounts rather than request-shape tests alone.
-Status: to be done
+Status: done
 Done when: native host uv and uv in test-only project images reuse one cache in both directions across cold sessions.
 
 1. Before adding a smoke-only uv/Python source, present the exact image/artifact version and digest/checksum for owner
@@ -196,7 +202,7 @@ Done when: native host uv and uv in test-only project images reuse one cache in 
 
 ### Phase 5: uv Concurrency, Reuse, and Isolation
 Purpose: Prove the shared cache remains safe across overlapping clients and creation-time boundaries.
-Status: to be done
+Status: done
 Done when: concurrent worktrees succeed and uv state never leaks into an incompatible or nested container.
 
 1. Add `TestSysboxConcurrentUVCacheWorktrees`: run two worktrees concurrently with separate environments against the
@@ -210,7 +216,7 @@ Done when: concurrent worktrees succeed and uv state never leaks into an incompa
 
 ### Phase 6: Documentation and Review Handoff
 Purpose: Align public guidance and durable contracts with the shipped uv slice and hand off verified work for review.
-Status: to be done
+Status: done
 Done when: docs describe Go plus uv as implemented, Maven/Gradle as deferred, and all review findings are resolved.
 
 1. Update `README.md`, `internal/launcher/README.md`, `internal/launcher/projectenv/README.md`,
@@ -286,4 +292,9 @@ Done when: docs describe Go plus uv as implemented, Maven/Gradle as deferred, an
 ## Progress Notes
 
 - 2026-07-21: Created from the accepted Go implementation baseline and the uv cache contract documented by Astral.
-- Add dated implementation outcomes and review links before moving this plan out of `active/`.
+- 2026-07-21: Added the Go resolver, typed uv launch contract, initialization orchestration, labels, fingerprint
+  coverage, docs, and focused tests without changing the base runtime image.
+- 2026-07-21: Owner approved the digest-pinned uv/Python image exclusively for temporary smoke project images. Real
+  Sysbox tests passed for reuse, bind isolation, concurrent worktrees, and live configuration mismatch.
+- 2026-07-21: Implementation review fixed F-001 through F-004; the final re-review has no open findings. This plan
+  awaits owner acceptance in `review/`.

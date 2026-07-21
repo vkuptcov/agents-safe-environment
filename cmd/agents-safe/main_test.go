@@ -12,6 +12,7 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launchcli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 	"github.com/vkuptcov/agents-safe-environment/internal/testutil/clitest"
 )
 
@@ -71,6 +72,23 @@ func TestRunInitInitializesWithoutConstructingLauncher(t *testing.T) {
 	}
 }
 
+func TestRunInitPassesUVSelectionToInitializer(t *testing.T) {
+	t.Parallel()
+	deps := testCommandDependencies(&clitest.RecordingLauncher{})
+	var selection launchcli.HostCacheSelection
+	deps.initialize = func(_ context.Context, _ gitproject.Project, got launchcli.HostCacheSelection) (initializationResult, error) {
+		selection = got
+		return initializationResult{Path: "/project/.agents-safe", Created: true}, nil
+	}
+	if exit := run(context.Background(), []string{"init", "--host-caches=uv"}, new(bytes.Buffer), new(bytes.Buffer), deps); exit != 0 {
+		t.Fatalf("run() = %d", exit)
+	}
+	want := launchcli.HostCacheSelection{Kinds: []projectenv.DependencyCacheKind{projectenv.DependencyCacheUV}}
+	if !reflect.DeepEqual(selection, want) {
+		t.Fatalf("selection = %#v, want %#v", selection, want)
+	}
+}
+
 func TestRunInitRejectsArgumentsBeforeDiscovery(t *testing.T) {
 	t.Parallel()
 	stderr := new(bytes.Buffer)
@@ -90,7 +108,7 @@ func TestRunInitRejectsInvalidHostCachesBeforeDiscovery(t *testing.T) {
 		panic("discovery must not run")
 	}
 	stderr := new(bytes.Buffer)
-	if exit := run(context.Background(), []string{"init", "--host-caches=uv"}, new(bytes.Buffer), stderr, deps); exit != 2 {
+	if exit := run(context.Background(), []string{"init", "--host-caches=maven"}, new(bytes.Buffer), stderr, deps); exit != 2 {
 		t.Fatalf("run() = %d", exit)
 	}
 	if !strings.Contains(stderr.String(), "--host-caches accepts only") {
