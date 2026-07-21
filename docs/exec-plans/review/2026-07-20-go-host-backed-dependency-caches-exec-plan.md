@@ -75,7 +75,7 @@ Maven, Gradle, Docker images, BuildKit, or nested-container cache propagation.
   nonzero exit, malformed JSON, `off`, or a relative value never silently falls back.
 - Linux fallback: use explicit `GOCACHE` or `GOMODCACHE` first. Then use
   `$XDG_CACHE_HOME/go-build` or `<host-home>/.cache/go-build` for the build cache, and
-  `<host-home>/go/pkg/mod` for modules.
+  the first `$GOPATH` entry plus `/pkg/mod` for modules, defaulting `GOPATH` to `<host-home>/go` when unset.
 - Existing directories only: `auto` omits an unavailable kind with a concise diagnostic; explicit selection fails.
   Initialization never creates, warms, cleans, changes ownership, or changes permissions on a cache.
 - Existing config: discovery is lazy. Re-running init preserves the file, does not execute `go env`, and reports that
@@ -107,8 +107,9 @@ Done when: Go cache selections resolve deterministically from the host and no pr
    probe failure falls back only for an absent executable, and per-exec routing belongs to the host launcher.
 2. Add `DependencyCacheKind` and `DependencyCacheConfig` types for `go_build` and `go_modules` without adding the field
    to `CommonConfig` yet.
-3. Add `internal/launchcli/host_caches.go` with an injected command runner, environment lookup, host home, filesystem
-   inspection, and bounded context.
+3. Add `internal/launchcli/dependencies/go_deps.go` with an injected command runner, environment lookup, host home,
+   filesystem inspection, and bounded context; keep selection parsing and orchestration in
+   `internal/launchcli/host_caches.go`.
 4. Parse `auto`, `none`, and explicit subsets; reject empty tokens, duplicates, mixed sentinel/kind values, and every
    non-Go kind before discovery.
 5. Resolve both values through one `go env -json` call, enforce the fallback boundary, validate each selected result
@@ -198,13 +199,13 @@ Done when: docs describe the implemented Go slice accurately and the validated p
 ## Validation Gates
 
 - `gofmt` runs on every changed Go file.
-- `go test ./internal/launchcli ./internal/launcher/projectenv` passes after Phase 1.
-- `go vet ./internal/launchcli ./internal/launcher/projectenv` passes after Phase 1.
+- `go test ./internal/launchcli/... ./internal/launcher/projectenv` passes after Phase 1.
+- `go vet ./internal/launchcli/... ./internal/launcher/projectenv` passes after Phase 1.
 - `go test ./internal/launcher/projectenv ./internal/launcher/launchplan ./internal/launcher ./internal/session`
   passes after Phase 2.
 - `go vet ./internal/launcher/projectenv ./internal/launcher/launchplan ./internal/launcher ./internal/session`
   passes after Phase 2.
-- `go test ./cmd/agents-safe ./internal/launchcli ./internal/launcher/projectenv` passes after Phase 3.
+- `go test ./cmd/agents-safe ./internal/launchcli/... ./internal/launcher/projectenv` passes after Phase 3.
 - `make lint` and `make test` pass before review handoff.
 - `make check-docs` passes after every documentation change.
 - `make test-smoke-go` passes on a compatible Linux/Sysbox host; otherwise the exact missing runtime or Docker

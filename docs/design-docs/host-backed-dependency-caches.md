@@ -220,7 +220,52 @@ mode.
 Resolution uses the invoking host identity and performs no network or Docker access:
 
 - Go build: use the absolute `GOCACHE` reported by `go env`, then the standard user-cache fallback;
-- Go modules: use the absolute `GOMODCACHE` reported by `go env`, then `<host-home>/go/pkg/mod`;
+- Go modules: use the effective absolute `GOMODCACHE` reported by `go env`; only when `go` is absent, fall back to
+  `$GOMODCACHE`, then the first `$GOPATH` entry plus `/pkg/mod`, then `<host-home>/go/pkg/mod`;
+
+```mermaid
+flowchart TD
+    Selected["Selected Go cache kind"] --> Probe["Run bounded go env -json<br/>GOCACHE GOMODCACHE"]
+    Probe --> ProbeResult{"Command result"}
+    ProbeResult -->|"success"| Decode["Decode effective Go environment"]
+    Decode --> DecodeResult{"Valid JSON"}
+    DecodeResult -->|"yes"| ProbedKind{"Selected kind"}
+    DecodeResult -->|"no"| Unavailable["Kind unavailable"]
+    ProbeResult -->|"go executable absent"| FallbackKind{"Selected kind"}
+    ProbeResult -->|"timeout or nonzero exit"| Unavailable
+
+    ProbedKind -->|"go_build"| ProbedBuild["Use returned GOCACHE"]
+    ProbedKind -->|"go_modules"| ProbedModules["Use returned GOMODCACHE"]
+
+    subgraph MissingGoFallback["Fallback only when go is absent"]
+        FallbackKind -->|"go_build"| HasGoCache{"GOCACHE set"}
+        HasGoCache -->|"yes"| EnvGoCache["Use GOCACHE"]
+        HasGoCache -->|"no"| HasXDG{"XDG_CACHE_HOME set"}
+        HasXDG -->|"yes"| XDGGoCache["Use XDG_CACHE_HOME/go-build"]
+        HasXDG -->|"no"| HomeGoCache["Use host-home/.cache/go-build"]
+
+        FallbackKind -->|"go_modules"| HasModCache{"GOMODCACHE set"}
+        HasModCache -->|"yes"| EnvModCache["Use GOMODCACHE"]
+        HasModCache -->|"no"| HasGoPath{"GOPATH set"}
+        HasGoPath -->|"yes"| GoPathModCache["Use first GOPATH entry/pkg/mod"]
+        HasGoPath -->|"no"| HomeModCache["Use host-home/go/pkg/mod"]
+    end
+
+    ProbedBuild --> Validate
+    ProbedModules --> Validate
+    EnvGoCache --> Validate
+    XDGGoCache --> Validate
+    HomeGoCache --> Validate
+    EnvModCache --> Validate
+    GoPathModCache --> Validate
+    HomeModCache --> Validate
+    Validate{"Canonical absolute existing directory<br/>with read, write, and search access"}
+    Validate -->|"yes"| Persist["Persist source in config.toml"]
+    Validate -->|"no"| Unavailable
+    Unavailable --> SelectionMode{"Selection mode"}
+    SelectionMode -->|"auto"| Omit["Omit kind and emit diagnostic"]
+    SelectionMode -->|"explicit"| Fail["Fail initialization"]
+```
 
 The resolver runs one bounded `go env -json GOCACHE GOMODCACHE` probe. Only an absent `go` executable permits the
 environment and Linux-default fallback chain. A failed probe, malformed output, `off`, relative path, or nonexistent
@@ -540,7 +585,8 @@ source control. It is a project policy, not a launcher cache feature.
 Planned ownership:
 
 - `internal/launcher/projectenv/`: typed TOML schema, kind validation, and fixed policy derivation;
-- `internal/launchcli/`: host-source resolution and tool environment composition;
+- `internal/launchcli/dependencies/`: tool-specific host-source resolution;
+- `internal/launchcli/`: cache-selection parsing and resolution orchestration;
 - `internal/launcher/launchplan/`: cache mounts, overlap policy, and canonical ordering;
 - `internal/launcher/`: creation fingerprint, diagnostic metadata, and uncoordinated-write warnings;
 - `internal/container/`: managed tool environment;
