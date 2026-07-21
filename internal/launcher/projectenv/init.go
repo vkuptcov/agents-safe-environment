@@ -13,7 +13,7 @@ import (
 //go:embed Dockerfile.sample
 var dockerfileSampleContent string
 
-const localIgnoreContent = "*\n!.gitignore\n!Dockerfile\n"
+const localIgnoreContent = "*\n!Dockerfile\n"
 
 // Initialize creates missing local project-environment files and preserves existing content.
 func Initialize(projectRoot string, config ProjectConfig) (string, error) {
