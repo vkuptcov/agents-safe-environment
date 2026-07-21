@@ -54,9 +54,19 @@ docker info --format '{{json .Runtimes}}'
 The output must contain `sysbox-runc`. Runtime registration alone is not enough to establish that the host kernel,
 filesystem, and Sysbox installation support this workload; run the smoke test below for that proof.
 
-## Build
+## Install
 
 From the repository root:
+
+```bash
+make install
+```
+
+This installs `codex-safe` and `agents-safe` into `GOBIN`, or into the first `GOPATH/bin` when `GOBIN` is unset,
+and builds the local `codex-safe-mvp:local` image. Make sure that Go binary directory is on `PATH`; the launchers can
+then be run from any project directory.
+
+For repository-local development builds, use:
 
 ```bash
 make build
