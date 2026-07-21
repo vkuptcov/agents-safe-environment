@@ -77,8 +77,16 @@ func TestLoadTypedConfigReplacesDependencyCachesAndRejectsUnsupportedEntries(t *
 		t.Fatalf("Load() = %#v, %v", config.Common.DependencyCaches, err)
 	}
 
+	writeConfig(t, root, "[[common.dependency_caches]]\nkind = \"uv\"\nsource = \""+cache+"\"\n")
+	config, err = Load(root, defaults)
+	if err != nil || !reflect.DeepEqual(config.Common.DependencyCaches, []DependencyCacheConfig{{
+		Kind: DependencyCacheUV, Source: cache,
+	}}) {
+		t.Fatalf("Load() uv cache = %#v, %v", config.Common.DependencyCaches, err)
+	}
+
 	for _, content := range []string{
-		"[[common.dependency_caches]]\nkind = \"uv\"\nsource = \"" + cache + "\"\n",
+		"[[common.dependency_caches]]\nkind = \"maven\"\nsource = \"" + cache + "\"\n",
 		"[[common.dependency_caches]]\nkind = \"go_build\"\nsource = \"" + cache + "\"\nmode = \"shared_rw\"\n",
 		"[[common.dependency_caches]]\nkind = \"go_build\"\nsource = \"" + cache + "\"\n[[common.dependency_caches]]\nkind = \"go_build\"\nsource = \"" + cache + "\"\n",
 	} {

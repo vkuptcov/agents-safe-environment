@@ -148,20 +148,32 @@ func (resolver goCacheResolver) cachePath(
 	if path == "off" {
 		return "", fmt.Errorf("resolved path %q is not a canonical absolute directory", path)
 	}
-	if err := projectenv.ValidatePath("resolved Go cache", path, true); err != nil {
+	if err := validateExistingCacheDirectory("resolved Go cache", path, resolver.stat, resolver.access); err != nil {
 		return "", err
 	}
-	info, err := resolver.stat(path)
+	return path, nil
+}
+
+func validateExistingCacheDirectory(
+	label string,
+	path string,
+	stat func(string) (os.FileInfo, error),
+	access func(string, uint32) error,
+) error {
+	if err := projectenv.ValidatePath(label, path, true); err != nil {
+		return err
+	}
+	info, err := stat(path)
 	if err != nil {
-		return "", fmt.Errorf("inspect %q: %w", path, err)
+		return fmt.Errorf("inspect %q: %w", path, err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("%q is not a directory", path)
+		return fmt.Errorf("%q is not a directory", path)
 	}
-	if err := resolver.access(path, accessRead|accessWrite|accessSearch); err != nil {
-		return "", fmt.Errorf("access %q: %w", path, err)
+	if err := access(path, accessRead|accessWrite|accessSearch); err != nil {
+		return fmt.Errorf("access %q: %w", path, err)
 	}
-	return path, nil
+	return nil
 }
 
 func (resolver goCacheResolver) fallbackPath(kind projectenv.DependencyCacheKind) string {

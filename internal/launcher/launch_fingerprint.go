@@ -58,8 +58,12 @@ func creationFingerprint(
 	}
 	caches := make([]fingerprintDependencyCache, 0, len(plan.DependencyCaches))
 	for _, cache := range plan.DependencyCaches {
+		environmentKey, err := cache.EnvironmentKey()
+		if err != nil {
+			return "", err
+		}
 		caches = append(caches, fingerprintDependencyCache{
-			Kind: string(cache.Kind), PhysicalSource: cache.Source, EnvironmentKey: cache.EnvironmentKey(),
+			Kind: string(cache.Kind), PhysicalSource: cache.Source, EnvironmentKey: environmentKey,
 		})
 	}
 

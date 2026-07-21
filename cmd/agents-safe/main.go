@@ -33,11 +33,11 @@ Use agents-safe -- init to execute a container command named init.
                  MCP server in the base config.toml is reached through a confined relay.
   --image        Explicitly select an image and bypass automatic .agents-safe/Dockerfile selection.`
 
-const initUsage = `Usage: agents-safe init [--project PATH] [--host-caches=auto|none|go_build,go_modules]
+const initUsage = `Usage: agents-safe init [--project PATH] [--host-caches=auto|none|go_build,go_modules,uv]
 
 Create local .agents-safe/Dockerfile.sample, .agents-safe/config.toml, and .agents-safe/.gitignore files at the
-selected Git worktree root. --host-caches defaults to auto and snapshots existing host Go caches only for a newly
-created config.toml. Initialization does not construct a Docker launcher or modify the root .gitignore.`
+selected Git worktree root. --host-caches defaults to auto and snapshots existing host Go and uv caches only for a
+newly created config.toml. Initialization does not construct a Docker launcher or modify the root .gitignore.`
 
 type initializationResult struct {
 	Path        string
@@ -91,7 +91,7 @@ func productionDependencies() commandDependencies {
 				if err != nil {
 					return projectenv.ProjectConfig{}, err
 				}
-				caches, err := launchcli.ResolveHostCaches(ctx, selection, host.HomeDir)
+				caches, err := launchcli.ResolveHostCaches(ctx, selection, project, defaults, host.HomeDir)
 				if err != nil {
 					return projectenv.ProjectConfig{}, err
 				}
@@ -149,7 +149,7 @@ func runInit(
 	flags.SetOutput(io.Discard)
 	flags.SetInterspersed(false)
 	projectPath := flags.String("project", ".", "Git project path")
-	hostCaches := flags.String("host-caches", "auto", "Host Go caches: auto, none, or go_build,go_modules")
+	hostCaches := flags.String("host-caches", "auto", "Host caches: auto, none, or go_build,go_modules,uv")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			fmt.Fprintln(stdout, initUsage)

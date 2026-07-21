@@ -28,7 +28,7 @@ Parameters have two lifecycle classes:
 | Class | Parameters | Running-container behavior |
 | --- | --- | --- |
 | Creation-time | image, mounts, host MCP, dependency caches | Must match; a mismatch fails without replacement. |
-| Command-time | Codex and agent argv, managed Go cache routing | Applied immediately through `docker exec`. |
+| Command-time | Codex and agent argv, managed Go and uv cache routing | Applied immediately through `docker exec`. |
 
 `--project` is a bootstrap parameter: it selects the worktree and deterministic container identity before config
 resolution begins.
@@ -222,7 +222,7 @@ type MountConfig struct {
 `agents-safe` has launcher-specific defaults. `MountRole` gives role constants and downstream launch-plan APIs one
 shared domain type. `MountConfig.Comment` is serialized documentation and does not affect Docker arguments.
 
-The implemented Go milestone of [Host-Backed Dependency Caches](host-backed-dependency-caches.md) extends
+The implemented Go and uv cache contract of [Host-Backed Dependency Caches](host-backed-dependency-caches.md) extends
 `CommonConfig` and increments the creation-time fingerprint schema to version 2:
 
 ```go
@@ -236,8 +236,8 @@ type CommonConfig struct {
 
 `dependency_caches` is creation-time configuration. Its host-side resolvers, kind-derived sharing policies,
 path-preserving targets, managed container routing, and validation policy remain owned by the cache design; this
-document owns its typed schema, overlay behavior, and participation in container reuse. Only `go_build` and
-`go_modules` are implemented; the field is part of the version 2 fingerprint. uv, Maven, and Gradle are deferred.
+document owns its typed schema, overlay behavior, and participation in container reuse. `go_build`, `go_modules`, and
+`uv` are implemented; the field is part of the version 2 fingerprint. Maven and Gradle are deferred.
 
 ### 3. File Layering
 

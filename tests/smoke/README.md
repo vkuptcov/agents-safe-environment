@@ -34,6 +34,10 @@ The test requires:
 - Git and Go 1.26 or newer on the host;
 - registry access to pull uncached Dockerfile inputs and the pinned nested workload image.
 
+The uv reuse scenarios additionally require host `uv` and `python3`, plus registry access to the approved digest-pinned
+uv/Python image. They skip with that exact missing-tool prerequisite if the host does not provide it; a skipped scenario
+is not real uv reuse evidence.
+
 Check the registered Docker runtimes with:
 
 ```bash
@@ -128,6 +132,17 @@ then proves the reused command, the host, and a new cold Sysbox session build of
 also verifies that nested Docker receives neither Go cache variable. `TestSysboxGoCacheConfigMismatch` proves that a
 changed cache configuration rejects reuse and leaves the active session untouched. The base runtime image intentionally
 remains Go-free.
+
+`TestSysboxConfiguredUVCacheBind` verifies the launcher-side uv boundary through the real base image: `kind = "uv"`
+is a same-path writable bind, the managed command receives `UV_CACHE_DIR`, the diagnostic label identifies the source,
+and a container write remains host-owned. It also proves a project-image build receives no cache variable and nested
+Docker receives no `UV_CACHE_DIR`. It deliberately does not put uv or Python in the base image.
+
+`TestSysboxUVHostCacheReuse` uses the approved digest-pinned uv/Python image only in a temporary project image. It
+proves native-to-container and container-to-native offline reuse at one exact loopback index URL, empty-cache control
+failures, cold-session reuse, and host ownership. `TestSysboxConcurrentUVCacheWorktrees` proves two worktrees can
+write one cache concurrently without a launcher lock; `TestSysboxUVCacheConfigMismatch` proves a live session is left
+untouched when its cache identity changes.
 
 ## Probe synchronization
 

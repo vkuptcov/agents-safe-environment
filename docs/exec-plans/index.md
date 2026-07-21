@@ -4,10 +4,11 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
-No active execution plans.
+- None.
 
 ## Review
 
+- [uv Host-Backed Dependency Cache](review/2026-07-21-uv-host-backed-dependency-cache-exec-plan.md)
 - [Go Cache Implementation Review Fixes](review/2026-07-20-go-cache-review-fixes-exec-plan.md)
 - [Go Host-Backed Dependency Caches](review/2026-07-20-go-host-backed-dependency-caches-exec-plan.md)
 - [Session Bootstrap Readiness](review/2026-07-20-session-bootstrap-readiness-exec-plan.md)

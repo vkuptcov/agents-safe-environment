@@ -23,6 +23,7 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 		t.Fatalf("mounts = %#v, want resolved plan %#v", request.Mounts, plan.Mounts)
 	}
 	fingerprintFound := false
+	uvCacheFound := false
 	for _, label := range request.Labels {
 		if label.Key == codexHomeLabel && label.Value != "/home/developer/.codex" {
 			t.Fatalf("Codex label = %q, want resolved source", label.Value)
@@ -30,10 +31,36 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 		if label.Key == launchConfigLabel && label.Value == "fingerprint" {
 			fingerprintFound = true
 		}
+		if label.Key == uvCacheLabel && label.Value == mountAbsent {
+			uvCacheFound = true
+		}
 	}
 	if !fingerprintFound {
 		t.Fatalf("labels = %#v, want %s", request.Labels, launchConfigLabel)
 	}
+	if !uvCacheFound {
+		t.Fatalf("labels = %#v, want absent %s", request.Labels, uvCacheLabel)
+	}
+}
+
+func TestCreateRequestLabelsResolvedUVCache(t *testing.T) {
+	t.Parallel()
+	plan := testPlan()
+	plan.DependencyCaches = []launchplan.DependencyCache{{
+		Kind: projectenv.DependencyCacheUV, Source: "/physical/uv-cache", Target: "/host/cache/uv",
+	}}
+	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range request.Labels {
+		if label.Key == uvCacheLabel && label.Value == "/physical/uv-cache" {
+			return
+		}
+	}
+	t.Fatalf("labels = %#v, want %s=/physical/uv-cache", request.Labels, uvCacheLabel)
 }
 
 func dockerMounts(mounts []launchplan.BindMount) []dockercli.Mount {
@@ -60,19 +87,21 @@ func TestExecRequestUsesResolvedCodexTarget(t *testing.T) {
 	}
 }
 
-func TestExecRequestRoutesEveryConfiguredGoCache(t *testing.T) {
+func TestExecRequestRoutesEveryConfiguredDependencyCache(t *testing.T) {
 	t.Parallel()
 	plan := testPlan()
 	plan.DependencyCaches = []launchplan.DependencyCache{
 		{Kind: projectenv.DependencyCacheGoBuild, Source: "/physical/build", Target: "/host/cache/build"},
 		{Kind: projectenv.DependencyCacheGoModules, Source: "/physical/modules", Target: "/host/go/pkg/mod"},
+		{Kind: projectenv.DependencyCacheUV, Source: "/physical/uv", Target: "/host/cache/uv"},
 	}
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildExecRequest(plan, []string{"go", "test"}, strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !containsKeyValue(request.Environment, "GOCACHE=/host/cache/build") ||
-		!containsKeyValue(request.Environment, "GOMODCACHE=/host/go/pkg/mod") {
+		!containsKeyValue(request.Environment, "GOMODCACHE=/host/go/pkg/mod") ||
+		!containsKeyValue(request.Environment, "UV_CACHE_DIR=/host/cache/uv") {
 		t.Fatalf("environment = %#v", request.Environment)
 	}
 }

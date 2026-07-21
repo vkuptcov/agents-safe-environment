@@ -66,7 +66,7 @@ type Plan struct {
 	DependencyCaches []DependencyCache
 }
 
-// DependencyCache is the ordered, validated Go cache routing contract.
+// DependencyCache is the ordered, validated dependency-cache routing contract.
 type DependencyCache struct {
 	Kind   projectenv.DependencyCacheKind
 	Source string
@@ -74,11 +74,17 @@ type DependencyCache struct {
 }
 
 // EnvironmentKey returns the managed variable for this cache kind.
-func (cache DependencyCache) EnvironmentKey() string {
-	if cache.Kind == projectenv.DependencyCacheGoBuild {
-		return "GOCACHE"
+func (cache DependencyCache) EnvironmentKey() (string, error) {
+	switch cache.Kind {
+	case projectenv.DependencyCacheGoBuild:
+		return "GOCACHE", nil
+	case projectenv.DependencyCacheGoModules:
+		return "GOMODCACHE", nil
+	case projectenv.DependencyCacheUV:
+		return "UV_CACHE_DIR", nil
+	default:
+		return "", fmt.Errorf("unsupported dependency cache kind %q", cache.Kind)
 	}
-	return "GOMODCACHE"
 }
 
 // MountProvenance traces one physical bind to the logical roles that required it.
