@@ -144,9 +144,11 @@ through the session wrapper. For example, `agents-safe bash` runs image-provided
 `agents-safe bash -c 'make test'` passes the script to that Bash. `agents-safe` does not invoke a shell implicitly.
 It can execute only programs available in the image or explicitly mounted project paths.
 
-`agents-safe init` is the only host-side subcommand. It creates the files specified by
+`agents-safe init` is the only implemented host-side subcommand. It creates the files specified by
 [Project Launcher Configuration](project-launcher-configuration.md) and returns without initializing Docker. Because
 a leading `init` is reserved for that operation, `agents-safe -- init` executes a container command named `init`.
+[Persistent Container Codex Installation and Updates](persistent-codex-installation.md) proposes one additional
+host-side subcommand, `codex-safe update`, recognized before `--` on the same principle; it is not yet implemented.
 
 Both commands use the same project discovery, mount plan, image selection, session-reuse validation, terminal
 attachment, and exit-code propagation. The lower-level session wrapper remains command-agnostic for container-local
@@ -304,6 +306,11 @@ rather than being mounted read-only while remaining writable through the other p
 The container image contains a pinned Linux Codex CLI and its runtime dependencies. The build records the version and
 verifies the downloaded artifact or package through the repository's dependency policy. Updating Codex requires a new
 image build; the launcher does not install or update Codex from the network at startup.
+
+This remains the implemented contract.
+[Persistent Container Codex Installation and Updates](persistent-codex-installation.md) proposes moving routine
+Linux Codex updates into a Docker-managed store without selecting host-native packages as the managed executable or
+changing the implemented behavior before that proposal is accepted and implemented.
 
 The executable is selected from an image-owned path that the Codex-home mount cannot shadow. Host-side Codex binaries,
 including standalone package caches under the mounted state directory, are data and are never executed as the

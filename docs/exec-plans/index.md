@@ -4,7 +4,7 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
-- None.
+- [Persistent Container Codex Installation](active/2026-07-21-persistent-codex-installation-exec-plan.md)
 
 ## Review
 
