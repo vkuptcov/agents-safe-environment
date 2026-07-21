@@ -220,8 +220,8 @@ The image-owned `/usr/local/bin/codex` dispatcher performs this selection for bo
 An invalid initialized store never silently falls back to an older image binary. Silent fallback would hide
 corruption and make `codex --version` depend on an error path.
 
-The selected release contents are immutable after publication. Only the `current` pointer and store metadata may
-change during an update.
+The selected release contents are immutable after publication. Only the `current` pointer changes during an update;
+each release carries its own manifest, so no separate mutable store metadata is written after the commit.
 
 ### 4. Update Command and Isolation
 
@@ -270,13 +270,16 @@ An update follows this order:
 4. Seed staging from the current installation or the image bootstrap.
 5. Run the official Linux `codex update` against staging.
 6. Validate the staged package version, target, entrypoint, and executable behavior.
-7. Copy the new release into a temporary directory under the persistent store.
-8. Atomically rename that directory to its immutable release name.
-9. Atomically replace `current` and then update the store metadata.
+7. Write the release manifest (store protocol, Linux target, version, entrypoint, and content digest) into the staged
+   release so every published release is self-describing.
+8. Copy the new release into a temporary directory under the persistent store, then atomically rename it to its
+   immutable release name.
+9. Atomically replace `current`. This single rename is the only publication commit; no metadata write follows it.
 10. Release the lock and remove transient staging state.
 
 The live `current` pointer is never handed directly to the upstream updater. A download failure, invalid artifact,
-signal, full filesystem, or helper crash before publication leaves the previous pointer unchanged.
+signal, full filesystem, or helper crash before publication leaves the previous pointer unchanged. Incomplete files
+written before the commit are unreachable staging or orphan directories, never an initialized live store.
 
 Publishing the same validated version twice is an idempotent success, judged by comparing the staged release content
 digest against the already-published release. Publishing different bytes under an existing immutable release name fails
@@ -338,6 +341,12 @@ existing read-write Codex state mount.
 
 This prevents a project agent from persistently replacing the Codex executable used by another project. It does not
 make upstream Codex releases or the Docker daemon untrusted; both remain part of the local trusted computing base.
+
+Volume ownership is validated by name, and a Docker named volume has no immutable identifier separate from its name.
+A same-name delete-and-recreate between ownership validation and the session mount would therefore bypass the check,
+but only an actor with host Docker access — already inside the trusted computing base above — can perform it. The
+launcher keeps this residual window minimal by validating ownership as close to mount creation as possible; it does
+not attempt to defend the store against the trusted Docker daemon itself.
 
 ## Invariants
 
@@ -433,6 +442,8 @@ owned by this design and must be tested locally.
 ## Where the Code Lives
 
 - `cmd/codex-safe/`: host `update` subcommand routing and user diagnostics.
+- `internal/codexinstall/`: store protocol, Linux target, deterministic names, labels, store paths, release
+  manifests, and pure validation shared across launcher and container code.
 - `internal/launchcli/`: platform/store resolution shared by public launcher construction.
 - `internal/launcher/`: volume ownership, maintenance-container lifecycle, session mount, and fingerprint policy.
 - `internal/launcher/dockercli/`: typed volume inspect/create and bind-versus-volume Docker argv transport.

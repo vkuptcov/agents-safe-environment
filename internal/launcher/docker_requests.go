@@ -33,7 +33,10 @@ func (docker *DockerLauncher) buildCreateRequest(
 	}
 	mounts := make([]dockercli.Mount, 0, len(plan.Mounts)+1)
 	for _, mount := range plan.Mounts {
-		mounts = append(mounts, dockercli.Mount(mount))
+		// An explicit literal, not a dockercli.Mount(mount) conversion: dockercli.Mount now also
+		// carries a Kind field for the volume transport added in Phase 2, and every plan.Mounts entry
+		// is a host bind, so Kind is left at its MountKindBind zero value.
+		mounts = append(mounts, dockercli.Mount{Source: mount.Source, Target: mount.Target, ReadOnly: mount.ReadOnly})
 	}
 
 	labels := []dockercli.KeyValue{

@@ -26,8 +26,10 @@ remains Linux-only.
 - Concurrent readers remain usable during an update, and only one trusted maintenance container can publish.
 - Failure or cancellation before the atomic commit leaves the previous `current` release selected.
 - Routine release changes do not alter session identity; store protocol, target, identity, and mount mode do.
-- Focused, repository-wide, image, ordinary-Docker, Linux/Sysbox, documentation, and macOS Docker Desktop gates pass
-  or an exact unavailable-host prerequisite is recorded.
+- The updater qualification artifact records a pass on both Linux targets before any production store layout lands.
+- Focused, repository-wide, image, and documentation gates pass in-repository.
+- Ordinary-Docker, Linux/Sysbox, and macOS Docker Desktop gates pass or an exact unavailable-host prerequisite is
+  recorded.
 
 ## Current Baseline
 
@@ -62,7 +64,7 @@ remains Linux-only.
   broader Codex-home bind and never serialize it into `.agents-safe/config.toml` or `launchplan` project intent.
 - Single publication commit: put protocol, target, version, entrypoint, and digest metadata inside each immutable
   release. Atomically replacing `current` is the only commit point; no required mutable metadata write follows it.
-  Amend the proposed design before implementation to remove its current post-commit metadata step.
+  The design already encodes this single-commit rule (`persistent-codex-installation.md` §5).
 - Dispatcher shape: install the verified bootstrap outside the mounted store and make `/usr/local/bin/codex` invoke an
   image-owned Go dispatcher mode in `codex-safe-session`. The maintenance mode calls the staged upstream binary
   directly, so the ordinary-session `codex update` rejection cannot block maintenance.
@@ -94,8 +96,9 @@ Done when: both Linux targets have a recorded updater-compatible seed layout and
    `docs/reviews/feature-review/2026-07-21-persistent-codex-updater-qualification.md` without copying release binaries.
 5. If the raw release binary is insufficient, select the smallest complete updater-compatible seed. Do not replace
    the official updater with a GitHub/latest-version scraper.
-6. Amend the design so immutable release metadata plus atomic `current` replacement form the sole publication commit;
-   define incomplete pre-commit files as unreachable staging/orphans, not an initialized live store.
+6. Confirm the design's single-commit rule still holds after qualification: immutable release manifest plus atomic
+   `current` replacement are the sole publication commit, and incomplete pre-commit files are unreachable
+   staging/orphans, not an initialized live store.
 7. Stop and revise the design if either target cannot use the official updater or the updater cannot be isolated from
    host-native packages.
 
@@ -147,7 +150,9 @@ Status: to be done
 Done when: all new sessions mount the owned store read-only and the public Codex path dispatches through it.
 
 1. Resolve/validate the Docker daemon target and installation volume before container inspection, fingerprinting, or
-   creation. Do not perform an update or network release lookup during normal launch.
+   creation, validating ownership as close to mount creation as possible so the by-name validate-to-mount window stays
+   minimal; record the residual same-name delete/recreate gap (bounded by the Docker-daemon trusted computing base)
+   rather than claiming it is fully closed. Do not perform an update or network release lookup during normal launch.
 2. Compute the mount target from the resolved Codex-home role, falling back to the ephemeral container home, then
    append the named volume after all broader bind mounts.
 3. Activate `/usr/local/bin/codex` as the image-owned dispatcher entrypoint only in the same change that guarantees the
@@ -217,7 +222,8 @@ Done when: users can update and recover the store from docs, all gates pass, and
 3. Add an operations runbook for inspecting labels/current/version, diagnosing corruption or an active updater,
    backing up the volume, and explicitly removing an owned unused store. Do not add automatic reset or pruning.
 4. Mark the persistent-installation design implemented and reconcile `codex-safe.md`, project-image architecture text,
-   session fingerprint contracts, testing docs, and design/operations catalogs with the final code.
+   the fingerprint-schema contract in `project-launcher-configuration.md`, testing docs, and design/operations
+   catalogs with the final code.
 5. Run an implementation review against the design, this plan, live diff, updater qualification, and Docker/Sysbox/macOS
    evidence; record fixes in one feature-review artifact.
 6. Run every validation gate below, record exact environmental blockers without substituting unit evidence, and add
@@ -227,6 +233,8 @@ Done when: users can update and recover the store from docs, all gates pass, and
 
 ## Validation Gates
 
+- The Phase 1 qualification artifact `docs/reviews/feature-review/2026-07-21-persistent-codex-updater-qualification.md`
+  exists and records a pass verdict for both `linux/amd64` and `linux/arm64` before Phase 3 changes the image.
 - `gofmt` runs on every changed Go file and `git diff --check` passes after every phase.
 - `go test ./internal/codexinstall ./internal/launcher/dockercli ./internal/launcher` passes after Phases 2, 4, and 5.
 - `go test ./cmd/codex-safe ./cmd/codex-safe-session ./internal/container` passes after Phases 3 and 5.
