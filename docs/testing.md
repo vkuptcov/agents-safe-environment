@@ -10,6 +10,8 @@ code change complete when practical.
 - Cross-package, launcher, container, or lifecycle changes: run `make test`.
 - Go tooling or lint-configuration changes: run `make lint` and `make test`.
 - Docker image changes: run `make docker-build` in addition to the relevant Go checks.
+- Codex update-path changes: run the dispatcher/updater shell syntax checks and an ordinary-Docker disposable-volume
+  install/read proof in addition to the image build.
 - Documentation-only changes: run `make check-docs`; Go tests are not required unless the task asks for them.
 - Real Sysbox, mount, nested-Docker, or linked-worktree behavior: run `make test-smoke-go` on a compatible Linux host.
 

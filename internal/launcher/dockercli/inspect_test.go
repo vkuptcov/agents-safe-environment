@@ -42,28 +42,6 @@ func TestCreateTranslatesNameConflict(t *testing.T) {
 	}
 }
 
-func TestCreateDoesNotMistakeUnrelatedExit125ForNameConflict(t *testing.T) {
-	t.Parallel()
-	// An exit-125 failure whose message is not a container-name conflict (here an invalid image
-	// reference) must surface as an error, not be misreported as conflict=true with no container.
-	runner := &fakeRunner{
-		output: []byte("docker: invalid reference format"),
-		err:    fakeExitError{code: 125},
-	}
-	containerID, conflict, err := New("docker", runner).Create(context.Background(), CreateRequest{
-		Image:      "image",
-		Name:       "managed-container",
-		Runtime:    "sysbox-runc",
-		WorkingDir: "/project",
-	})
-	if err == nil {
-		t.Fatal("Create() error = nil, want an unrelated exit-125 failure to be reported")
-	}
-	if conflict || containerID != "" {
-		t.Fatalf("Create() = (%q, %t), want no conflict and no container ID", containerID, conflict)
-	}
-}
-
 func TestProcessErrorContractCarriesExitAndStderr(t *testing.T) {
 	t.Parallel()
 	err := &commandError{

@@ -41,11 +41,8 @@ ADD --checksum=sha256:cc1e8ec89aef1422e0741be196f9ed099e2e09d2f48f30f27cd44a22ef
 
 FROM crun-${TARGETARCH} AS crun
 
-# Codex is the product's single executable. It ships as a standalone musl release pinned to
-# rust-v0.144.4 and verified per-arch by SHA-256, chosen over the npm package to keep Node out of
-# the image and pin one checksummed artifact. Each scratch stage holds the verified archive; the
-# final stage extracts the one entry into an image-owned path that a mounted Codex home cannot
-# shadow through PATH. Updating Codex requires a new image build with no startup network install.
+# The image keeps one checksum-pinned Codex binary as an offline fallback. Routine updates use the
+# official standalone installer and a Docker named volume, so they do not rebuild this image.
 FROM scratch AS codex-amd64
 ADD --checksum=sha256:37c985be9d89e8c4f43b3aa0594c1213eac212d30ae2b95221f08fec807515d1 \
     https://github.com/openai/codex/releases/download/rust-v0.144.4/codex-x86_64-unknown-linux-musl.tar.gz \
@@ -71,6 +68,7 @@ RUN apt-get update \
         bash \
         bash-completion \
         ca-certificates \
+        curl \
         docker-buildx \
         docker-compose-v2 \
         docker.io \
@@ -89,18 +87,21 @@ RUN apt-get update \
 COPY container/bashrc /etc/codex-safe/bashrc
 COPY --from=crun --chmod=0755 /crun /usr/local/bin/crun
 COPY --from=session-builder --chmod=0755 /out/codex-safe-session /usr/local/bin/codex-safe-session
+COPY --chmod=0755 container/codex-dispatcher /usr/local/bin/codex
+COPY --chmod=0755 container/codex-safe-update /usr/local/bin/codex-safe-update
 
-# Extract the single archive entry codex-<target> into the image-owned Codex path. The archive was
-# already checksum-verified during ADD; installing here keeps download tools out of the final image.
+# The dispatcher selects the volume installation when present and otherwise executes this pinned
+# bootstrap. The official installer wrapper is the only image path that writes the volume.
 COPY --from=codex /codex.tar.gz /tmp/codex.tar.gz
 RUN tar -xzf /tmp/codex.tar.gz -C /tmp \
-    && install -m 0755 /tmp/codex-*-unknown-linux-musl /usr/local/bin/codex \
+    && install -D -m 0755 /tmp/codex-*-unknown-linux-musl /usr/local/libexec/codex-bootstrap \
     && rm -rf /tmp/codex.tar.gz /tmp/codex-*-unknown-linux-musl
 
 # Fail the image build immediately if any copied binary is unusable on the target platform, and
 # pin the Codex version so an unexpected artifact cannot pass silently.
 RUN /usr/local/bin/crun --version \
     && /usr/local/bin/codex-safe-session --help \
+    && test -x /usr/local/bin/codex-safe-update \
     && /usr/local/bin/codex --version | grep -q 'codex-cli 0.144.4'
 
 # Both Codex and nested containers use only the daemon socket created inside the outer

@@ -29,6 +29,10 @@ home, starts the private daemon, and owns the session manager. Each unprivileged
 starts a command and keeps that registration until the child exits. The manager shuts down the container only
 after the last registered command disconnects and the idle timeout expires.
 
+Every session also mounts the daemon-local `codex-safe-codex` volume read-only. `codex-safe update` is a separate
+ordinary-Docker path: it skips Git and Sysbox, mounts that volume read-write in the trusted base image, and runs the
+official standalone installer. The host Codex home remains a separate state bind.
+
 ## Core Modules
 
 This table maps executable code to the design document that owns its durable contract. `make check-docs` verifies
@@ -69,6 +73,8 @@ both the module paths and document links.
 - The host home is not mounted implicitly. Explicit local project configuration may expose narrower directories;
   supported configuration files otherwise receive only their documented mounts.
 - The host Docker socket is never mounted into the container.
+- The shared Codex executable volume is read-only in project sessions and read-write only in the isolated maintenance
+  container started by `codex-safe update`.
 - The session container shares no host namespace. The optional relay sidecar in
   [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) shares the host network namespace only, runs no agent
   code, and exists only while a session forwards host MCP endpoints.
@@ -79,6 +85,8 @@ both the module paths and document links.
 
 - Host discovery, mount, naming, reuse, or Docker argument changes belong to
   [Safe Environment for Running Codex Agents](docs/design-docs/codex-safe.md).
+- Shared Codex volume, dispatcher, bootstrap, and update changes belong to
+  [Persistent Container Codex Installation](docs/design-docs/persistent-codex-installation.md).
 - Project initialization, typed local config, and CLI precedence belong to
   [Project Launcher Configuration](docs/design-docs/project-launcher-configuration.md).
 - Project-image discovery, automatic builds, BuildKit caching, and compatibility validation belong to

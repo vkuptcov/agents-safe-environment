@@ -144,11 +144,11 @@ through the session wrapper. For example, `agents-safe bash` runs image-provided
 `agents-safe bash -c 'make test'` passes the script to that Bash. `agents-safe` does not invoke a shell implicitly.
 It can execute only programs available in the image or explicitly mounted project paths.
 
-`agents-safe init` is the only implemented host-side subcommand. It creates the files specified by
+`agents-safe init` creates the files specified by
 [Project Launcher Configuration](project-launcher-configuration.md) and returns without initializing Docker. Because
 a leading `init` is reserved for that operation, `agents-safe -- init` executes a container command named `init`.
-[Persistent Container Codex Installation and Updates](persistent-codex-installation.md) proposes one additional
-host-side subcommand, `codex-safe update`, recognized before `--` on the same principle; it is not yet implemented.
+`codex-safe update` is the other host-side subcommand. It updates the shared Linux Codex installation before Git
+discovery and without constructing a Sysbox session. `codex-safe -- update` remains a forwarded Codex command.
 
 Both commands use the same project discovery, mount plan, image selection, session-reuse validation, terminal
 attachment, and exit-code propagation. The lower-level session wrapper remains command-agnostic for container-local
@@ -303,18 +303,14 @@ rather than being mounted read-only while remaining writable through the other p
 
 #### Codex executable and process
 
-The container image contains a pinned Linux Codex CLI and its runtime dependencies. The build records the version and
-verifies the downloaded artifact or package through the repository's dependency policy. Updating Codex requires a new
-image build; the launcher does not install or update Codex from the network at startup.
+The container image contains a checksum-pinned Linux Codex bootstrap and a small image-owned dispatcher. Every session
+mounts the daemon-local `codex-safe-codex` volume read-only at `/opt/codex-safe/codex`. The dispatcher uses the
+official-installer release in that volume when available and the pinned bootstrap otherwise. Routine updates happen
+only through `codex-safe update`; session startup performs no network update.
 
-This remains the implemented contract.
-[Persistent Container Codex Installation and Updates](persistent-codex-installation.md) proposes moving routine
-Linux Codex updates into a Docker-managed store without selecting host-native packages as the managed executable or
-changing the implemented behavior before that proposal is accepted and implemented.
-
-The executable is selected from an image-owned path that the Codex-home mount cannot shadow. Host-side Codex binaries,
-including standalone package caches under the mounted state directory, are data and are never executed as the
-container's launcher binary.
+Host-side Codex binaries, including standalone package caches under the mounted state directory, remain data and are
+never selected as the container's launcher binary. The complete update and failure contract is owned by
+[Persistent Container Codex Installation and Updates](persistent-codex-installation.md).
 
 Every `codex-safe` invocation runs this process through the session wrapper:
 
@@ -342,9 +338,10 @@ absence is degradable rather than a launch failure. The command exit status prop
 #### Persistent state, configuration, and skills
 
 The read-write Codex-home mount persists Codex's documented configuration, authentication, logs, sessions, skills,
-and standalone package metadata. Other files physically present below the mounted source remain visible, but the
-launcher does not promise that Codex interprets them. Project-scoped `.codex` configuration and repository skills
-remain available through the project mount and keep their normal precedence.
+and host standalone package metadata. The managed Linux executable store is a separate read-only named volume, so
+host-native packages remain visible as state but are not selected. Other files physically present below the mounted
+source remain visible, but the launcher does not promise that Codex interprets them. Project-scoped `.codex`
+configuration and repository skills remain available through the project mount and keep their normal precedence.
 
 The launcher does not rewrite configuration. Hooks, MCP server commands, skills, plugins, or config values that refer
 to host paths or binaries outside the allowed mounts can fail inside the Linux container. Platform-specific binaries

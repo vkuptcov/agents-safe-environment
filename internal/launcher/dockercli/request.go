@@ -7,25 +7,15 @@ type KeyValue struct {
 	Value string
 }
 
-// MountKind selects the Docker `--mount type=...` a Mount renders as. The zero value is
-// MountKindBind, so every existing bind-mount literal in the codebase keeps its exact meaning without
-// being touched by this addition.
-type MountKind int
-
-const (
-	// MountKindBind renders "type=bind" with rprivate propagation, matching every mount before this
-	// type existed.
-	MountKindBind MountKind = iota
-	// MountKindVolume renders "type=volume" and never carries bind-propagation, which is a bind-only
-	// concept. BuildCreateArgs requires ReadOnly for this kind, since the only volume mount an
-	// ordinary session container may request is the read-only Codex installation store.
-	MountKindVolume
-)
-
-// Mount is one bind or named-volume mount already selected and validated by the launcher.
+// Mount is one bind mount already selected and validated by the launcher.
 type Mount struct {
-	// Kind selects bind or named-volume argv rendering. The zero value is MountKindBind.
-	Kind     MountKind
+	Source   string
+	Target   string
+	ReadOnly bool
+}
+
+// VolumeMount is one Docker named-volume mount selected by the launcher.
+type VolumeMount struct {
 	Source   string
 	Target   string
 	ReadOnly bool
@@ -62,6 +52,9 @@ type CreateRequest struct {
 	Labels      []KeyValue
 	Environment []KeyValue
 	Mounts      []Mount
+	Volumes     []VolumeMount
+	// Entrypoint overrides the image entrypoint. Empty preserves it.
+	Entrypoint string
 	// Command replaces the image's default command. Empty preserves it.
 	Command []string
 }

@@ -2,10 +2,14 @@ package launcher
 
 import "strings"
 
-// CodexBinaryPath is the absolute image-owned path of the Codex CLI. The product always invokes
-// Codex from this path so a mounted Codex home cannot shadow it through PATH, and host-side Codex
-// binaries under the mounted state are treated as data, never as the launcher's executable.
-const CodexBinaryPath = "/usr/local/bin/codex"
+const (
+	// CodexBinaryPath is the image-owned dispatcher used by both launchers.
+	CodexBinaryPath = "/usr/local/bin/codex"
+	// CodexInstallationVolume is the daemon-local volume shared by every managed session.
+	CodexInstallationVolume = "codex-safe-codex"
+	// CodexInstallationRoot is the fixed path where sessions mount the volume read-only.
+	CodexInstallationRoot = "/opt/codex-safe/codex"
+)
 
 // codexDefaultSandboxArgs disable Codex's own inner sandbox. The Sysbox container is already the
 // isolation boundary, so Codex's bubblewrap-based sandbox is redundant, and the image ships no
@@ -17,6 +21,12 @@ var codexDefaultSandboxArgs = []string{"--sandbox", "danger-full-access"}
 // CodexCommand combines project-configured and invocation arguments. An explicit invocation sandbox selection removes
 // only the configured default sandbox pair; every other configured argument remains in order.
 func CodexCommand(configuredArgs, invocationArgs []string) []string {
+	// `codex-safe -- update` must reach the image dispatcher as a leading subcommand so it can
+	// explain that the shared read-only installation is updated from the host. Project defaults are
+	// irrelevant to that rejected operation and would otherwise precede `update`.
+	if len(invocationArgs) > 0 && invocationArgs[0] == "update" {
+		return append([]string{CodexBinaryPath}, invocationArgs...)
+	}
 	configured := append([]string(nil), configuredArgs...)
 	if codexArgsSelectSandbox(invocationArgs) {
 		configured = withoutDefaultSandbox(configured)

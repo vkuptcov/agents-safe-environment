@@ -22,6 +22,12 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 	if !reflect.DeepEqual(request.Mounts, dockerMounts(plan.Mounts)) {
 		t.Fatalf("mounts = %#v, want resolved plan %#v", request.Mounts, plan.Mounts)
 	}
+	wantVolume := []dockercli.VolumeMount{{
+		Source: CodexInstallationVolume, Target: CodexInstallationRoot, ReadOnly: true,
+	}}
+	if !reflect.DeepEqual(request.Volumes, wantVolume) {
+		t.Fatalf("volumes = %#v, want %#v", request.Volumes, wantVolume)
+	}
 	fingerprintFound := false
 	uvCacheFound := false
 	for _, label := range request.Labels {

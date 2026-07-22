@@ -16,7 +16,8 @@ creating another nested Docker environment.
   default `~/.codex`; `agents-safe` mounts it only when it already exists. A mounted home is read-write at
   `$HOME/.codex`, and only commands with that mount receive `CODEX_HOME=$HOME/.codex`.
 - Personal authored skills under `$HOME/.agents/skills` are mounted read-only when present.
-- The pinned Codex CLI comes from an image-owned path a mounted Codex home cannot shadow.
+- The image-owned Codex dispatcher uses the shared read-only Linux installation when present and a pinned bootstrap
+  otherwise; a mounted host Codex home cannot shadow either path.
 - A regular Git checkout is mounted read-write without exposing other host paths.
 - A linked worktree keeps its original absolute path; its primary checkout is read-only while the common `.git`
   directory stays writable.
@@ -82,13 +83,13 @@ make test
 The image pins Ubuntu 24.04 by digest. It also pins the official `crun` 1.28 binary by SHA-256 for the nested daemon.
 The nested runtime preserves the absolute bind-mount contract, including project paths that contain spaces.
 
-The image installs the pinned Codex CLI (`codex-cli 0.144.4`, the `openai/codex` standalone musl release
-`rust-v0.144.4`) at the image-owned path `/usr/local/bin/codex`, verified by per-architecture SHA-256 during the
-build. Codex is never installed or updated from the network at container startup; updating Codex requires a new image
-build with a re-approved version and digest per [`docs/dependencies.md`](docs/dependencies.md).
+The image keeps the pinned Codex CLI (`codex-cli 0.144.4`, the `openai/codex` standalone musl release
+`rust-v0.144.4`) as `/usr/local/libexec/codex-bootstrap`, verified by per-architecture SHA-256 during the build.
+`/usr/local/bin/codex` is an image-owned dispatcher: it uses the Linux release in the shared `codex-safe-codex`
+volume when present and falls back to the bootstrap. Session startup never performs a network update.
 
-The environment includes Git, Docker Engine and CLI with Buildx/BuildKit, Docker Compose V2, `sudo`, `make`, `less`,
-and `rg`.
+The environment includes Git, Docker Engine and CLI with Buildx/BuildKit, Docker Compose V2, `curl`, `sudo`, `make`,
+`less`, and `rg`.
 The recreated host user has passwordless `sudo` for container-local administration such as `sudo apt-get update`.
 Interactive Bash sessions also load the system completion framework, including Make target completion.
 The image defaults to `C.UTF-8` and `TERM=xterm-256color`, so Bash and text tools handle Cyrillic and terminal colors.
@@ -104,8 +105,19 @@ allowed mount.
 The product interface is:
 
 ```text
+codex-safe update
 codex-safe [--project PATH] [--image REF] [-- CODEX ARG...]
 ```
+
+Update the shared Linux installation from any directory:
+
+```bash
+./bin/codex-safe update
+```
+
+The update runs in an ordinary isolated Docker container with the installation volume read-write. It does not require
+a Git project or `sysbox-runc`, so the update path is compatible with Docker Desktop on macOS. Project sessions remain
+Linux/Sysbox-only. The official standalone installer owns release checksums, locking, and package publication.
 
 Start interactive Codex for the current Git project:
 

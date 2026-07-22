@@ -48,6 +48,10 @@ artifacts. Do not add packages merely for local convenience without documenting 
 
 ### Approved Runtime Packages
 
+- `curl` — approved by the owner on 2026-07-21 for `codex-safe update`. The isolated maintenance container uses it to
+  download OpenAI's official standalone installer and the installer uses it for verified release assets. It is not
+  used during normal session startup.
+
 - `docker-buildx` — approved by the owner on 2026-07-17 for the project-environment image-build contract and
   repository Docker validation inside a managed session. Ubuntu 24.04 packages it as the Docker Buildx CLI plugin;
   it selects the BuildKit backend that provides Dockerfile architecture arguments required by the base image.
@@ -55,6 +59,13 @@ artifacts. Do not add packages merely for local convenience without documenting 
 - Project Go toolchain — approved by the owner on 2026-07-17 for this repository's
   `.agents-safe/Dockerfile`. It copies Go 1.26.0 from the same digest-pinned image used by the session-builder stage;
   no compiler packages or system build tools are installed into the shared runtime image.
+
+### Approved Runtime Update Channel
+
+- OpenAI's standalone installer at `https://chatgpt.com/codex/install.sh` owns routine Codex updates in the
+  `codex-safe-codex` volume. The repository keeps a checksum-pinned image bootstrap, but an explicit
+  `codex-safe update` intentionally resolves the current official Linux release and relies on the installer's release
+  checksum verification. No update runs automatically at session startup.
 
 ### Approved Smoke-Only Images
 

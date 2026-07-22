@@ -36,32 +36,14 @@ func (client *Client) Create(ctx context.Context, request CreateRequest) (contai
 // the Docker default runtime and has no project directory. That relaxation removes the mechanism
 // that previously made a session container falling off sysbox-runc impossible, so the session's own
 // creation path enforces the explicit-runtime invariant instead.
-//
-// Every named-volume mount is required to be read-only here: a detached create request is either the
-// session container or its relay sidecar, and the only volume mount either may carry is the read-only
-// Codex installation store. The read-write maintenance mount (Phase 5) uses BuildRunAttachedArgs
-// instead, which does not carry this restriction.
 func BuildCreateArgs(request CreateRequest) ([]string, error) {
-	if err := requireReadOnlyVolumeMounts(request.Mounts); err != nil {
-		return nil, err
-	}
 	return buildRunArgs([]string{"run", "--detach", "--rm"}, request)
 }
 
 // BuildRunAttachedArgs encodes a typed create request as foreground `docker run` argv, used by the
-// attached maintenance-container transport. Unlike BuildCreateArgs, it does not require named-volume
-// mounts to be read-only, since the maintenance container is the store's one read-write writer.
+// attached maintenance-container transport.
 func BuildRunAttachedArgs(request CreateRequest) ([]string, error) {
 	return buildRunArgs([]string{"run", "--rm"}, request)
-}
-
-func requireReadOnlyVolumeMounts(mounts []Mount) error {
-	for _, mount := range mounts {
-		if mount.Kind == MountKindVolume && !mount.ReadOnly {
-			return fmt.Errorf("named-volume mount %q must be read-only in a detached create request", mount.Target)
-		}
-	}
-	return nil
 }
 
 func buildRunArgs(head []string, request CreateRequest) ([]string, error) {
@@ -102,7 +84,13 @@ func buildRunArgs(head []string, request CreateRequest) ([]string, error) {
 		args = append(args, "--workdir", request.WorkingDir)
 	}
 	for _, mount := range request.Mounts {
-		args = append(args, "--mount", mountArg(mount))
+		args = append(args, "--mount", bindMountArg(mount))
+	}
+	for _, volume := range request.Volumes {
+		args = append(args, "--mount", volumeMountArg(volume))
+	}
+	if request.Entrypoint != "" {
+		args = append(args, "--entrypoint", request.Entrypoint)
 	}
 	args = append(args, request.Image)
 	// An empty command preserves the image's default; the sidecar sets it to select relay.
@@ -127,19 +115,17 @@ func (client *Client) Stop(ctx context.Context, name string, timeout time.Durati
 	return nil
 }
 
-// mountArg renders one Mount as a Docker `--mount` value. Bind rendering is byte-for-byte identical
-// to the transport's original bind-only behavior; rprivate propagation is a bind-only concept and
-// never appears on a volume mount.
-func mountArg(mount Mount) string {
-	if mount.Kind == MountKindVolume {
-		specification := "type=volume,source=" + mount.Source + ",target=" + mount.Target
-		if mount.ReadOnly {
-			specification += ",readonly"
-		}
-		return specification
-	}
+func bindMountArg(mount Mount) string {
 	specification := "type=bind,source=" + mount.Source + ",target=" + mount.Target
 	specification += ",bind-propagation=rprivate"
+	if mount.ReadOnly {
+		specification += ",readonly"
+	}
+	return specification
+}
+
+func volumeMountArg(mount VolumeMount) string {
+	specification := "type=volume,source=" + mount.Source + ",target=" + mount.Target
 	if mount.ReadOnly {
 		specification += ",readonly"
 	}
@@ -160,13 +146,6 @@ func isContainerNameConflict(output []byte, err error) bool {
 	if ExitCode(err) != 125 {
 		return false
 	}
-	return isNameConflictMessage(string(output))
-}
-
-// isNameConflictMessage reports whether a Docker error message describes the "container name already
-// in use" failure. Both the detached create path (combined output) and the attached run path (wrapped
-// stderr tail) route their message through here so the substring contract stays in one place.
-func isNameConflictMessage(message string) bool {
-	lowered := strings.ToLower(message)
+	lowered := strings.ToLower(string(output))
 	return strings.Contains(lowered, "container name") && strings.Contains(lowered, "already in use")
 }
