@@ -16,10 +16,10 @@ socket.
 flowchart LR
     CLI["Host codex-safe / claude-safe / agents-safe CLI"] --> HostDocker["Host Docker daemon"]
     HostDocker --> Container["Sysbox container"]
-    Container --> Supervisor["codex-safe-session serve"]
+    Container --> Supervisor["agents-safe-session serve"]
     Supervisor --> InnerDocker["Private dockerd"]
     Supervisor --> Manager["Session manager socket"]
-    CLI --> Wrapper["docker exec codex-safe-session run"]
+    CLI --> Wrapper["docker exec agents-safe-session run"]
     Wrapper --> Manager
     Wrapper --> Command["Codex, Claude Code, or requested command"]
     Command --> InnerDocker
@@ -30,7 +30,7 @@ home, starts the private daemon, and owns the session manager. Each unprivileged
 starts a command and keeps that registration until the child exits. The manager shuts down the container only
 after the last registered command disconnects and the idle timeout expires.
 
-Every session mounts the daemon-local `codex-safe-codex` and `codex-safe-claude` volumes read-only. The image contains
+Every session mounts the daemon-local `agents-safe-codex` and `agents-safe-claude` volumes read-only. The image contains
 neither product executable. `make docker-build` initializes both volumes after building the local image, while
 `codex-safe update` and `claude-safe update` refresh them independently without a rebuild. Each updater uses an
 ordinary maintenance container with only its installation volume read-write. Host Codex and Claude state remain
@@ -43,26 +43,26 @@ both the module paths and document links.
 
 | Module | Responsibility | Owning design doc |
 | --- | --- | --- |
-| `cmd/codex-safe/` | Host CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `cmd/codex-safe/` | Host CLI. | [Safe environment](docs/design-docs/agents-safe.md) |
 | `cmd/claude-safe/` | Claude Code host CLI and update dispatch. | [Claude Code integration](docs/design-docs/claude-safe.md) |
-| `cmd/agents-safe/` | Host CLI for arbitrary container commands. | [Safe environment](docs/design-docs/codex-safe.md) |
-| `internal/cli/` | Shared launcher CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `cmd/agents-safe/` | Host CLI for arbitrary container commands. | [Safe environment](docs/design-docs/agents-safe.md) |
+| `internal/cli/` | Shared launcher CLI. | [Safe environment](docs/design-docs/agents-safe.md) |
 | `internal/launchcli/` | Composes host and project resolution into the CLI's resolved config. | [Launcher configuration][launcher-config] |
 | `internal/launchcli/dependencies/` | Resolves host dependency-cache locations without Docker. | [Host-backed dependency caches](docs/design-docs/host-backed-dependency-caches.md) |
-| `internal/gitproject/` | Git discovery. | [Safe environment](docs/design-docs/codex-safe.md) |
-| `internal/launcher/` | Managed-container lifecycle and host launch orchestration. | [Safe environment](docs/design-docs/codex-safe.md) |
-| `internal/launcher/launchplan/` | Validated worktree and bind-mount launch contract. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `internal/gitproject/` | Git discovery. | [Safe environment](docs/design-docs/agents-safe.md) |
+| `internal/launcher/` | Managed-container lifecycle and host launch orchestration. | [Safe environment](docs/design-docs/agents-safe.md) |
+| `internal/launcher/launchplan/` | Validated worktree and bind-mount launch contract. | [Safe environment](docs/design-docs/agents-safe.md) |
 | `internal/launcher/projectenv/` | Local config and image definitions. | [Launcher configuration][launcher-config] |
-| `internal/launcher/dockercli/` | Typed adapter for the host Docker CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
-| `cmd/codex-safe-session/` | Container CLI. | [Session manager](docs/design-docs/go-session-manager.md) |
+| `internal/launcher/dockercli/` | Typed adapter for the host Docker CLI. | [Safe environment](docs/design-docs/agents-safe.md) |
+| `cmd/agents-safe-session/` | Container CLI. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/container/` | Container bootstrap. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/launcher/hostmcp/` | MCP endpoint discovery. | [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) |
 | `internal/mcpchannel/` | MCP channel wire contract. | [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) |
 | `internal/relay/` | Host MCP relay sidecar. | [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) |
 | `internal/session/` | Command lifecycle. | [Session manager](docs/design-docs/go-session-manager.md) |
 | `internal/terminal/` | Terminal detection. | [Session manager](docs/design-docs/go-session-manager.md) |
-| `container/` | Container image and shell defaults. | [Safe environment](docs/design-docs/codex-safe.md) |
-| `tests/smoke/` | Real Docker/Sysbox boundary verification. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `container/` | Container image and shell defaults. | [Safe environment](docs/design-docs/agents-safe.md) |
+| `tests/smoke/` | Real Docker/Sysbox boundary verification. | [Safe environment](docs/design-docs/agents-safe.md) |
 
 [launcher-config]: docs/design-docs/project-launcher-configuration.md
 
@@ -89,7 +89,7 @@ both the module paths and document links.
 ## Change Boundaries
 
 - Host discovery, mount, naming, reuse, or Docker argument changes belong to
-  [Safe Environment for Running Codex Agents](docs/design-docs/codex-safe.md).
+  [Safe Environment for Running Agents](docs/design-docs/agents-safe.md).
 - Shared Codex volume, executable path, initialization, and update changes belong to
   [Persistent Container Codex Installation](docs/design-docs/persistent-codex-installation.md).
 - Claude state, executable volume, command policy, installation, and update changes belong to

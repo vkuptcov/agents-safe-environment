@@ -58,7 +58,7 @@ func writeValidatedSudoers(
 	commands systemCommandRunner,
 ) error {
 	directory := filepath.Dir(target)
-	temporary, err := os.CreateTemp(directory, ".codex-safe-sudoers-*")
+	temporary, err := os.CreateTemp(directory, ".agents-safe-sudoers-*")
 	if err != nil {
 		return fmt.Errorf("create temporary sudoers policy: %w", err)
 	}
@@ -89,7 +89,7 @@ func writeValidatedSudoers(
 
 func writeAtomicOwned(path string, contents []byte, mode os.FileMode, uid int, gid int) error {
 	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".codex-safe-file-*")
+	temporary, err := os.CreateTemp(directory, ".agents-safe-file-*")
 	if err != nil {
 		return err
 	}

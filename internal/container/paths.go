@@ -20,12 +20,12 @@ type containerPaths struct {
 
 func defaultContainerPaths() containerPaths {
 	return containerPaths{
-		bashRCSource:       "/etc/codex-safe/bashrc",
-		sudoersFile:        "/etc/sudoers.d/codex-safe-host",
+		bashRCSource:       "/etc/agents-safe/bashrc",
+		sudoersFile:        "/etc/sudoers.d/agents-safe-host",
 		dockerRunDirectory: "/run/docker",
 		dockerDataRoot:     "/var/lib/docker",
 		dockerSocket:       "/var/run/docker.sock",
-		dockerdLog:         "/tmp/codex-safe-dockerd.log",
+		dockerdLog:         "/tmp/agents-safe-dockerd.log",
 		crunBinary:         "/usr/local/bin/crun",
 		sessionSocket:      session.DefaultSocketPath,
 		dockerdCommand:     "dockerd",

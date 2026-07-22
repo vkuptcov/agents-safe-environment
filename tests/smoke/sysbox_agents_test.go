@@ -65,7 +65,7 @@ func TestSysboxRegularCheckoutNormalizesProjectRoles(t *testing.T) {
 		require.NotEqual(t, filepath.Join(fixture.project.primary, ".git"), mount.Source,
 			"regular checkout must not retain a redundant common-Git bind")
 	}
-	require.Regexp(t, "^[a-f0-9]{64}$", inspection.Config.Labels["codex-safe.launch-config"],
+	require.Regexp(t, "^[a-f0-9]{64}$", inspection.Config.Labels["agents-safe.launch-config"],
 		"session must persist the normalized creation fingerprint")
 
 	fixture.release(release, command, "regular checkout command")
@@ -94,7 +94,7 @@ while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	observed := parseReport(t, report)
 	require.Equal(t, "unset", observed["codex_home"], "agents-safe must omit CODEX_HOME when the host source is absent")
 	inspection := fixture.docker.inspectContainer()
-	require.Equal(t, "absent", inspection.Config.Labels["codex-safe.codex-home"])
+	require.Equal(t, "absent", inspection.Config.Labels["agents-safe.codex-home"])
 	for _, mount := range inspection.Mounts {
 		require.NotEqual(t, fixture.project.codexHome, mount.Destination,
 			"agents-safe must not create a Codex-home bind mount when the source is absent")

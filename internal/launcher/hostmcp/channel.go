@@ -20,17 +20,17 @@ const (
 	runtimeDirEnv = "XDG_RUNTIME_DIR"
 
 	// channelRoot is the project-independent root below the runtime directory.
-	channelRoot = "codex-safe"
+	channelRoot = "agents-safe"
 
 	// SessionTarget is the session container's mount target: the generation directory only.
 	//
-	// It is deliberately not under /run/codex-safe/, which `serve` creates and chowns for the session
+	// It is deliberately not under /run/agents-safe/, which `serve` creates and chowns for the session
 	// manager; a bind mount inside that directory would entangle two lifetimes for no reason.
-	SessionTarget = "/run/codex-safe-host-mcp"
+	SessionTarget = "/run/agents-safe-host-mcp"
 
 	// SidecarTarget is the relay sidecar's mount target: the project runtime parent, not just its own
 	// generation, because it removes that directory after established-lease EOF.
-	SidecarTarget = "/run/codex-safe-mcp"
+	SidecarTarget = "/run/agents-safe-mcp"
 
 	// generationBytes sizes the random generation identifier. Sixteen hex characters keep the deepest
 	// host socket path near 80 bytes, inside the sockaddr_un limit, while staying unguessable enough
@@ -47,7 +47,7 @@ const (
 
 // Channel is one session generation's directory on the host.
 type Channel struct {
-	// Parent is <runtime-dir>/codex-safe/<project key>/, the sidecar's mount.
+	// Parent is <runtime-dir>/agents-safe/<project key>/, the sidecar's mount.
 	Parent string
 	// Generation is <parent>/<generation>/, the session container's mount.
 	Generation string
@@ -198,7 +198,7 @@ func (channel Channel) validateSocketPaths(endpoints int) error {
 	return nil
 }
 
-// Environment encodes CODEX_SAFE_HOST_MCP: the endpoint set as the session container sees it.
+// Environment encodes AGENTS_SAFE_HOST_MCP: the endpoint set as the session container sees it.
 func (set Set) Environment() (string, error) {
 	wire := make([]mcpchannel.Endpoint, 0, len(set.Endpoints))
 	for index, endpoint := range set.Endpoints {

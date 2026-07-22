@@ -138,8 +138,8 @@ func TestSysboxHostMCPForwardsLoopbackServer(t *testing.T) {
 	for _, mount := range sidecar.Mounts {
 		require.NotContains(t, mount.Source, "docker.sock", "the sidecar never receives a Docker socket")
 	}
-	require.Equal(t, "true", sidecar.Config.Labels["codex-safe.host-mcp-sidecar"], "the sidecar carries its role label")
-	require.NotEqual(t, "true", sidecar.Config.Labels["codex-safe.managed"],
+	require.Equal(t, "true", sidecar.Config.Labels["agents-safe.host-mcp-sidecar"], "the sidecar carries its role label")
+	require.NotEqual(t, "true", sidecar.Config.Labels["agents-safe.managed"],
 		"the sidecar must not carry the managed label reserved for session containers")
 
 	// The session container itself is unchanged: it shares no host namespace and stays under Sysbox.
@@ -207,9 +207,9 @@ func (fixture *smokeFixture) listHostMCPSidecars() []string {
 	items, err := fixture.docker.client.ContainerList(fixture.docker.ctx, container.ListOptions{
 		All: true,
 		Filters: filters.NewArgs(
-			filters.Arg("label", "codex-safe.host-mcp-sidecar=true"),
-			filters.Arg("label", "codex-safe.project-path="+fixture.project.worktree),
-			filters.Arg("label", "codex-safe.host-uid="+strconv.Itoa(os.Getuid())),
+			filters.Arg("label", "agents-safe.host-mcp-sidecar=true"),
+			filters.Arg("label", "agents-safe.project-path="+fixture.project.worktree),
+			filters.Arg("label", "agents-safe.host-uid="+strconv.Itoa(os.Getuid())),
 		),
 	})
 	require.NoError(fixture.t, err, "host-MCP sidecars must be listable")
@@ -229,6 +229,6 @@ func (fixture *smokeFixture) removeHostMCPSidecars() {
 	}
 	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
 		projectKey := launcher.ProjectKey(os.Getuid(), fixture.project.worktree)
-		_ = os.RemoveAll(filepath.Join(runtimeDir, "codex-safe", projectKey))
+		_ = os.RemoveAll(filepath.Join(runtimeDir, "agents-safe", projectKey))
 	}
 }

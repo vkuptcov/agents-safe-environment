@@ -7,9 +7,9 @@ import (
 
 const (
 	// ClaudeInstallationVolume is the daemon-local volume shared by every managed session.
-	ClaudeInstallationVolume = "codex-safe-claude"
+	ClaudeInstallationVolume = "agents-safe-claude"
 	// ClaudeInstallationRoot is the fixed path where sessions mount the volume read-only.
-	ClaudeInstallationRoot = "/opt/codex-safe/claude"
+	ClaudeInstallationRoot = "/opt/agents-safe/claude"
 	// ClaudeBinaryPath is the native-installer launcher used by claude-safe.
 	ClaudeBinaryPath = ClaudeInstallationRoot + "/home/.local/bin/claude"
 )

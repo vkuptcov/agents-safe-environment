@@ -15,7 +15,7 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/mcpchannel"
 )
 
-// AbsentLabel is the diagnostic codex-safe.host-mcp value recorded for a launch that forwards nothing.
+// AbsentLabel is the diagnostic agents-safe.host-mcp value recorded for a launch that forwards nothing.
 const AbsentLabel = "absent"
 
 // localhostName is the one configured host that needs both concrete loopback addresses.
@@ -73,7 +73,7 @@ func (set Set) Empty() bool {
 	return len(set.Endpoints) == 0
 }
 
-// Label returns the diagnostic codex-safe.host-mcp value. It carries the sorted endpoint addresses,
+// Label returns the diagnostic agents-safe.host-mcp value. It carries the sorted endpoint addresses,
 // or AbsentLabel for a launch that forwards nothing.
 func (set Set) Label() string {
 	if set.Empty() {

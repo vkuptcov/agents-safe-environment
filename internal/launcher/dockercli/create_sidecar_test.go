@@ -17,15 +17,15 @@ func TestBuildCreateArgsEncodesConfinedSidecar(t *testing.T) {
 	t.Parallel()
 	request := CreateRequest{
 		Image:          "sha256:abc",
-		Name:           "codex-safe-mcp-key-generation",
+		Name:           "agents-safe-mcp-key-generation",
 		User:           "1000:1000",
 		NetworkMode:    "host",
 		ReadOnlyRootfs: true,
 		CapDrop:        []string{"ALL"},
 		SecurityOpt:    []string{"no-new-privileges"},
-		Labels:         []KeyValue{{Key: "codex-safe.host-mcp-sidecar", Value: "true"}},
-		Mounts:         []Mount{{Source: "/run/user/1000/codex-safe/key", Target: "/run/codex-safe-mcp"}},
-		Command:        []string{"relay", "--generation", "/run/codex-safe-mcp/g-1"},
+		Labels:         []KeyValue{{Key: "agents-safe.host-mcp-sidecar", Value: "true"}},
+		Mounts:         []Mount{{Source: "/run/user/1000/agents-safe/key", Target: "/run/agents-safe-mcp"}},
+		Command:        []string{"relay", "--generation", "/run/agents-safe-mcp/g-1"},
 	}
 
 	got, err := BuildCreateArgs(request)
@@ -34,16 +34,16 @@ func TestBuildCreateArgsEncodesConfinedSidecar(t *testing.T) {
 	}
 	want := []string{
 		"run", "--detach", "--rm",
-		"--name", "codex-safe-mcp-key-generation",
+		"--name", "agents-safe-mcp-key-generation",
 		"--user", "1000:1000",
 		"--network=host",
 		"--read-only",
 		"--cap-drop=ALL",
 		"--security-opt=no-new-privileges",
-		"--label", "codex-safe.host-mcp-sidecar=true",
-		"--mount", "type=bind,source=/run/user/1000/codex-safe/key,target=/run/codex-safe-mcp,bind-propagation=rprivate",
+		"--label", "agents-safe.host-mcp-sidecar=true",
+		"--mount", "type=bind,source=/run/user/1000/agents-safe/key,target=/run/agents-safe-mcp,bind-propagation=rprivate",
 		"sha256:abc",
-		"relay", "--generation", "/run/codex-safe-mcp/g-1",
+		"relay", "--generation", "/run/agents-safe-mcp/g-1",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("BuildCreateArgs() = %#v, want %#v", got, want)
@@ -135,12 +135,12 @@ func (runner *recordingRunner) Run(context.Context, string, []string, io.Reader,
 
 func TestStopRequestsGracefulTermination(t *testing.T) {
 	t.Parallel()
-	runner := &recordingRunner{output: []byte("codex-safe-mcp-x\n")}
+	runner := &recordingRunner{output: []byte("agents-safe-mcp-x\n")}
 	client := New("docker", runner)
-	if err := client.Stop(context.Background(), "codex-safe-mcp-x", 10*time.Second); err != nil {
+	if err := client.Stop(context.Background(), "agents-safe-mcp-x", 10*time.Second); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
-	want := []string{"stop", "--timeout", "10", "codex-safe-mcp-x"}
+	want := []string{"stop", "--timeout", "10", "agents-safe-mcp-x"}
 	if !reflect.DeepEqual(runner.args, want) {
 		t.Fatalf("Stop() argv = %#v, want %#v", runner.args, want)
 	}

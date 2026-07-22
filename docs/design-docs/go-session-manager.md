@@ -55,7 +55,7 @@ rather than a user command or shell script. Every requested command, including t
 wrapper:
 
 ```text
-docker exec ... codex-safe-session run -- COMMAND ARG...
+docker exec ... agents-safe-session run -- COMMAND ARG...
 ```
 
 The wrapper connects to the manager over a Unix socket that exists only inside the container. It starts the
@@ -73,9 +73,9 @@ flowchart LR
     end
 
     subgraph Container["Sysbox container"]
-        Init["tini (PID 1)"] --> Manager["codex-safe-session serve<br/>Go entrypoint"]
+        Init["tini (PID 1)"] --> Manager["agents-safe-session serve<br/>Go entrypoint"]
         Manager --> Inner["nested dockerd"]
-        Wrapper["codex-safe-session run"] -->|"register through local socket"| Manager
+        Wrapper["agents-safe-session run"] -->|"register through local socket"| Manager
         Wrapper --> Command["Claude Code, Codex, Bash, or make test"]
         Command -->|"Docker CLI"| Inner
     end
@@ -120,32 +120,36 @@ The 24 hexadecimal characters provide a fixed-length Docker-safe key. The launch
 codex-safe-<project key>
 ```
 
-The UID remains part of the hash input and is also stored explicitly in `codex-safe.host-uid`; repeating it in the
+The UID remains part of the hash input and is also stored explicitly in `agents-safe.host-uid`; repeating it in the
 container name would not add identity information.
 
 Ownership, protocol, the creation fingerprint, and selected unhashed diagnostic values remain in labels so the
 launcher can validate the container before reuse and operators can inspect sessions:
 
-- `codex-safe.managed=true`: marks containers owned by this launcher;
-- `codex-safe.project-path`: canonical worktree root;
-- `codex-safe.host-uid`: invoking numeric UID;
-- `codex-safe.manager-protocol=1`: required wrapper-manager compatibility;
-- `codex-safe.launch-config`: SHA-256 fingerprint of all creation-time parameters;
-- `codex-safe.codex-home`: canonical host source mounted as the container's Codex home, or the literal `absent` for
+- `agents-safe.managed=true`: marks containers owned by this launcher;
+- `agents-safe.project-path`: canonical worktree root;
+- `agents-safe.host-uid`: invoking numeric UID;
+- `agents-safe.manager-protocol=1`: required wrapper-manager compatibility;
+- `agents-safe.launch-config`: SHA-256 fingerprint of all creation-time parameters;
+- `agents-safe.codex-home`: canonical host source mounted as the container's Codex home, or the literal `absent` for
   an `agents-safe` container created without one; diagnostic only;
-- `codex-safe.claude-home`: canonical host source mounted as Claude's state directory, or `absent`; diagnostic only;
-- `codex-safe.claude-config`: canonical default global `.claude.json` source, or `absent` when the state uses an
+- `agents-safe.claude-home`: canonical host source mounted as Claude's state directory, or `absent`; diagnostic only;
+- `agents-safe.claude-config`: canonical default global `.claude.json` source, or `absent` when the state uses an
   explicit `CLAUDE_CONFIG_DIR` or is unavailable; diagnostic only;
-- `codex-safe.personal-skills`: canonical host source mounted for personal skills, or the literal `absent` when the
+- `agents-safe.personal-skills`: canonical host source mounted for personal skills, or the literal `absent` when the
   optional directory does not exist; diagnostic only;
-- `codex-safe.host-mcp`: sorted `host:port` list of forwarded host MCP endpoints, or the literal `absent` when none
+- `agents-safe.host-mcp`: sorted `host:port` list of forwarded host MCP endpoints, or the literal `absent` when none
   were forwarded; diagnostic only, as defined by [`host-mcp-forwarding.md`](host-mcp-forwarding.md);
-- `codex-safe.host-mcp-channel`: host directory of that container's MCP channel, absent as a label when no endpoint
+- `agents-safe.host-mcp-channel`: host directory of that container's MCP channel, absent as a label when no endpoint
   was forwarded. It locates the channel and is never compared for reuse.
 
 The project path and UID determine the container name. After ownership and protocol validation,
-`codex-safe.launch-config` is the sole creation-time reuse predicate; the product-state, personal-skills, and host-MCP
+`agents-safe.launch-config` is the sole creation-time reuse predicate; the product-state, personal-skills, and host-MCP
 labels are not compared independently.
+
+The label namespace is part of the ownership proof. A container carrying the previous `codex-safe.*` keys is rejected
+as a deterministic-name conflict after an upgrade; it is never read as a compatible `agents-safe.*` session. Let that
+container finish or stop it deliberately before launching a replacement.
 
 The deterministic name is the creation lock. Docker permits only one container with a given name, so concurrent
 launchers cannot both create the same project session.
@@ -165,15 +169,15 @@ The relevant Docker create arguments are:
 ```bash
 docker run --detach --rm \
     --name codex-safe-aba8b4ca4ff345d5d0443c0c \
-    --label codex-safe.managed=true \
-    --label codex-safe.project-path=/home/alex/sources/example-project \
-    --label codex-safe.host-uid=1000 \
-    --label codex-safe.manager-protocol=1 \
-    --label codex-safe.codex-home=/home/alex/.codex \
-    --label codex-safe.claude-home=/home/alex/.claude \
-    --label codex-safe.claude-config=/home/alex/.claude.json \
-    --label codex-safe.personal-skills=/home/alex/.agents/skills \
-    codex-safe-mvp:local
+    --label agents-safe.managed=true \
+    --label agents-safe.project-path=/home/alex/sources/example-project \
+    --label agents-safe.host-uid=1000 \
+    --label agents-safe.manager-protocol=1 \
+    --label agents-safe.codex-home=/home/alex/.codex \
+    --label agents-safe.claude-home=/home/alex/.claude \
+    --label agents-safe.claude-config=/home/alex/.claude.json \
+    --label agents-safe.personal-skills=/home/alex/.agents/skills \
+    agents-safe-mvp:local
 ```
 
 The path remains inspectable without decoding the hash:
@@ -185,14 +189,14 @@ docker inspect codex-safe-aba8b4ca4ff345d5d0443c0c \
 
 ```json
 {
-  "codex-safe.codex-home": "/home/alex/.codex",
-  "codex-safe.claude-home": "/home/alex/.claude",
-  "codex-safe.claude-config": "/home/alex/.claude.json",
-  "codex-safe.host-uid": "1000",
-  "codex-safe.managed": "true",
-  "codex-safe.manager-protocol": "1",
-  "codex-safe.personal-skills": "/home/alex/.agents/skills",
-  "codex-safe.project-path": "/home/alex/sources/example-project"
+  "agents-safe.codex-home": "/home/alex/.codex",
+  "agents-safe.claude-home": "/home/alex/.claude",
+  "agents-safe.claude-config": "/home/alex/.claude.json",
+  "agents-safe.host-uid": "1000",
+  "agents-safe.managed": "true",
+  "agents-safe.manager-protocol": "1",
+  "agents-safe.personal-skills": "/home/alex/.agents/skills",
+  "agents-safe.project-path": "/home/alex/sources/example-project"
 }
 ```
 
@@ -201,12 +205,12 @@ managed container or narrow the list to one project:
 
 ```bash
 docker ps -a \
-    --filter 'label=codex-safe.managed=true' \
+    --filter 'label=agents-safe.managed=true' \
     --format '{{.Names}}\t{{.Status}}'
 
 docker ps -a \
-    --filter 'label=codex-safe.managed=true' \
-    --filter 'label=codex-safe.project-path=/home/alex/sources/example-project' \
+    --filter 'label=agents-safe.managed=true' \
+    --filter 'label=agents-safe.project-path=/home/alex/sources/example-project' \
     --format '{{.Names}}\t{{.Status}}'
 ```
 
@@ -231,18 +235,18 @@ remain authoritative after Docker provides atomic name ownership.
 The container starts detached and receives no container-level stdin or TTY. User interaction belongs to the
 individual `docker exec` commands.
 
-The image has no shell entrypoint. Its exec-form entrypoint selects the `codex-safe-session` binary, and its default
+The image has no shell entrypoint. Its exec-form entrypoint selects the `agents-safe-session` binary, and its default
 command selects `serve`:
 
 ```dockerfile
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/agents-safe-session"]
 CMD ["serve"]
 ```
 
 The session container does not override that command, so Docker starts:
 
 ```text
-tini -- codex-safe-session serve
+tini -- agents-safe-session serve
 ```
 
 The Go `serve` process starts as root and performs the existing privileged bootstrap:
@@ -251,28 +255,28 @@ The Go `serve` process starts as root and performs the existing privileged boots
 2. create the container-local home and install shell configuration;
 3. configure passwordless container-local sudo;
 4. start the nested Docker daemon and wait for it to become ready;
-5. create `/run/codex-safe` for the recreated host user;
+5. create `/run/agents-safe` for the recreated host user;
 6. create the manager listener owned by that user.
 
 The Go process remains root because it owns the root-started dockerd child and must stop it cleanly. It never executes
-user commands. Each `docker exec` explicitly runs `codex-safe-session run` and its child with the recreated host UID
+user commands. Each `docker exec` explicitly runs `agents-safe-session run` and its child with the recreated host UID
 and GID.
 
-The manager listens on `/run/codex-safe/session.sock`. The directory has mode `0700` and the socket has mode `0600`.
+The manager listens on `/run/agents-safe/session.sock`. The directory has mode `0700` and the socket has mode `0600`.
 Both are part of the ephemeral container filesystem and are not bind-mounted from the host.
 
-When shutdown commits, the manager creates `/run/codex-safe/stopping` with mode `0600` and the recreated host user's
+When shutdown commits, the manager creates `/run/agents-safe/stopping` with mode `0600` and the recreated host user's
 UID/GID. The marker remains alongside the socket until the next manager startup removes stale runtime state. A wrapper
 checks it before and after connecting so a committed shutdown is reported immediately instead of being mistaken for
 bootstrap that is still in progress. The marker is container-local and is not a host lease, lock, heartbeat, or
 additional discovery mechanism.
 
-Before returning any eligible running session for user exec, the launcher executes `codex-safe-session wait-ready` as
+Before returning any eligible running session for user exec, the launcher executes `agents-safe-session wait-ready` as
 root. The command waits for the manager socket to exist and returns only after account setup, nested-daemon readiness,
 and manager listener setup are complete. It does not connect to the manager, register a command, or change the idle
 timer. For an established session the socket already exists, so the check returns immediately.
 
-Only after that barrier does the launcher execute an unprivileged `codex-safe-session run`. This ordering keeps root
+Only after that barrier does the launcher execute an unprivileged `agents-safe-session run`. This ordering keeps root
 account reconciliation ahead of every process using the recreated UID, including a concurrent first caller that loses
 the deterministic-name create race and adopts the winner while it is still bootstrapping.
 
@@ -282,7 +286,7 @@ after that same timeout. Bootstrap failure is reported using container state and
 
 ### 3. Container-Local Registration Protocol
 
-Each `codex-safe-session run` process opens one Unix stream connection to the manager. The connection represents one
+Each `agents-safe-session run` process opens one Unix stream connection to the manager. The connection represents one
 active command.
 
 The manager registers a connection under its state lock and writes one acknowledgement byte. The wrapper does not
@@ -292,7 +296,7 @@ marker to distinguish this state from incomplete bootstrap.
 
 After acknowledgement, the wrapper holds the connection without sending requests, heartbeats, or command data.
 Closing the connection unregisters the command. There is no general RPC format or separate protocol negotiation;
-compatibility is enforced by the container's `codex-safe.manager-protocol` label.
+compatibility is enforced by the container's `agents-safe.manager-protocol` label.
 
 Command argv, environment, terminal bytes, working directory, and project data never enter the socket.
 
@@ -301,7 +305,7 @@ Command argv, environment, terminal bytes, working directory, and project data n
 The host launcher prefixes every requested command with the image-provided wrapper:
 
 ```text
-codex-safe-session run -- COMMAND ARG...
+agents-safe-session run -- COMMAND ARG...
 ```
 
 Docker still selects the container user, group, home, working directory, stdin attachment, and optional TTY. Arguments
@@ -346,7 +350,7 @@ and cancels shutdown, or rejected after shutdown commits. It is never acknowledg
 
 ### 6. Go Entrypoint Supervision and Shutdown
 
-The same `codex-safe-session serve` process owns account bootstrap, the manager state machine, and dockerd supervision.
+The same `agents-safe-session serve` process owns account bootstrap, the manager state machine, and dockerd supervision.
 There is no intermediate shell supervisor and no second manager child.
 
 Normal idle shutdown proceeds in this order:
@@ -422,7 +426,7 @@ from the socket.
 ## Invariants
 
 - A container's lifetime never depends on one distinguished user command.
-- Every requested command, including the first, runs through `codex-safe-session run`.
+- Every requested command, including the first, runs through `agents-safe-session run`.
 - The manager cannot exit for idleness while any registered wrapper's direct child is running.
 - A wrapper connection is counted at most once and released exactly once.
 - No manager-protocol message contains or executes command data.
@@ -516,7 +520,7 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 
 Implemented ownership:
 
-- `cmd/codex-safe-session/`: one image binary with `serve` and `run` modes, plus the relay mode owned by
+- `cmd/agents-safe-session/`: one image binary with `serve` and `run` modes, plus the relay mode owned by
   [`host-mcp-forwarding.md`](host-mcp-forwarding.md);
 - `internal/session/`: local protocol, manager state machine, and command wrapper;
 - `internal/container/`: privileged account bootstrap, dockerd readiness, and process supervision;
@@ -527,7 +531,7 @@ Implemented ownership:
 ## Related Design
 
 The broader mounting, identity, nested-Docker, and security contract remains in
-[`codex-safe.md`](codex-safe.md).
+[`agents-safe.md`](agents-safe.md).
 
 ## Implementation Plan
 

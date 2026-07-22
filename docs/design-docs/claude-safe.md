@@ -10,7 +10,7 @@ Scope:
 - coexistence with Codex in one managed project container.
 
 The common Sysbox boundary, project/Git mounts, identity mapping, nested Docker daemon, and foreground-command
-lifecycle remain owned by [Safe Environment](codex-safe.md) and [Go Session Manager](go-session-manager.md). Typed
+lifecycle remain owned by [Safe Environment](agents-safe.md) and [Go Session Manager](go-session-manager.md). Typed
 project configuration remains owned by [Project Launcher Configuration](project-launcher-configuration.md).
 
 ## Purpose and Intent
@@ -125,10 +125,10 @@ updates that ignored host-specific file.
 
 ### 4. Managed Installation and Updates
 
-The Docker named volume `codex-safe-claude` is mounted at `/opt/codex-safe/claude`. The managed executable path is:
+The Docker named volume `agents-safe-claude` is mounted at `/opt/agents-safe/claude`. The managed executable path is:
 
 ```text
-/opt/codex-safe/claude/home/.local/bin/claude
+/opt/agents-safe/claude/home/.local/bin/claude
 ```
 
 `make docker-build` and `claude-safe update` run `/usr/local/bin/claude-safe-update` in an ordinary attached container

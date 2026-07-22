@@ -124,6 +124,20 @@ func TestDockerLaunchRejectsMismatchedDeterministicNameOccupant(t *testing.T) {
 	}
 }
 
+func TestDockerLaunchRejectsLegacyCodexSafeLabels(t *testing.T) {
+	plan := simplePlan()
+	labels := matchingLabels(t, plan, 1000)
+	labels["codex-safe.managed"] = labels[managedLabel]
+	delete(labels, managedLabel)
+	runner := &fakeCommandRunner{outputs: []commandResult{{
+		output: inspectionJSON(t, strings.Repeat("e", 64), true, "running", labels),
+	}}}
+	err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{})
+	if err == nil || !strings.Contains(err.Error(), "refusing deterministic-name reuse") {
+		t.Fatalf("Launch() error = %v, want legacy-label ownership rejection", err)
+	}
+}
+
 func TestDockerLaunchExplicitImageBypassesInvalidProjectEnvironment(t *testing.T) {
 	root, plan := invalidProjectPlan(t)
 	_ = root
@@ -324,7 +338,7 @@ func inspectionJSON(t *testing.T, containerID string, running bool, status strin
 func imageInspectionJSON(t *testing.T, imageID string) []byte {
 	t.Helper()
 	inspection := dockercli.ImageInspection{ID: imageID, Architecture: runtime.GOARCH}
-	inspection.Config.Entrypoint = []string{"/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session"}
+	inspection.Config.Entrypoint = []string{"/usr/bin/tini", "--", "/usr/local/bin/agents-safe-session"}
 	inspection.Config.Command = []string{"serve"}
 	inspection.Config.Environment = []string{"DOCKER_HOST=unix:///var/run/docker.sock"}
 	data, err := json.Marshal([]dockercli.ImageInspection{inspection})
@@ -369,7 +383,7 @@ func assertWrappedRun(t *testing.T, calls [][]string, containerID string, comman
 	if len(calls) != 1 {
 		t.Fatalf("Run calls = %#v, want one", calls)
 	}
-	wantSuffix := append([]string{containerID, "codex-safe-session", "run", "--"}, command...)
+	wantSuffix := append([]string{containerID, "agents-safe-session", "run", "--"}, command...)
 	if len(calls[0]) < len(wantSuffix) || !reflect.DeepEqual(calls[0][len(calls[0])-len(wantSuffix):], wantSuffix) {
 		t.Fatalf("wrapped exec = %#v, want suffix %#v", calls[0], wantSuffix)
 	}
@@ -386,7 +400,7 @@ func assertSessionReadyThenWrappedRun(t *testing.T, calls [][]string, containerI
 	}
 	ready := calls[0]
 	if !containsSequence(ready, "exec", "--user", "0:0", "--workdir", "/project/nested", containerID,
-		"codex-safe-session", "wait-ready") {
+		"agents-safe-session", "wait-ready") {
 		t.Fatalf("readiness exec = %#v", ready)
 	}
 	assertWrappedRun(t, calls[1:], containerID, command)

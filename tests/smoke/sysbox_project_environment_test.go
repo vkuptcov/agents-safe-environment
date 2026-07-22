@@ -69,7 +69,7 @@ func TestSysboxProjectEnvironment(t *testing.T) {
 }
 
 func projectEnvironmentDockerfile(version string) string {
-	return `ARG AGENTS_SAFE_BASE=codex-safe-mvp:local
+	return `ARG AGENTS_SAFE_BASE=agents-safe-mvp:local
 FROM ${AGENTS_SAFE_BASE}
 RUN printf '%s\n' '#!/bin/sh' 'printf "project_tool=` + version + `\n" > "$1"' > /usr/local/bin/project-tool && chmod 0755 /usr/local/bin/project-tool
 `

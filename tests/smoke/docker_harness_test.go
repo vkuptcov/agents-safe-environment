@@ -81,7 +81,7 @@ func (docker *dockerHarness) startSentinel() {
 		Image:      goSmokeImage,
 		Entrypoint: []string{"/bin/sleep"},
 		Cmd:        []string{"300"},
-		Labels:     map[string]string{"codex-safe.smoke": "go"},
+		Labels:     map[string]string{"agents-safe.smoke": "go"},
 	}, nil, nil, nil, docker.names.sentinel)
 	require.NoError(docker.t, err, "host sentinel container must be created")
 	require.NoError(
@@ -101,9 +101,9 @@ func (docker *dockerHarness) inspectContainer() container.InspectResponse {
 func (docker *dockerHarness) managedContainers() []container.Summary {
 	docker.t.Helper()
 	items, err := docker.client.ContainerList(docker.ctx, container.ListOptions{Filters: filters.NewArgs(
-		filters.Arg("label", "codex-safe.managed=true"),
-		filters.Arg("label", "codex-safe.project-path="+docker.project),
-		filters.Arg("label", "codex-safe.host-uid="+strconv.Itoa(os.Getuid())),
+		filters.Arg("label", "agents-safe.managed=true"),
+		filters.Arg("label", "agents-safe.project-path="+docker.project),
+		filters.Arg("label", "agents-safe.host-uid="+strconv.Itoa(os.Getuid())),
 		filters.Arg("name", "^"+docker.names.managed+"$"),
 	)})
 	require.NoError(docker.t, err, "Moby client must list active managed containers")

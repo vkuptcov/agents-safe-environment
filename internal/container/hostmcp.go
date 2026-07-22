@@ -19,7 +19,7 @@ import (
 const (
 	// hostMCPEnv carries the forwarded endpoint set, fixed at container creation. An absent or empty
 	// value is the zero-cost path: no listener, no lease, and `serve` starts exactly as before.
-	hostMCPEnv = "CODEX_SAFE_HOST_MCP"
+	hostMCPEnv = "AGENTS_SAFE_HOST_MCP"
 
 	// LeaseRetryInterval is how long `serve` waits between lease attempts. It must stay well below
 	// the sidecar's initial-lease timeout, or a replacement sidecar gives up before the session's

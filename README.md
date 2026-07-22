@@ -37,7 +37,7 @@ not executed as an arbitrary program. `agents-safe` is the explicit command laun
   credentials, and conversations separate.
 - A project can add `.agents-safe/Dockerfile` to derive a cached toolchain image from the selected base image.
 
-See the [design document](docs/design-docs/codex-safe.md) for the full product and security model. The
+See the [design document](docs/design-docs/agents-safe.md) for the full product and security model. The
 [Codex launch execution plan](docs/exec-plans/completed/2026-07-15-codex-launch-exec-plan.md) records the implementation
 scope and validation gates.
 
@@ -70,8 +70,8 @@ make install
 ```
 
 This installs `codex-safe`, `claude-safe`, and `agents-safe` into `GOBIN`, or into the first `GOPATH/bin` when `GOBIN`
-is unset, builds the local `codex-safe-mvp:local` image, and installs the current Linux product releases into the
-`codex-safe-codex` and `codex-safe-claude` volumes. Make sure that Go binary directory is on `PATH`; the launchers can
+is unset, builds the local `agents-safe-mvp:local` image, and installs the current Linux product releases into the
+`agents-safe-codex` and `agents-safe-claude` volumes. Make sure that Go binary directory is on `PATH`; the launchers can
 then be run from any project directory.
 
 For repository-local development builds, use:
@@ -92,8 +92,8 @@ The nested runtime preserves the absolute bind-mount contract, including project
 
 The image contains neither product executable. `make docker-build` builds the image and then uses separate maintenance
 entrypoints to install current Linux releases in the shared product volumes. `codex-safe` executes
-`/opt/codex-safe/codex/bin/codex`; `claude-safe` executes
-`/opt/codex-safe/claude/home/.local/bin/claude`. Both directories are on `PATH` for interactive `agents-safe` shells
+`/opt/agents-safe/codex/bin/codex`; `claude-safe` executes
+`/opt/agents-safe/claude/home/.local/bin/claude`. Both directories are on `PATH` for interactive `agents-safe` shells
 in the base image. Derived-image enforcement of those `PATH` entries is tracked in the
 [tech debt tracker](docs/reviews/tech-debt-tracker.md). Session startup never performs a network update.
 
@@ -145,9 +145,9 @@ example, run a non-interactive Codex turn:
 
 While Codex runs, another terminal reuses the same container for the same worktree. Each project/UID pair maps
 to one deterministic `codex-safe-<24-hex-key>` container name. The launcher inspects that exact name, validates the
-ownership and manager-protocol labels, and compares the `codex-safe.launch-config` creation fingerprint before
+ownership and manager-protocol labels, and compares the `agents-safe.launch-config` creation fingerprint before
 reuse. Every invocation, including the first, runs
-`docker exec codex-safe-session run -- /opt/codex-safe/codex/bin/codex [CODEX ARG...]`; no user command owns the
+`docker exec agents-safe-session run -- /opt/agents-safe/codex/bin/codex [CODEX ARG...]`; no user command owns the
 container lifecycle.
 
 A relaunch that resolves different product state or another creation-time mount for a still-running worktree is
@@ -173,7 +173,7 @@ Update the independent shared Linux installation from any directory:
 ```
 
 The updater runs Anthropic's official native installer in an ordinary Docker maintenance container with only
-`codex-safe-claude` mounted read-write. Project sessions mount that volume read-only and set
+`agents-safe-claude` mounted read-write. Project sessions mount that volume read-only and set
 `DISABLE_AUTOUPDATER=1`; updates never run as part of session startup.
 
 Start interactive Claude Code for the current Git project:
@@ -356,7 +356,7 @@ through `--rm`; stopped containers are not resumed. If the launcher or host daem
 project-owned sessions with:
 
 ```bash
-docker ps -a --filter label=codex-safe.managed=true
+docker ps -a --filter label=agents-safe.managed=true
 ```
 
 Review a candidate carefully before removing it; codex-safe does not yet provide a stale-session cleanup command.

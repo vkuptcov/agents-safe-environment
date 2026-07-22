@@ -9,7 +9,7 @@ Scope:
 - `.agents-safe/.gitignore` creation.
 
 Image builds remain owned by [Project-Specific Agent Environments](project-environments.md). Mount topology and
-container reuse remain owned by [Safe Environment](codex-safe.md); product command/state policy is split between that
+container reuse remain owned by [Safe Environment](agents-safe.md); product command/state policy is split between that
 document and [Safe Claude Code Integration](claude-safe.md).
 
 ## Purpose and Intent
@@ -39,7 +39,7 @@ resolution begins.
 | Area | Default | Meaning |
 | --- | --- | --- |
 | Bootstrap | `--project .` | Discover the Git worktree from the current directory. |
-| Common | `image = "codex-safe-mvp:local"` | Base or direct session image. |
+| Common | `image = "agents-safe-mvp:local"` | Base or direct session image. |
 | Common | `no_host_mcp = false` | Forward eligible host MCP servers. |
 | Common | resolved logical mount snapshot | Complete project/Git topology and available host integrations. |
 | Codex | `arguments = ['--sandbox', 'danger-full-access']` | Use the Sysbox container as the sandbox boundary. |
@@ -86,7 +86,7 @@ For this repository, `agents-safe init` generates:
 
 ```toml
 [common]
-image = "codex-safe-mvp:local"
+image = "agents-safe-mvp:local"
 no_host_mcp = false
 
 [[common.mounts]]
@@ -148,7 +148,7 @@ comment = "Optional: expose personal skills read-only."
 [[common.mounts]]
 role = "host_mcp_channel"
 source = "runtime://host-mcp-channel"
-target = "/run/codex-safe-host-mcp"
+target = "/run/agents-safe-host-mcp"
 read_only = false
 comment = "Optional: forward eligible host MCP endpoints."
 
@@ -324,11 +324,11 @@ Changing from schema version 1 to 2 makes every container created by an older la
 including projects whose resolved cache list is empty. The first version 2 invocation therefore follows the normal
 active-container mismatch path instead of reusing version 1 state.
 
-Schema version 3 introduces the implicit read-only `codex-safe-codex` volume mount. The mount is launcher policy and
+Schema version 3 introduces the implicit read-only `agents-safe-codex` volume mount. The mount is launcher policy and
 is not duplicated in the configured physical-bind list, so the schema bump prevents reuse of a version 2 container
 that lacks it. Codex release contents and version remain outside the fingerprint.
 
-Schema version 4 introduces Claude state roles, the implicit read-only `codex-safe-claude` volume, and the union of
+Schema version 4 introduces Claude state roles, the implicit read-only `agents-safe-claude` volume, and the union of
 Codex/Claude host-MCP endpoints. It prevents reuse of a version 3 container that cannot accept `claude-safe`. Product
 release contents and versions remain outside the fingerprint, so updating either volume does not invalidate a live
 session.
@@ -340,7 +340,7 @@ multiple names selecting the same canonical address do not change container capa
 separate field so disabled discovery and enabled discovery with no eligible endpoints have distinct fingerprints.
 
 The canonical structure is encoded from ordered structs and slices, never maps or TOML bytes. The
-`codex-safe.launch-config` container label stores the resulting 64-character lowercase hexadecimal SHA-256 digest.
+`agents-safe.launch-config` container label stores the resulting 64-character lowercase hexadecimal SHA-256 digest.
 The following values are deliberately excluded:
 
 - logical mount roles, comments, redundant aliases, and original TOML ordering;
@@ -379,7 +379,7 @@ After file layering, only explicitly supplied launcher flags override the config
 - an explicit `--image` replaces the image and bypasses `.agents-safe/Dockerfile` for that invocation.
 
 `codex.arguments` is default argv in native Codex form. Invocation arguments are combined using the
-[Codex command policy](codex-safe.md#codex-executable-and-process): when invocation arguments explicitly select a
+[Codex command policy](agents-safe.md#codex-executable-and-process): when invocation arguments explicitly select a
 sandbox policy, the configured default sandbox pair is suppressed. Other arguments remain separate argv elements;
 the launcher does not invoke a shell.
 
@@ -391,7 +391,7 @@ invocation arguments remain in order as separate argv elements. The complete sta
 ### 6. Mount Serialization
 
 `common.mounts` serializes logical mount roles whose topology and required modes are owned by
-[Safe Environment](codex-safe.md#3-mount-plan). It is not a one-to-one copy of Docker's physical bind mounts:
+[Safe Environment](agents-safe.md#3-mount-plan). It is not a one-to-one copy of Docker's physical bind mounts:
 validation first checks the complete logical topology, then normalization removes exact aliases and redundant nested
 mounts without weakening their requested access mode. `role` makes validation independent of list position and
 explains why access exists. Supported roles are:

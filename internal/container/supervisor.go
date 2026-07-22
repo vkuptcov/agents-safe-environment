@@ -19,7 +19,7 @@ type sessionManager interface {
 // sessionManagerFactory constructs the manager after container bootstrap succeeds.
 type sessionManagerFactory func(session.ManagerConfig) (sessionManager, error)
 
-// Supervisor is the root Go workload of the codex-safe Sysbox container. It reconciles the invoking
+// Supervisor is the root Go workload of the agents-safe Sysbox container. It reconciles the invoking
 // host identity inside the container, owns dockerd, and runs the session state machine.
 type Supervisor struct {
 	config Config
@@ -68,7 +68,7 @@ func NewSupervisorFromEnvironment(logger *log.Logger) (*Supervisor, error) {
 // finish, and always attempts bounded dockerd shutdown before returning.
 func (supervisor *Supervisor) Serve(ctx context.Context) error {
 	if supervisor.effectiveUID() != 0 {
-		return fmt.Errorf("codex-safe-session serve must run as root")
+		return fmt.Errorf("agents-safe-session serve must run as root")
 	}
 
 	// Everything from here to the first lease is bounded together. The sidecar starts its

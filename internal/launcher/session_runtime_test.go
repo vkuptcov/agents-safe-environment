@@ -15,7 +15,7 @@ func TestSessionCreateRequestAlwaysCarriesExplicitSysboxRuntime(t *testing.T) {
 	t.Parallel()
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
 		testPlan(),
-		"codex-safe-mvp:local",
+		"agents-safe-mvp:local",
 		"codex-safe-aba8b4ca4ff345d5d0443c0c",
 		hostMCPPlan{},
 		"fingerprint",
@@ -48,7 +48,7 @@ func TestBuildCreateArgsAcceptsEmptyRuntimeForTheSidecar(t *testing.T) {
 	t.Parallel()
 	if _, err := dockercli.BuildCreateArgs(dockercli.CreateRequest{
 		Image:   "image",
-		Name:    "codex-safe-mcp-key-generation",
+		Name:    "agents-safe-mcp-key-generation",
 		Command: []string{"relay"},
 	}); err != nil {
 		t.Fatalf("the sidecar must be expressible with the Docker default runtime, got %v", err)

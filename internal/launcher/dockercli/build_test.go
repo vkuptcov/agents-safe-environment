@@ -13,7 +13,7 @@ import (
 func TestBuildArgsPreservesTypedArgumentOrder(t *testing.T) {
 	t.Parallel()
 	request := BuildRequest{
-		Tag:       "codex-safe-project-key:abc",
+		Tag:       "agents-safe-project-key:abc",
 		BaseImage: "base image:local",
 		Context:   "/project/.agents-safe",
 	}
@@ -43,7 +43,7 @@ func TestBuildRoutesOutputToDiagnosticStream(t *testing.T) {
 func TestInspectImageDecodesConfig(t *testing.T) {
 	t.Parallel()
 	id := "sha256:" + strings.Repeat("a", 64)
-	runner := &fakeRunner{output: []byte(`[{"Id":"` + id + `","Architecture":"amd64","Config":{"User":"root","Entrypoint":["/usr/bin/tini","--","/usr/local/bin/codex-safe-session"],"Cmd":["serve"],"Env":["DOCKER_HOST=unix:///var/run/docker.sock"]}}]`)}
+	runner := &fakeRunner{output: []byte(`[{"Id":"` + id + `","Architecture":"amd64","Config":{"User":"root","Entrypoint":["/usr/bin/tini","--","/usr/local/bin/agents-safe-session"],"Cmd":["serve"],"Env":["DOCKER_HOST=unix:///var/run/docker.sock"]}}]`)}
 	inspection, err := New("docker", runner).InspectImage(context.Background(), "tag")
 	if err != nil {
 		t.Fatalf("InspectImage() = (%#v, %v)", inspection, err)

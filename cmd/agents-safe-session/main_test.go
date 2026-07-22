@@ -50,7 +50,7 @@ func TestRunCLIHelp(t *testing.T) {
 	); got != 0 {
 		t.Fatalf("exit code = %d, want 0", got)
 	}
-	if !strings.Contains(stdout.String(), "codex-safe-session run -- COMMAND") {
+	if !strings.Contains(stdout.String(), "agents-safe-session run -- COMMAND") {
 		t.Fatalf("help = %q", stdout.String())
 	}
 }
@@ -248,7 +248,7 @@ func TestRunCLIForwardsRelayConfiguration(t *testing.T) {
 		context.Background(),
 		[]string{
 			"relay",
-			"--generation", "/run/codex-safe-mcp/g-0123456789abcdef",
+			"--generation", "/run/agents-safe-mcp/g-0123456789abcdef",
 			"--endpoint", "127.0.0.1:8080",
 			"--endpoint", "localhost:64342",
 			"--initial-lease-timeout", "60s",
@@ -261,7 +261,7 @@ func TestRunCLIForwardsRelayConfiguration(t *testing.T) {
 	if got != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr=%q", got, stderr.String())
 	}
-	if captured.Generation != "/run/codex-safe-mcp/g-0123456789abcdef" {
+	if captured.Generation != "/run/agents-safe-mcp/g-0123456789abcdef" {
 		t.Fatalf("generation = %q", captured.Generation)
 	}
 	if !reflect.DeepEqual(captured.Endpoints, []string{"127.0.0.1:8080", "localhost:64342"}) {

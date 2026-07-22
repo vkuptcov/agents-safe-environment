@@ -13,7 +13,7 @@ Scope:
 
 Project-image builds and BuildKit caching remain owned by
 [Project-Specific Agent Environments](project-environments.md). Generic mounts, container identity, and the Sysbox
-boundary remain owned by [Safe Environment](codex-safe.md). Typed TOML schema, overlay, and creation-time
+boundary remain owned by [Safe Environment](agents-safe.md). Typed TOML schema, overlay, and creation-time
 fingerprinting remain owned by [Project Launcher Configuration](project-launcher-configuration.md).
 
 ## Purpose and Intent

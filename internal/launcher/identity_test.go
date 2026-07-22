@@ -11,7 +11,7 @@ func TestProjectContainerNameMatchesDesignExample(t *testing.T) {
 	key := ProjectKey(1000, "/home/alex/sources/example-project")
 	require.Equal(t, "aba8b4ca4ff345d5d0443c0c", key, "project key must match the documented SHA-256 example")
 	name := ProjectContainerName(1000, "/home/alex/sources/example-project")
-	require.Equal(t, "codex-safe-aba8b4ca4ff345d5d0443c0c", name, "container name must use the documented project key")
+	require.Equal(t, "agents-safe-aba8b4ca4ff345d5d0443c0c", name, "container name must use the documented project key")
 }
 
 func TestProjectContainerNameSeparatesUsersAndWorktrees(t *testing.T) {

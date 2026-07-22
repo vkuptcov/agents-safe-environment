@@ -58,7 +58,7 @@ while [[ ! -e "$3" ]]; do sleep 1; done`,
 	observed := parseReport(t, report)
 	require.Equal(t, cache, observed["uv"], "managed UV_CACHE_DIR must reach the public launcher command")
 	inspection := fixture.docker.inspectContainer()
-	require.Equal(t, cache, inspection.Config.Labels["codex-safe.uv-cache"], "uv label must name the physical source")
+	require.Equal(t, cache, inspection.Config.Labels["agents-safe.uv-cache"], "uv label must name the physical source")
 	requireMount(t, inspection, cache, cache, true)
 	nestedReport := filepath.Join(fixture.project.worktree, "uv-cache-bind-nested.report")
 	nested := fixture.launcher.startDefault(fixture.project.worktree,
@@ -236,7 +236,7 @@ func TestSysboxUVCacheConfigMismatch(t *testing.T) {
 	after := fixture.docker.inspectContainer()
 	require.Equal(t, before.ID, after.ID, "mismatch must neither replace nor create a managed container")
 	require.True(t, after.State.Running, "mismatch must leave the active session running")
-	require.Equal(t, cache, after.Config.Labels["codex-safe.uv-cache"], "active session must retain its original uv source")
+	require.Equal(t, cache, after.Config.Labels["agents-safe.uv-cache"], "active session must retain its original uv source")
 	requireMount(t, after, cache, cache, true)
 	fixture.release(release, active, "original uv cache configuration command")
 	fixture.docker.waitForContainerRemoval()

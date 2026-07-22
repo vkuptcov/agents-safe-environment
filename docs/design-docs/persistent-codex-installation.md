@@ -10,7 +10,7 @@ Scope:
 - one Docker named volume shared by session and maintenance containers;
 - the Docker Desktop-compatible maintenance boundary and its current host-launcher portability limitation.
 
-Host Codex state remains owned by [Safe Environment](codex-safe.md). Session lifecycle remains owned by
+Host Codex state remains owned by [Safe Environment](agents-safe.md). Session lifecycle remains owned by
 [Go Session Manager](go-session-manager.md). The sibling Claude Code volume, state, and updater are independent and
 owned by [Safe Claude Code Integration](claude-safe.md); both read-only volumes coexist in every project session.
 
@@ -35,11 +35,11 @@ flowchart TB
     Image --> Updater["Maintenance container<br/>ordinary Docker"]
     UpdateCommand["Host: codex-safe update"] --> Updater
     Release["Official Codex release<br/>via install.sh"] --> Updater
-    Updater -->|"read-write: install or update"| Volume[("Docker volume<br/>codex-safe-codex")]
+    Updater -->|"read-write: install or update"| Volume[("Docker volume<br/>agents-safe-codex")]
 
     SessionCommand["Host: codex-safe or agents-safe"] --> Session["Project session<br/>Sysbox container"]
     Volume -->|"read-only: mount executable files"| Session
-    Session -->|"exec /opt/codex-safe/codex/bin/codex"| Process["Codex process"]
+    Session -->|"exec /opt/agents-safe/codex/bin/codex"| Process["Codex process"]
 ```
 
 The maintenance container is the only supported writer. Any number of project sessions can mount the same volume
@@ -74,7 +74,7 @@ session `--image` override.
 The Docker volume name is fixed:
 
 ```text
-codex-safe-codex
+agents-safe-codex
 ```
 
 It is scoped naturally by the connected Docker daemon and is shared by every project and host user using that daemon.
@@ -89,8 +89,8 @@ actor who can replace containers, images, or volumes through that daemon.
 The official installer receives these paths inside the maintenance container:
 
 ```text
-CODEX_HOME=/opt/codex-safe/codex/home
-CODEX_INSTALL_DIR=/opt/codex-safe/codex/bin
+CODEX_HOME=/opt/agents-safe/codex/home
+CODEX_INSTALL_DIR=/opt/agents-safe/codex/bin
 CODEX_NON_INTERACTIVE=1
 ```
 
@@ -103,10 +103,10 @@ The image installs `curl` and the updater wrapper. It contains no Codex executab
 The product launcher invokes the installer-created executable by absolute path:
 
 ```text
-/opt/codex-safe/codex/bin/codex
+/opt/agents-safe/codex/bin/codex
 ```
 
-The image also prepends `/opt/codex-safe/codex/bin` to `PATH`, so an interactive `agents-safe` shell resolves the same
+The image also prepends `/opt/agents-safe/codex/bin` to `PATH`, so an interactive `agents-safe` shell resolves the same
 executable by the bare `codex` name. If the volume is empty or absent, normal executable lookup fails; recovery is
 `codex-safe update` or `make docker-build`. A derived project image can currently replace that `PATH` entry without
 failing compatibility validation; enforcing it is tracked as `TD-4` in the
@@ -136,7 +136,7 @@ Docker-level update lock or special cancellation cleanup.
 
 ### 5. Session Mount and Reuse
 
-Every newly created session mounts `codex-safe-codex` read-only at `/opt/codex-safe/codex`. This mount is launcher
+Every newly created session mounts `agents-safe-codex` read-only at `/opt/agents-safe/codex`. This mount is launcher
 policy, not project configuration, and is absent from the host MCP relay sidecar.
 
 Changing the installed Codex version does not recreate a running session. Each new Codex process resolves the volume
@@ -164,7 +164,7 @@ project-session support.
 - The official installer and release endpoints are part of the update trusted computing base.
 - A failed installer returns non-zero. Recovery and atomicity inside `packages/standalone` are delegated to the
   official installer rather than reimplemented here.
-- Manual removal of `codex-safe-codex` discards the installation. Sessions then fail executable lookup;
+- Manual removal of `agents-safe-codex` discards the installation. Sessions then fail executable lookup;
   `codex-safe update` or `make docker-build` recreates it and requires network access.
 
 ## Alternatives Rejected

@@ -18,7 +18,7 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
-const defaultImage = "codex-safe-mvp:local"
+const defaultImage = "agents-safe-mvp:local"
 
 const usage = `Usage: agents-safe init [--project PATH]
        agents-safe [--project PATH] [--image REF] [--no-host-mcp] [--] COMMAND [ARG...]

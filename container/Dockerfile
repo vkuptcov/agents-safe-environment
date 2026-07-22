@@ -13,14 +13,14 @@ ARG TARGETOS
 WORKDIR /src
 COPY go.mod ./
 COPY go.sum ./
-COPY cmd/codex-safe-session/ cmd/codex-safe-session/
+COPY cmd/agents-safe-session/ cmd/agents-safe-session/
 COPY internal/container/ internal/container/
 COPY internal/mcpchannel/ internal/mcpchannel/
 COPY internal/relay/ internal/relay/
 COPY internal/session/ internal/session/
 COPY internal/terminal/ internal/terminal/
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
-    go build -trimpath -ldflags='-s -w' -o /out/codex-safe-session ./cmd/codex-safe-session
+    go build -trimpath -ldflags='-s -w' -o /out/agents-safe-session ./cmd/agents-safe-session
 
 # crun is the low-level OCI runtime used by the Docker daemon inside the Sysbox container. A
 # project directory reaches a nested container through two bind mounts: host Docker first mounts
@@ -74,16 +74,16 @@ RUN apt-get update \
 # The Go entrypoint reconciles the host account, prepares its home and sudo policy, starts the
 # private daemon, and owns the session manager state machine. Managed commands enter later through
 # `docker exec` as the recreated user; the root entrypoint never receives their argv.
-COPY container/bashrc /etc/codex-safe/bashrc
+COPY container/bashrc /etc/agents-safe/bashrc
 COPY --from=crun --chmod=0755 /crun /usr/local/bin/crun
-COPY --from=session-builder --chmod=0755 /out/codex-safe-session /usr/local/bin/codex-safe-session
+COPY --from=session-builder --chmod=0755 /out/agents-safe-session /usr/local/bin/agents-safe-session
 COPY --chmod=0755 container/codex-safe-update /usr/local/bin/codex-safe-update
 COPY --chmod=0755 container/claude-safe-update /usr/local/bin/claude-safe-update
 
 # Fail the image build immediately if any copied binary is unusable on the target platform, and
 # verify the updater wrapper before the post-build volume installation runs.
 RUN /usr/local/bin/crun --version \
-    && /usr/local/bin/codex-safe-session --help \
+    && /usr/local/bin/agents-safe-session --help \
     && test -x /usr/local/bin/codex-safe-update \
     && test -x /usr/local/bin/claude-safe-update \
     && sh -n /usr/local/bin/codex-safe-update \
@@ -95,7 +95,7 @@ ENV DOCKER_HOST=unix:///var/run/docker.sock
 
 # Product launchers invoke their volume binaries by absolute path. This PATH also makes both
 # installations available in interactive `agents-safe` shells.
-ENV PATH="/opt/codex-safe/codex/bin:/opt/codex-safe/claude/home/.local/bin:${PATH}"
+ENV PATH="/opt/agents-safe/codex/bin:/opt/agents-safe/claude/home/.local/bin:${PATH}"
 
 # Claude Code's installation volume is read-only in project sessions. Updates are an explicit
 # host-side maintenance operation, so the in-session background updater must not attempt to write it.
@@ -121,5 +121,5 @@ ENV TERM=xterm-256color
 # The session container supplies none, so Docker appends the default below and its effective process
 # is unchanged. The relay sidecar supplies a command beginning with `relay`, which replaces the
 # default without bypassing tini and without a second image.
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/agents-safe-session"]
 CMD ["serve"]

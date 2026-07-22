@@ -63,12 +63,12 @@ artifacts. Do not add packages merely for local convenience without documenting 
 ### Approved Runtime Update Channel
 
 - OpenAI's standalone installer at `https://chatgpt.com/codex/install.sh` owns routine Codex updates in the
-  `codex-safe-codex` volume. `make docker-build` invokes it after building the local image, and an explicit
+  `agents-safe-codex` volume. `make docker-build` invokes it after building the local image, and an explicit
   `codex-safe update` invokes it later without rebuilding. Both intentionally resolve the current official Linux
   release and rely on the installer's release checksum verification. No update runs automatically at session startup.
 
 - Anthropic's native installer at `https://claude.ai/install.sh` owns routine Claude Code updates in the
-  `codex-safe-claude` volume. `make docker-build` invokes it after the Codex updater, and an explicit
+  `agents-safe-claude` volume. `make docker-build` invokes it after the Codex updater, and an explicit
   `claude-safe update` invokes it later without rebuilding. The installer selects the current official Linux release
   and verifies its published manifest checksum. Project sessions disable background self-update and mount the volume
   read-only.

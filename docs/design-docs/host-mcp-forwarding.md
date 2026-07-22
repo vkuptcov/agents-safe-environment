@@ -84,7 +84,7 @@ names a loopback host, and turns that set into a channel with two forwarders and
 ```mermaid
 flowchart LR
     subgraph Container["Sysbox container"]
-        Agents["Codex or Claude Code"] -->|"127.0.0.1:64342"| Fwd["Container forwarder<br/>codex-safe-session serve"]
+        Agents["Codex or Claude Code"] -->|"127.0.0.1:64342"| Fwd["Container forwarder<br/>agents-safe-session serve"]
     end
     subgraph Host["Host"]
         Relay["Relay sidecar<br/>one container per session<br/>--network=host"] -->|"127.0.0.1:64342"| Server["IDE"]
@@ -92,7 +92,7 @@ flowchart LR
     Fwd -->|"bind-mounted Unix socket"| Relay
 ```
 
-- Container forwarder: `codex-safe-session serve` listens on the exact loopback address and port the host URL names,
+- Container forwarder: `agents-safe-session serve` listens on the exact loopback address and port the host URL names,
   and dials this session's Unix socket for that endpoint. It exists so the unmodified URL resolves inside the
   container.
 - Relay sidecar: a second container, running the same pinned image with `--network=host`, serves those Unix sockets
@@ -148,7 +148,7 @@ had something exact to falsify; the verdict and its tested environment are in [O
 
 ### Tradeoff
 
-This feature deliberately punches one hole through the sandbox that [`codex-safe.md`](codex-safe.md) otherwise
+This feature deliberately punches one hole through the sandbox that [`agents-safe.md`](agents-safe.md) otherwise
 maintains: the agent gains reach to a named set of host loopback ports. That is the requested capability, not a leak,
 but it must be understood as real. An MCP server is an RPC surface, and whatever the host server can do — edit files
 through the IDE, read a database, run a tool — the agent can now ask it to do, unconstrained by the container's mount
@@ -247,8 +247,8 @@ otherwise be a host TCP port, and it is the reason this design needs no network-
   names the container in [`go-session-manager.md`](go-session-manager.md), `<generation>` is a fresh random
   identifier, and `<runtime-dir>` is `XDG_RUNTIME_DIR`. The launcher creates it with mode `0700`, owned by the
   invoking user, before either container is created.
-- Session container target: `/run/codex-safe-host-mcp/`, the generation directory only. This is deliberately not under
-  `/run/codex-safe/`, which `serve` creates and chowns for the session manager; a bind mount inside that directory
+- Session container target: `/run/agents-safe-host-mcp/`, the generation directory only. This is deliberately not under
+  `/run/agents-safe/`, which `serve` creates and chowns for the session manager; a bind mount inside that directory
   would entangle two lifetimes for no reason.
 - Sidecar target: the project runtime parent, so the sidecar can remove its own generation directory after the
   established session lease reaches EOF. It is the only mount the sidecar receives.
@@ -277,7 +277,7 @@ The rules that follow:
 
 - Fresh directory: every session creation allocates a new random generation directory. A directory is never reused
   by a later session.
-- Recorded path: the session container records its channel directory in the `codex-safe.host-mcp-channel` label. This
+- Recorded path: the session container records its channel directory in the `agents-safe.host-mcp-channel` label. This
   label locates the channel; it is never compared for reuse compatibility, because a reusing launcher legitimately
   computes a different candidate.
 - Scoped cleanup: a sidecar removes the whole generation directory only after an established lease reaches EOF, which
@@ -298,7 +298,7 @@ processes inside it:
 - An unrelated outer session cannot reach it, because the mounts exist only in this session's two containers.
 - Every process in this session that can act as the recreated user can use the channel. The agent has passwordless
   container-local sudo and a private Docker daemon, so it can also bind-mount the channel into one of its own nested
-  containers, exactly as [`codex-safe.md`](codex-safe.md) already documents for the Codex-home mount.
+  containers, exactly as [`agents-safe.md`](agents-safe.md) already documents for the Codex-home mount.
 - The invoking host user can reach it and already has direct loopback access without it.
 
 The last two points are deliberate, not a gap. This design authorizes a session, and everything the session already
@@ -319,13 +319,13 @@ identifier is sized with that budget in mind.
 
 ### 3. Container Forwarders
 
-Every forwarded endpoint is served inside the container by `codex-safe-session serve`, the process that already owns
+Every forwarded endpoint is served inside the container by `agents-safe-session serve`, the process that already owns
 container bootstrap and supervision.
 
 The launcher passes the resolved set at container creation as JSON, so no ad-hoc separator has to be escaped:
 
 ```text
-CODEX_SAFE_HOST_MCP=[{"listen":["127.0.0.1:64342"],"socket":"/run/codex-safe-host-mcp/e0.sock"}]
+AGENTS_SAFE_HOST_MCP=[{"listen":["127.0.0.1:64342"],"socket":"/run/agents-safe-host-mcp/e0.sock"}]
 ```
 
 `serve` starts the forwarders after account bootstrap and before it opens the manager listener, so the first wrapper's
@@ -364,7 +364,7 @@ restarting the container.
 
 ### 4. Relay Sidecar
 
-The relay is one container per session, running the pinned image's `codex-safe-session relay` mode. It serves the
+The relay is one container per session, running the pinned image's `agents-safe-session relay` mode. It serves the
 session's Unix sockets and dials the host loopback endpoints.
 
 #### Why a container
@@ -376,7 +376,7 @@ entire filesystem, their Docker access, and no confinement at all.
 The sidecar inverts that. It is created with:
 
 - `--network=host`, the one capability the feature requires;
-- an explicit container command beginning with `relay`, which selects `codex-safe-session relay` through the image
+- an explicit container command beginning with `relay`, which selects `agents-safe-session relay` through the image
   entrypoint described below;
 - the recreated host UID and GID, so the sockets it creates are owned like every other host artifact of the session;
 - `--read-only` root filesystem, `--cap-drop=ALL`, and `--security-opt=no-new-privileges`;
@@ -388,7 +388,7 @@ Being a container also supplies two mechanisms the host-process shape had to bui
 replaces a lock file, and `docker logs` replaces a private log file.
 
 The tradeoff is real and is stated in [Boundaries and Non-Goals](#boundaries-and-non-goals): one trusted component of
-a session shares the host network namespace. The invariant in [`codex-safe.md`](codex-safe.md) is scoped to the
+a session shares the host network namespace. The invariant in [`agents-safe.md`](agents-safe.md) is scoped to the
 session container, which never does.
 
 #### Image command dispatch
@@ -396,14 +396,14 @@ session container, which never does.
 The image entrypoint owns only process supervision and binary selection; the container role remains a Docker command:
 
 ```dockerfile
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/agents-safe-session"]
 CMD ["serve"]
 ```
 
 The session container supplies no command, so Docker appends the default `serve` command and its effective process is
-`tini -- codex-safe-session serve`, unchanged from the current runtime contract. The relay sidecar's typed create
+`tini -- agents-safe-session serve`, unchanged from the current runtime contract. The relay sidecar's typed create
 request supplies a command whose first argument is `relay`, replacing the image `CMD`; its effective process is
-`tini -- codex-safe-session relay ...`.
+`tini -- agents-safe-session relay ...`.
 
 The typed Docker create request therefore carries an optional ordered `Command []string`. `BuildCreateArgs` appends it
 after the image name. An empty command preserves the image default for the session container; the sidecar must set it
@@ -426,7 +426,7 @@ pull therefore fixes a first-run failure that predates this design rather than i
 If a running session is reused, its Docker inspection field `.Image` is authoritative. A missing sidecar is recreated
 from that ID, not from the image reference supplied by the later launcher.
 
-The sidecar records the ID in `codex-safe.host-mcp-image` for operator diagnostics, so a running pair can be shown to
+The sidecar records the ID in `agents-safe.host-mcp-image` for operator diagnostics, so a running pair can be shown to
 share one image without decoding its inspection output.
 
 #### Identity and single instance
@@ -434,7 +434,7 @@ share one image without decoding its inspection output.
 The sidecar's name is derived from the session container and the generation:
 
 ```text
-codex-safe-mcp-<project key>-<generation>
+agents-safe-mcp-<project key>-<generation>
 ```
 
 The session container's name is the sole arbiter of creation. The sidecar's name cannot be: it carries the
@@ -447,17 +447,17 @@ departing sidecar cannot hold the name an arriving one needs.
 
 Every sidecar carries these identity labels, for operator diagnostics rather than for launcher decisions:
 
-- `codex-safe.host-mcp-sidecar=true`, a role marker distinct from `codex-safe.managed=true`, which remains reserved for
+- `agents-safe.host-mcp-sidecar=true`, a role marker distinct from `agents-safe.managed=true`, which remains reserved for
   session containers and existing session-discovery filters;
-- `codex-safe.project-path`, the canonical worktree path;
-- `codex-safe.host-uid`, the invoking host UID;
-- `codex-safe.host-mcp`, the canonical sorted endpoint set;
-- `codex-safe.host-mcp-channel`, the exact generation directory;
-- `codex-safe.host-mcp-image`, the immutable image ID.
+- `agents-safe.project-path`, the canonical worktree path;
+- `agents-safe.host-uid`, the invoking host UID;
+- `agents-safe.host-mcp`, the canonical sorted endpoint set;
+- `agents-safe.host-mcp-channel`, the exact generation directory;
+- `agents-safe.host-mcp-image`, the immutable image ID.
 
 A sidecar name conflict needs no ownership check, and the reason is the generation. The name embeds a random
 identifier, so holding that exact name requires already knowing it. It is readable only from the session container's
-`codex-safe.host-mcp-channel` label through the host Docker daemon, which means the invoking host user — who already
+`agents-safe.host-mcp-channel` label through the host Docker daemon, which means the invoking host user — who already
 reaches host loopback directly and is inside the trust boundary. The agent cannot forge it either, because its Docker
 daemon is the nested one and cannot create a host container at all. A container under that name is therefore this
 user's own sidecar for this exact generation.
@@ -572,7 +572,7 @@ sequenceDiagram
     participant Launcher as "codex-safe, claude-safe, or agents-safe on host"
     participant HostDocker as "Host Docker Engine"
     participant Relay as "Relay sidecar"
-    participant Serve as "codex-safe-session serve"
+    participant Serve as "agents-safe-session serve"
     participant Agent as "Codex or Claude Code"
 
     User->>Launcher: Run a launcher in a Git working tree
@@ -593,8 +593,8 @@ sequenceDiagram
             Serve->>Relay: Open the lifetime lease on control.sock
             Serve->>Serve: Open the session-manager listener
         else Session container is running
-            Launcher->>Launcher: Require a matching codex-safe.launch-config fingerprint
-            Launcher->>Launcher: Adopt the channel from codex-safe.host-mcp-channel
+            Launcher->>Launcher: Require a matching agents-safe.launch-config fingerprint
+            Launcher->>Launcher: Adopt the channel from agents-safe.host-mcp-channel
             Launcher->>Launcher: Adopt the session container's inspected image ID
             Launcher->>Launcher: Remove the unused candidate directory
             opt Sidecar is gone
@@ -605,7 +605,7 @@ sequenceDiagram
         Launcher->>Relay: Probe control.sock until ready, with a bounded timeout
         Launcher->>User: Print the forwarded endpoints
     end
-    Launcher->>HostDocker: docker exec codex-safe-session run -- command
+    Launcher->>HostDocker: docker exec agents-safe-session run -- command
     Agent->>Serve: Connect to 127.0.0.1:64342
     Serve->>Relay: Dial the endpoint socket
     Relay-->>Agent: Relay the MCP session to the host server
@@ -618,11 +618,11 @@ sequenceDiagram
 
 Reuse uses the labels differently, and the distinction matters:
 
-- `codex-safe.launch-config` is compared. Its canonical input includes `no_host_mcp` and the sorted `host:port`
+- `agents-safe.launch-config` is compared. Its canonical input includes `no_host_mcp` and the sorted `host:port`
   endpoint list defined by [Project Launcher Configuration](project-launcher-configuration.md#4-parameter-classes-and-active-containers).
-- `codex-safe.host-mcp` carries the same sorted endpoint list, or the literal `absent`, for operator diagnostics. It
+- `agents-safe.host-mcp` carries the same sorted endpoint list, or the literal `absent`, for operator diagnostics. It
   is not an independent reuse predicate.
-- `codex-safe.host-mcp-channel` is read, never compared. It carries the absolute generation directory of the running
+- `agents-safe.host-mcp-channel` is read, never compared. It carries the absolute generation directory of the running
   container. A reusing launcher has already created its own candidate directory, which necessarily differs; it adopts
   the label's directory and removes its candidate.
 
@@ -763,7 +763,7 @@ These are the rules that must not regress. Mechanics are in the contract section
 
 This design owns reach from the session container to host MCP servers that listen on loopback: their discovery, the
 channel, the two forwarding hops, and the sidecar's lifetime. The broader mount, identity, and Sysbox contract remains
-in [`codex-safe.md`](codex-safe.md), and container startup and shutdown remain in
+in [`agents-safe.md`](agents-safe.md), and container startup and shutdown remain in
 [`go-session-manager.md`](go-session-manager.md).
 
 This design changes one project-wide boundary, and it is the price of the feature. Until now no component of a session
@@ -815,7 +815,7 @@ adds a package to the image and a host prerequisite, and puts a process outside 
 
 Rejected alternative: rewrite `mcp_servers` URLs in a copied Codex home. This removes both forwarders, but the Codex
 home is a read-write mount the user shares with host Codex, and a copy would break session, history, and
-authentication persistence. Rewriting configuration is already forbidden by [`codex-safe.md`](codex-safe.md).
+authentication persistence. Rewriting configuration is already forbidden by [`agents-safe.md`](agents-safe.md).
 
 Rejected alternative: a relay owned by the launcher process. It needs no detached process and no lock, but it dies
 when its launcher dies, and `go-session-manager.md` deliberately keeps a command running after that. It would strand
@@ -856,7 +856,7 @@ own lifecycle. The per-session sidecar gets all of that from the session it is l
 
 ### Launcher contract tests
 
-- Verify `CODEX_SAFE_HOST_MCP`, the socket mount, `codex-safe.host-mcp`, and `codex-safe.host-mcp-channel` appear on
+- Verify `AGENTS_SAFE_HOST_MCP`, the socket mount, `agents-safe.host-mcp`, and `agents-safe.host-mcp-channel` appear on
   create exactly when the set is non-empty.
 - Verify the fingerprint input, diagnostic label, JSON environment value, and banner describe the same sorted
   endpoints.
@@ -961,7 +961,7 @@ The gate now inspects two containers, and the distinction between them is the po
   and `no-new-privileges` are present, that its only mount is the project runtime parent, and that it has no Docker
   socket.
 - Confirm the sidecar carries its role, project, UID, endpoint, channel, and immutable-image labels but does not carry
-  `codex-safe.managed=true`.
+  `agents-safe.managed=true`.
 - Confirm no host TCP port is bound by either container during a session, and that no `--add-host` entry exists.
 - Confirm the generation directory and sockets are `0700` and `0600` and owned by the invoking user.
 - Confirm the forwarded endpoint set equals the printed set and contains no endpoint absent from the base
@@ -980,13 +980,13 @@ Implemented ownership:
   needed by recovery, and the create-request surface the sidecar needs — an ordered container command, container
   user, network mode, root-filesystem and capability options, and an optional runtime. The execution plan owns that
   field list; the invariant above governs which containers may omit a runtime.
-- `cmd/codex-safe-session/`: the `relay` mode that runs inside the sidecar.
+- `cmd/agents-safe-session/`: the `relay` mode that runs inside the sidecar.
 - `internal/container/`: container listeners and the sidecar lease, both started by `serve`.
 - `container/Dockerfile`: split the current fixed `serve` entrypoint into a binary-only entrypoint and default `serve`
   command, so the sidecar can select `relay` without bypassing `tini`; the sidecar still adds no package.
 - `tests/smoke/`: reachability, isolation, launcher-death, lease, generation, and cleanup proofs on a real Sysbox host.
 
-No host launcher gains a relay mode. The sidecar runs the image's `codex-safe-session` binary through the explicit
+No host launcher gains a relay mode. The sidecar runs the image's `agents-safe-session` binary through the explicit
 sidecar command, so every launcher starts it through the shared typed Docker client and does not depend on another
 product launcher being installed.
 
@@ -1010,7 +1010,7 @@ Tested environment, which is the exact scope of this verdict:
 | Docker server | `28.3.3`, API `1.51`, default runtime `runc` |
 | Sysbox | `sysbox-runc` Community Edition `0.7.0` |
 | Host identity and runtime dir | `uid=1000`, `XDG_RUNTIME_DIR=/run/user/1000` at mode `0700` |
-| Image | `codex-safe-mvp:local` = `sha256:d22fbfd34f1d` |
+| Image | `agents-safe-mvp:local` = `sha256:d22fbfd34f1d` |
 
 All seven requirements passed:
 
@@ -1045,7 +1045,7 @@ Three results carry consequences beyond a passing row, and the execution plan mu
 
 ## Related Design
 
-The mount, identity, nested-Docker, and security contract is in [`codex-safe.md`](codex-safe.md). Container startup,
+The mount, identity, nested-Docker, and security contract is in [`agents-safe.md`](agents-safe.md). Container startup,
 supervision, and reuse validation are in [`go-session-manager.md`](go-session-manager.md).
 
 ## References

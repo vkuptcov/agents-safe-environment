@@ -60,7 +60,7 @@ func validateProjectImage(inspection dockercli.ImageInspection) error {
 	if inspection.Config.User != "" && inspection.Config.User != "root" {
 		return fmt.Errorf("project image %q user %q is incompatible with root bootstrap", inspection.ID, inspection.Config.User)
 	}
-	if !slices.Equal(inspection.Config.Entrypoint, []string{"/usr/bin/tini", "--", "/usr/local/bin/codex-safe-session"}) || !slices.Equal(inspection.Config.Command, []string{"serve"}) {
+	if !slices.Equal(inspection.Config.Entrypoint, []string{"/usr/bin/tini", "--", "/usr/local/bin/agents-safe-session"}) || !slices.Equal(inspection.Config.Command, []string{"serve"}) {
 		return fmt.Errorf("project image %q does not preserve the session entrypoint and serve command", inspection.ID)
 	}
 	if !slices.Contains(inspection.Config.Environment, "DOCKER_HOST=unix:///var/run/docker.sock") {

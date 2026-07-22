@@ -7,13 +7,13 @@ import (
 
 func TestClaudeInstallationUsesOneDaemonLocalVolume(t *testing.T) {
 	t.Parallel()
-	if ClaudeInstallationVolume != "codex-safe-claude" {
+	if ClaudeInstallationVolume != "agents-safe-claude" {
 		t.Fatalf("ClaudeInstallationVolume = %q", ClaudeInstallationVolume)
 	}
-	if ClaudeInstallationRoot != "/opt/codex-safe/claude" {
+	if ClaudeInstallationRoot != "/opt/agents-safe/claude" {
 		t.Fatalf("ClaudeInstallationRoot = %q", ClaudeInstallationRoot)
 	}
-	if ClaudeBinaryPath != "/opt/codex-safe/claude/home/.local/bin/claude" {
+	if ClaudeBinaryPath != "/opt/agents-safe/claude/home/.local/bin/claude" {
 		t.Fatalf("ClaudeBinaryPath = %q", ClaudeBinaryPath)
 	}
 }

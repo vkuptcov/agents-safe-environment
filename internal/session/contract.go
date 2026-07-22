@@ -1,5 +1,5 @@
 // Package session implements the container-local lifetime protocol used by
-// codex-safe-session serve and codex-safe-session run.
+// agents-safe-session serve and agents-safe-session run.
 package session
 
 import "time"
@@ -10,7 +10,7 @@ const (
 	// after bootstrap; wrappers connect here before starting their child command.
 	// The launcher never mounts this path from the host, passes it as a host
 	// argument, or exposes it to nested containers.
-	DefaultSocketPath = "/run/codex-safe/session.sock"
+	DefaultSocketPath = "/run/agents-safe/session.sock"
 
 	// ProtocolVersion is recorded in the managed container labels. The wire
 	// protocol deliberately consists only of one acknowledgement byte.

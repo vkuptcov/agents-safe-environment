@@ -13,17 +13,17 @@ import (
 
 const (
 	sysboxRuntime        = "sysbox-runc"
-	managedLabel         = "codex-safe.managed"
-	projectPathLabel     = "codex-safe.project-path"
-	hostUIDLabel         = "codex-safe.host-uid"
-	managerProtocolLabel = "codex-safe.manager-protocol"
-	codexHomeLabel       = "codex-safe.codex-home"
-	claudeHomeLabel      = "codex-safe.claude-home"
-	claudeConfigLabel    = "codex-safe.claude-config"
-	personalSkillsLabel  = "codex-safe.personal-skills"
-	goBuildCacheLabel    = "codex-safe.go-build-cache"
-	goModulesCacheLabel  = "codex-safe.go-modules-cache"
-	uvCacheLabel         = "codex-safe.uv-cache"
+	managedLabel         = "agents-safe.managed"
+	projectPathLabel     = "agents-safe.project-path"
+	hostUIDLabel         = "agents-safe.host-uid"
+	managerProtocolLabel = "agents-safe.manager-protocol"
+	codexHomeLabel       = "agents-safe.codex-home"
+	claudeHomeLabel      = "agents-safe.claude-home"
+	claudeConfigLabel    = "agents-safe.claude-config"
+	personalSkillsLabel  = "agents-safe.personal-skills"
+	goBuildCacheLabel    = "agents-safe.go-build-cache"
+	goModulesCacheLabel  = "agents-safe.go-modules-cache"
+	uvCacheLabel         = "agents-safe.uv-cache"
 	managedLabelValue    = "true"
 
 	containerStateTimeout   = 20 * time.Second

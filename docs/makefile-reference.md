@@ -6,7 +6,7 @@ Run these commands from the repository root.
 | --- | --- |
 | `make build` | Build host and container-side Go binaries under `bin/`. |
 | `make install` | Install all three host launchers, build the local outer image, and update both product volumes. |
-| `make docker-build` | Build `codex-safe-mvp:local`, then initialize or update both product volumes. |
+| `make docker-build` | Build `agents-safe-mvp:local`, then initialize or update both product volumes. |
 | `make install-tools` | Compile all tools declared by `tools/go.mod` into the ignored local `bin/` directory. |
 | `make lint` | Run the pinned GolangCI-Lint tool against the application module. |
 | `make lint-n-fix` | Apply supported GolangCI-Lint and formatter fixes, then report remaining issues. |
@@ -25,7 +25,7 @@ packages, so the repository's required Go version must remain available when eit
 
 `make install` uses the standard Go installation destination: `GOBIN` when it is set, otherwise the `bin`
 subdirectory of the first `GOPATH` entry. It installs only the host-side `codex-safe`, `claude-safe`, and `agents-safe`
-launchers; the container-side `codex-safe-session` binary remains part of repository-local and image builds.
+launchers; the container-side `agents-safe-session` binary remains part of repository-local and image builds.
 
 `make docker-build` requires network access for both post-build official product installations. The image may already
 exist if either installation fails, but the Make target returns non-zero until both shared volumes are usable.

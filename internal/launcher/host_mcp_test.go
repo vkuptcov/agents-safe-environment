@@ -75,10 +75,10 @@ func TestBuildSidecarRequestIsFullyConfined(t *testing.T) {
 		t.Errorf("the sidecar's only mount must be the runtime parent: %#v", args)
 	}
 
-	// A role marker distinct from codex-safe.managed, which stays reserved for session containers.
+	// A role marker distinct from agents-safe.managed, which stays reserved for session containers.
 	assertLabel(t, args, hostMCPSidecarLabel, "true")
 	if strings.Contains(joined, managedLabel+"=true") {
-		t.Error("the sidecar must not carry codex-safe.managed=true")
+		t.Error("the sidecar must not carry agents-safe.managed=true")
 	}
 	assertLabel(t, args, hostMCPImageLabel, "sha256:img")
 	assertLabel(t, args, hostMCPLabel, set.Label())
@@ -93,7 +93,7 @@ func TestSidecarNameEmbedsTheGeneration(t *testing.T) {
 	t.Parallel()
 	channel := testChannel(t)
 	name := sidecarName("projkey", channel)
-	if name != "codex-safe-mcp-projkey-g-abc123" {
+	if name != "agents-safe-mcp-projkey-g-abc123" {
 		t.Fatalf("sidecar name = %q", name)
 	}
 	// Two attempts with different generations compute different sidecar names, so both creates
@@ -151,7 +151,7 @@ func TestBuildCreateRequestAddsHostMCPForANonEmptySet(t *testing.T) {
 			env = environment.Value
 		}
 	}
-	if !strings.Contains(env, "/run/codex-safe-host-mcp/e0.sock") {
+	if !strings.Contains(env, "/run/agents-safe-host-mcp/e0.sock") {
 		t.Fatalf("%s must carry the session socket view, got %q", hostMCPEnv, env)
 	}
 	mounted := false

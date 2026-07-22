@@ -2,7 +2,7 @@
 
 - Status: completed
 - Created: 2026-07-16
-- Design: [`codex-safe.md`](../../design-docs/codex-safe.md)
+- Design: [`agents-safe.md`](../../design-docs/agents-safe.md)
 - Scope:
   - `internal/launcher/`
   - root and smoke Go modules

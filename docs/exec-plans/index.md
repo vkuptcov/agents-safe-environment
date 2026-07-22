@@ -6,6 +6,8 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Review
 
+- [agents-safe Runtime Namespace](review/2026-07-22-agents-safe-runtime-namespace-exec-plan.md)
+- [agents-safe Container Labels](review/2026-07-22-agents-safe-container-labels-exec-plan.md)
 - [claude-safe Support](review/2026-07-22-claude-safe-support-exec-plan.md)
 - [Persistent Container Codex Installation](review/2026-07-21-persistent-codex-installation-exec-plan.md)
 - [uv Host-Backed Dependency Cache](review/2026-07-21-uv-host-backed-dependency-cache-exec-plan.md)

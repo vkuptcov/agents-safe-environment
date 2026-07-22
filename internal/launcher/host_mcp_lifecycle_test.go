@@ -17,7 +17,7 @@ func attemptWith(runner *fakeCommandRunner) *launchAttempt {
 		docker:        testDocker(runner),
 		cli:           dockercli.New("docker", runner),
 		plan:          testPlan(),
-		containerName: "codex-safe-session",
+		containerName: "agents-safe-session",
 		projectKey:    "key",
 	}
 }
@@ -40,7 +40,7 @@ func TestAwaitSidecarNameAdoptsARunningTransition(t *testing.T) {
 	}}
 	attempt := attemptWith(runner)
 
-	outcome, err := attempt.awaitSidecarName(context.Background(), "codex-safe-mcp-key-g", true)
+	outcome, err := attempt.awaitSidecarName(context.Background(), "agents-safe-mcp-key-g", true)
 	if err != nil {
 		t.Fatalf("awaitSidecarName() error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestAwaitSidecarNameWaitsForReleaseWhenNotAdopting(t *testing.T) {
 	}}
 	attempt := attemptWith(runner)
 
-	outcome, err := attempt.awaitSidecarName(context.Background(), "codex-safe-mcp-key-g", false)
+	outcome, err := attempt.awaitSidecarName(context.Background(), "agents-safe-mcp-key-g", false)
 	if err != nil {
 		t.Fatalf("awaitSidecarName() error = %v", err)
 	}
@@ -74,8 +74,8 @@ func TestCleanupCandidateStopsSessionBeforeRemovingGeneration(t *testing.T) {
 	t.Parallel()
 	generationDir := t.TempDir()
 	runner := &fakeCommandRunner{outputs: []commandResult{
-		{output: []byte("codex-safe-session\n")},                                  // stop session
-		{output: []byte("codex-safe-mcp-key-g\n")},                                // stop sidecar
+		{output: []byte("agents-safe-session\n")},                                 // stop session
+		{output: []byte("agents-safe-mcp-key-g\n")},                               // stop sidecar
 		{output: []byte("Error: No such container"), err: fakeExitError{code: 1}}, // await sidecar release
 	}}
 	attempt := attemptWith(runner)
@@ -92,7 +92,7 @@ func TestCleanupCandidateStopsSessionBeforeRemovingGeneration(t *testing.T) {
 	}
 	// The session stop is the first Docker call, before any removal.
 	if len(runner.combinedCalls) == 0 || runner.combinedCalls[0][1] != "stop" ||
-		runner.combinedCalls[0][len(runner.combinedCalls[0])-1] != "codex-safe-session" {
+		runner.combinedCalls[0][len(runner.combinedCalls[0])-1] != "agents-safe-session" {
 		t.Fatalf("the session must be stopped first, calls = %v", runner.combinedCalls)
 	}
 	if _, err := os.Stat(generationDir); !os.IsNotExist(err) {

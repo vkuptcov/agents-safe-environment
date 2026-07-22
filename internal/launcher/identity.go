@@ -21,5 +21,5 @@ func ProjectKey(hostUID int, projectRoot string) string {
 // ProjectContainerName returns the daemon-global deterministic Docker name for
 // one already-validated canonical project root and host UID.
 func ProjectContainerName(hostUID int, projectRoot string) string {
-	return "codex-safe-" + ProjectKey(hostUID, projectRoot)
+	return "agents-safe-" + ProjectKey(hostUID, projectRoot)
 }

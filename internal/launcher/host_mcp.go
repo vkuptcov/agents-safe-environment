@@ -17,11 +17,11 @@ import (
 )
 
 const (
-	hostMCPLabel        = "codex-safe.host-mcp"
-	hostMCPChannelLabel = "codex-safe.host-mcp-channel"
-	hostMCPSidecarLabel = "codex-safe.host-mcp-sidecar"
-	hostMCPImageLabel   = "codex-safe.host-mcp-image"
-	hostMCPEnv          = "CODEX_SAFE_HOST_MCP"
+	hostMCPLabel        = "agents-safe.host-mcp"
+	hostMCPChannelLabel = "agents-safe.host-mcp-channel"
+	hostMCPSidecarLabel = "agents-safe.host-mcp-sidecar"
+	hostMCPImageLabel   = "agents-safe.host-mcp-image"
+	hostMCPEnv          = "AGENTS_SAFE_HOST_MCP"
 
 	// sidecarInitialLeaseTimeout must exceed both the cold sidecar-create-to-first-lease bound and
 	// serve's lease retry interval, or a sidecar gives up on a session that is still starting and
@@ -113,7 +113,7 @@ func (attempt *launchAttempt) cleanupCandidate(parent context.Context) error {
 // and the session container's name remains the sole arbiter of creation. It also keeps successive
 // sessions distinct, so a departing sidecar cannot hold the name an arriving one needs.
 func sidecarName(projectKey string, channel hostmcp.Channel) string {
-	return "codex-safe-mcp-" + projectKey + "-" + channel.Name
+	return "agents-safe-mcp-" + projectKey + "-" + channel.Name
 }
 
 // planHostMCP resolves the forwarded endpoint set before the creation fingerprint is computed.
@@ -355,7 +355,7 @@ func (docker *DockerLauncher) buildSidecarRequest(
 		// No Runtime: the sidecar is the only container this project creates with the Docker
 		// default, because it runs no nested workload.
 		Labels: []dockercli.KeyValue{
-			// A role marker distinct from codex-safe.managed, which stays reserved for session
+			// A role marker distinct from agents-safe.managed, which stays reserved for session
 			// containers and their discovery filters.
 			{Key: hostMCPSidecarLabel, Value: "true"},
 			{Key: projectPathLabel, Value: projectRoot},

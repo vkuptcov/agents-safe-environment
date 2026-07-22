@@ -12,8 +12,8 @@ func TestBuildCreateArgsRendersReadOnlyVolumeMount(t *testing.T) {
 		Name:   "session",
 		Mounts: []Mount{{Source: "/host/codex", Target: "/container/codex"}},
 		Volumes: []VolumeMount{{
-			Source:   "codex-safe-codex",
-			Target:   "/opt/codex-safe/codex",
+			Source:   "agents-safe-codex",
+			Target:   "/opt/agents-safe/codex",
 			ReadOnly: true,
 		}},
 	})
@@ -24,7 +24,7 @@ func TestBuildCreateArgsRendersReadOnlyVolumeMount(t *testing.T) {
 		"run", "--detach", "--rm",
 		"--name", "session",
 		"--mount", "type=bind,source=/host/codex,target=/container/codex,bind-propagation=rprivate",
-		"--mount", "type=volume,source=codex-safe-codex,target=/opt/codex-safe/codex,readonly",
+		"--mount", "type=volume,source=agents-safe-codex,target=/opt/agents-safe/codex,readonly",
 		"image",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -37,14 +37,14 @@ func TestBuildRunAttachedArgsAllowsWritableVolumeMount(t *testing.T) {
 	got, err := BuildRunAttachedArgs(CreateRequest{
 		Image:      "base-image",
 		Entrypoint: "/usr/local/bin/codex-safe-update",
-		Volumes:    []VolumeMount{{Source: "codex-safe-codex", Target: "/opt/codex-safe/codex"}},
+		Volumes:    []VolumeMount{{Source: "agents-safe-codex", Target: "/opt/agents-safe/codex"}},
 	})
 	if err != nil {
 		t.Fatalf("BuildRunAttachedArgs() error = %v", err)
 	}
 	want := []string{
 		"run", "--rm",
-		"--mount", "type=volume,source=codex-safe-codex,target=/opt/codex-safe/codex",
+		"--mount", "type=volume,source=agents-safe-codex,target=/opt/agents-safe/codex",
 		"--entrypoint", "/usr/local/bin/codex-safe-update",
 		"base-image",
 	}
