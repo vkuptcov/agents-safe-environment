@@ -70,8 +70,7 @@ bridge between the products.
 `claude-safe [--project PATH] [--image REF] [--no-host-mcp] [-- CLAUDE ARG...]` always executes the managed Claude
 Code binary. Arguments after `--` are Claude Code arguments, never an arbitrary executable and never shell text.
 
-The configured default is `--dangerously-skip-permissions`. The outer Sysbox container is the isolation boundary, so
-Claude Code may operate freely on paths already exposed to the container. An invocation that explicitly supplies
+The configured default is `--permission-mode auto`. An invocation that explicitly supplies
 `--permission-mode`, `--dangerously-skip-permissions`, or `--allow-dangerously-skip-permissions` suppresses only that
 configured default; all other configured and invocation arguments retain their order.
 

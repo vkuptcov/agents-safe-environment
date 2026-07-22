@@ -43,7 +43,7 @@ resolution begins.
 | Common | `no_host_mcp = false` | Forward eligible host MCP servers. |
 | Common | resolved logical mount snapshot | Complete project/Git topology and available host integrations. |
 | Codex | `arguments = ['--sandbox', 'danger-full-access']` | Use the Sysbox container as the sandbox boundary. |
-| Claude | `arguments = ['--dangerously-skip-permissions']` | Use the same outer Sysbox boundary. |
+| Claude | `arguments = ['--permission-mode', 'auto']` | Delegate permission decisions to Claude Code's automatic mode. |
 | Agents | no default argv | Require a command on every `agents-safe` invocation. |
 
 ### Resolution Order
@@ -159,7 +159,7 @@ arguments = [
 
 [claude]
 arguments = [
-    '--dangerously-skip-permissions'
+    '--permission-mode', 'auto'
 ]
 
 [agents]
@@ -384,7 +384,7 @@ sandbox policy, the configured default sandbox pair is suppressed. Other argumen
 the launcher does not invoke a shell.
 
 `claude.arguments` is default argv in native Claude Code form. When invocation arguments explicitly select a
-permission mode, the configured `--dangerously-skip-permissions` default is suppressed. Other configured and
+permission mode, the configured `--permission-mode auto` default is suppressed. Other configured and
 invocation arguments remain in order as separate argv elements. The complete state and command contract is owned by
 [Safe Claude Code Integration](claude-safe.md).
 
@@ -518,7 +518,7 @@ affect a later launch, so every writable source in the file must be treated as a
 - A running-container fingerprint mismatch fails without reuse, stop, or replacement.
 - Config image and explicit CLI-image intent retain distinct project-Dockerfile behavior.
 - Explicit invocation sandbox arguments suppress the configured default sandbox pair.
-- Explicit invocation permission arguments suppress Claude's configured bypass default.
+- Explicit invocation permission arguments suppress Claude's configured automatic-mode default.
 - Host-MCP mount presence follows `no_host_mcp` and endpoint eligibility.
 - Real Sysbox smoke compares the normalized physical plan with session-container `docker inspect` output and traces
   every physical bind back to its serialized logical role or roles.

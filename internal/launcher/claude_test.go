@@ -41,13 +41,13 @@ func TestClaudeCommandKeepsExplicitPermissionChoice(t *testing.T) {
 
 func TestClaudeCommandSuppressesOnlyDefaultPermissionArgument(t *testing.T) {
 	t.Parallel()
-	configured := []string{"--dangerously-skip-permissions", "--model", "opus"}
+	configured := []string{"--permission-mode", "auto", "--model", "opus"}
 	got := ClaudeCommand(configured, []string{"--permission-mode", "plan"})
 	want := []string{ClaudeBinaryPath, "--model", "opus", "--permission-mode", "plan"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ClaudeCommand() = %#v, want %#v", got, want)
 	}
-	if !reflect.DeepEqual(configured, []string{"--dangerously-skip-permissions", "--model", "opus"}) {
+	if !reflect.DeepEqual(configured, []string{"--permission-mode", "auto", "--model", "opus"}) {
 		t.Fatal("ClaudeCommand() mutated configured arguments")
 	}
 }
@@ -55,7 +55,7 @@ func TestClaudeCommandSuppressesOnlyDefaultPermissionArgument(t *testing.T) {
 func TestClaudeCommandTreatsDirectUpdateLikeAnyForwardedCommand(t *testing.T) {
 	t.Parallel()
 	got := ClaudeCommand(claudeDefaultPermissionArgs, []string{"update"})
-	want := []string{ClaudeBinaryPath, "--dangerously-skip-permissions", "update"}
+	want := []string{ClaudeBinaryPath, "--permission-mode", "auto", "update"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ClaudeCommand() = %#v, want %#v", got, want)
 	}

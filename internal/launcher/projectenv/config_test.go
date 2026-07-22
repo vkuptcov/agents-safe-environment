@@ -199,7 +199,7 @@ func typedDefaults(t *testing.T) ProjectConfig {
 			}},
 		},
 		Codex:  CodexConfig{Arguments: []string{"--sandbox", "danger-full-access"}},
-		Claude: ClaudeConfig{Arguments: []string{"--dangerously-skip-permissions"}},
+		Claude: ClaudeConfig{Arguments: []string{"--permission-mode", "auto"}},
 	}
 }
 

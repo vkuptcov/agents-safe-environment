@@ -1,6 +1,9 @@
 package launcher
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 const (
 	// ClaudeInstallationVolume is the daemon-local volume shared by every managed session.
@@ -11,12 +14,11 @@ const (
 	ClaudeBinaryPath = ClaudeInstallationRoot + "/home/.local/bin/claude"
 )
 
-// claudeDefaultPermissionArgs let Claude Code operate freely inside the outer Sysbox boundary.
-// Host access remains limited to the launcher's explicit mount plan.
-var claudeDefaultPermissionArgs = []string{"--dangerously-skip-permissions"}
+// claudeDefaultPermissionArgs delegate permission decisions to Claude Code's automatic mode.
+var claudeDefaultPermissionArgs = []string{"--permission-mode", "auto"}
 
 // ClaudeCommand combines project-configured and invocation arguments. An explicit invocation
-// permission mode removes only the configured bypass default; every other configured argument
+// permission mode removes only the configured automatic-mode default; every other configured argument
 // remains in order.
 func ClaudeCommand(configuredArgs, invocationArgs []string) []string {
 	configured := append([]string(nil), configuredArgs...)
@@ -32,11 +34,14 @@ func ClaudeCommand(configuredArgs, invocationArgs []string) []string {
 
 func withoutDefaultClaudePermission(arguments []string) []string {
 	result := make([]string, 0, len(arguments))
-	for _, argument := range arguments {
-		if argument == claudeDefaultPermissionArgs[0] {
+	for index := 0; index < len(arguments); {
+		end := index + len(claudeDefaultPermissionArgs)
+		if end <= len(arguments) && slices.Equal(arguments[index:end], claudeDefaultPermissionArgs) {
+			index = end
 			continue
 		}
-		result = append(result, argument)
+		result = append(result, arguments[index])
+		index++
 	}
 	return result
 }

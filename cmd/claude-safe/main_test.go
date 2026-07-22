@@ -118,7 +118,7 @@ func claudeDependencies(productLauncher cli.Launcher) cli.Dependencies {
 			return cli.ResolvedConfig{
 				Plan:            launchplan.Plan{},
 				Image:           "image",
-				ClaudeArguments: []string{"--dangerously-skip-permissions", "--model", "opus"},
+				ClaudeArguments: []string{"--permission-mode", "auto", "--model", "opus"},
 			}, nil
 		},
 		NewLauncher: func(string) (cli.Launcher, error) { return productLauncher, nil },

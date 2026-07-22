@@ -83,7 +83,7 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 	if want := []string{"--sandbox", "danger-full-access"}; !reflect.DeepEqual(config.Codex.Arguments, want) {
 		t.Errorf("arguments = %#v, want %#v", config.Codex.Arguments, want)
 	}
-	if want := []string{"--dangerously-skip-permissions"}; !reflect.DeepEqual(config.Claude.Arguments, want) {
+	if want := []string{"--permission-mode", "auto"}; !reflect.DeepEqual(config.Claude.Arguments, want) {
 		t.Errorf("Claude arguments = %#v, want %#v", config.Claude.Arguments, want)
 	}
 }

@@ -38,8 +38,8 @@ update path. Host-MCP preflight reads only Codex `config.toml`.
 - Separate state: Codex and Claude Code keep independent host state; only the project and container runtime are shared.
 - Claude state layout: keep native default paths as separate `~/.claude` and `~/.claude.json` mounts without setting
   `CLAUDE_CONFIG_DIR`; when the host explicitly sets that variable, mount its one directory and preserve the override.
-- Product sandbox default: run Claude Code with `--dangerously-skip-permissions`, using the outer Sysbox container as
-  the security boundary, while preserving an explicit invocation permission mode.
+- Product permission default: run Claude Code with `--permission-mode auto` while preserving an explicit invocation
+  permission mode.
 - Managed updates: use Anthropic's official native installer in a maintenance container and disable Claude Code's
   background updater in read-only project sessions.
 - MCP compatibility: union trusted user/local loopback endpoints from Codex and Claude host configuration before

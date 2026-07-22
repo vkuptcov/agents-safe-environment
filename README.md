@@ -182,8 +182,8 @@ Start interactive Claude Code for the current Git project:
 ./bin/claude-safe
 ```
 
-The configured default `--dangerously-skip-permissions` lets Claude operate freely inside the outer Sysbox boundary.
-An invocation that explicitly supplies a permission mode takes precedence. Product arguments remain separate argv:
+The configured default `--permission-mode auto` delegates permission decisions to Claude Code's automatic mode.
+An invocation that explicitly supplies another permission mode takes precedence. Product arguments remain separate argv:
 
 ```bash
 ./bin/claude-safe --project . -- --permission-mode plan
