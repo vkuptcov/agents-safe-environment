@@ -8,14 +8,12 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 )
 
-const (
-	codexUpdateContainerName = "codex-safe-codex-update"
-	codexUpdateEntrypoint    = "/usr/local/bin/codex-safe-update"
-)
+const codexUpdateEntrypoint = "/usr/local/bin/codex-safe-update"
 
 // UpdateCodex runs the image's official-installer wrapper with the shared installation volume
 // writable. It intentionally does not construct DockerLauncher: updates need neither Git discovery
-// nor the Linux/Sysbox session preflight and therefore also work through Docker Desktop on macOS.
+// nor the Linux/Sysbox session preflight. The maintenance container is Docker Desktop-compatible;
+// Darwin compilation of the host binary remains tracked separately.
 func UpdateCodex(ctx context.Context, image string, stdout, stderr io.Writer) error {
 	client := dockercli.New("docker", dockercli.NewProcessRunner())
 	return updateCodex(ctx, client, image, stdout, stderr)
@@ -30,7 +28,6 @@ func updateCodex(
 ) error {
 	request := dockercli.CreateRequest{
 		Image:      image,
-		Name:       codexUpdateContainerName,
 		Entrypoint: codexUpdateEntrypoint,
 		Volumes: []dockercli.VolumeMount{{
 			Source: CodexInstallationVolume,

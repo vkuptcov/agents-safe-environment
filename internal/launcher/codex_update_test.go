@@ -21,7 +21,6 @@ func TestUpdateCodexRunsIsolatedMaintenanceContainer(t *testing.T) {
 	}
 	want := []string{
 		"docker", "run", "--rm",
-		"--name", codexUpdateContainerName,
 		"--mount", "type=volume,source=codex-safe-codex,target=/opt/codex-safe/codex",
 		"--entrypoint", codexUpdateEntrypoint,
 		"codex-safe-mvp:local",
@@ -30,7 +29,7 @@ func TestUpdateCodexRunsIsolatedMaintenanceContainer(t *testing.T) {
 		t.Fatalf("run calls = %#v, want %#v", runner.runCalls, [][]string{want})
 	}
 	joined := strings.Join(want, " ")
-	for _, forbidden := range []string{"sysbox-runc", "docker.sock", "--workdir", "--env", "type=bind"} {
+	for _, forbidden := range []string{"--name", "sysbox-runc", "docker.sock", "--workdir", "--env", "type=bind"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("maintenance argv contains %q: %#v", forbidden, want)
 		}

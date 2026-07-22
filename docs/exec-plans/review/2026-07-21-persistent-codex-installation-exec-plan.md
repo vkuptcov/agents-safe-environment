@@ -27,9 +27,9 @@ later through `codex-safe update`, without rebuilding project images or retainin
 
 ## Current Baseline
 
-The simplified first implementation still keeps two Codex binaries: a checksum-pinned bootstrap in the image and the
-routine installation in `codex-safe-codex`. This duplicates the executable solely to recover from an empty volume,
-even though this repository distributes a local image through a networked `make docker-build` workflow.
+The implementation now keeps the Linux Codex installation only in `codex-safe-codex`. Implementation review found
+two accepted follow-ups and two cleanup items: Darwin host compilation and derived-image `PATH` enforcement are
+deferred as `TD-3` and `TD-4`; Phase 6 removed the updater name and corrected the stale active documentation.
 
 ## Implementation Decisions
 
@@ -40,7 +40,7 @@ even though this repository distributes a local image through a networked `make 
 - Build initialization: `make docker-build` builds the image, then runs its maintenance entrypoint against the volume.
 - Docker-native creation: let `docker run --mount type=volume` create an absent volume; add no volume CRUD API.
 - Trusted writer: use the default base image, default Docker runtime, one read-write volume, and no sensitive binds.
-- Minimal concurrency: use the deterministic maintenance-container name plus the official installer lock.
+- Minimal concurrency: use anonymous maintenance containers and rely on the official installer lock.
 - Reuse boundary: bump the launch-fingerprint schema once for the new session mount; exclude release contents.
 - Dependency: add owner-approved `curl` to the image for the official installer.
 
@@ -99,6 +99,17 @@ Done when: the base-image build initializes the volume, and no Codex executable 
 4. Update tests and durable documentation for the single-location contract.
 5. Run the focused, repository, Docker, documentation, and real Sysbox gates.
 
+### Phase 6: Resolve Implementation Review
+Purpose: Remove redundant update coordination and align current documentation with the implemented volume contract.
+Status: done
+Done when: maintenance containers use only the official installer lock, and accepted follow-ups are tracked as debt.
+
+1. Record Darwin compilation and derived-image `PATH` enforcement in the tech debt tracker.
+2. Remove the deterministic maintenance-container name from Go and Makefile paths.
+3. Update focused Docker argv tests for anonymous attached runs.
+4. Remove stale image-owned Codex claims from current design docs and README.
+5. Run the focused, repository, and documentation gates.
+
 ## Validation Gates
 
 - `go test ./cmd/codex-safe ./internal/launcher/dockercli ./internal/launcher` passes.
@@ -120,8 +131,8 @@ Done when: the base-image build initializes the volume, and no Codex executable 
 
 - The updater executes a freshly downloaded official install script; that script and its release endpoints are part
   of the trusted update channel.
-- A Docker client interrupted by context cancellation can leave the maintenance container running until the installer
-  exits. Its deterministic name prevents a second writer meanwhile.
+- A Docker client interrupted by context cancellation can leave the anonymous maintenance container running until the
+  installer exits. A concurrent retry is serialized by the official installer lock in the shared volume.
 - The volume is daemon-wide. Users with Docker access can replace it, but they already control the images and
   containers in this trust boundary.
 - Removing or pruning the volume makes Codex unavailable until `codex-safe update` or `make docker-build` succeeds.
@@ -152,3 +163,6 @@ Done when: the base-image build initializes the volume, and no Codex executable 
 - 2026-07-22: Focused tests, `make lint`, `make test`, `make docker-build`, disposable empty/install/read-only proofs,
   `make check-docs`, and the complete `make test-smoke-go` suite passed. Credentialed acceptance remained skipped
   because no test credentials were supplied; a real Docker Desktop macOS run remains unavailable.
+- 2026-07-22: Implementation review deferred Darwin host compilation and derived-image `PATH` enforcement as `TD-3`
+  and `TD-4`. Follow-up cleanup removed the redundant updater container name and stale image-owned Codex wording;
+  focused tests, the repository test suite, image build, disposable-volume proof, and documentation checks passed.

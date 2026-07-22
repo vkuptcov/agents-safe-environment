@@ -37,6 +37,9 @@ func (client *Client) Create(ctx context.Context, request CreateRequest) (contai
 // that previously made a session container falling off sysbox-runc impossible, so the session's own
 // creation path enforces the explicit-runtime invariant instead.
 func BuildCreateArgs(request CreateRequest) ([]string, error) {
+	if request.Name == "" {
+		return nil, errors.New("container name is required")
+	}
 	return buildRunArgs([]string{"run", "--detach", "--rm"}, request)
 }
 
@@ -50,15 +53,14 @@ func buildRunArgs(head []string, request CreateRequest) ([]string, error) {
 	if strings.TrimSpace(request.Image) == "" {
 		return nil, errors.New("container image is required")
 	}
-	if request.Name == "" {
-		return nil, errors.New("container name is required")
-	}
 
 	args := append([]string{}, head...)
 	if request.Runtime != "" {
 		args = append(args, "--runtime="+request.Runtime)
 	}
-	args = append(args, "--name", request.Name)
+	if request.Name != "" {
+		args = append(args, "--name", request.Name)
+	}
 	if request.User != "" {
 		args = append(args, "--user", request.User)
 	}

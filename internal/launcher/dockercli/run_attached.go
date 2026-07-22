@@ -21,7 +21,7 @@ func (client *Client) RunAttached(
 		return err
 	}
 	if err := client.run(ctx, arguments, stdin, stdout, stderr); err != nil {
-		return fmt.Errorf("run container %q: %w", request.Name, err)
+		return fmt.Errorf("run attached container: %w", err)
 	}
 	return nil
 }

@@ -21,7 +21,7 @@ type VolumeMount struct {
 	ReadOnly bool
 }
 
-// CreateRequest contains the Docker-specific inputs for one detached container.
+// CreateRequest contains the Docker-specific inputs for one container run.
 //
 // It describes two roles. The session container carries an explicit Runtime and WorkingDir and no
 // Command, so Docker appends the image's default. The relay sidecar carries a Command, the host
@@ -32,7 +32,8 @@ type VolumeMount struct {
 // session containers are created, not in this shared argv builder.
 type CreateRequest struct {
 	Image string
-	Name  string
+	// Name is required for detached managed containers and optional for attached maintenance runs.
+	Name string
 	// Runtime is the explicit Docker runtime. Empty selects the Docker default, which only the relay
 	// sidecar may do.
 	Runtime string

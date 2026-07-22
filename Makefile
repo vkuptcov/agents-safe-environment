@@ -5,7 +5,6 @@ AGENTS_BINARY := bin/agents-safe
 SESSION_BINARY := bin/codex-safe-session
 IMAGE := codex-safe-mvp:local
 CODEX_VOLUME := codex-safe-codex
-CODEX_UPDATE_CONTAINER := codex-safe-codex-update
 CODEX_INSTALL_ROOT := /opt/codex-safe/codex
 SMOKE_DIR := tests/smoke
 GOLANGCI_LINT_MODFILE := tools/go.mod
@@ -26,7 +25,7 @@ install: docker-build
 
 docker-build:
 	$(DOCKER) build -t $(IMAGE) -f container/Dockerfile .
-	$(DOCKER) run --rm --name $(CODEX_UPDATE_CONTAINER) \
+	$(DOCKER) run --rm \
 		--mount type=volume,source=$(CODEX_VOLUME),target=$(CODEX_INSTALL_ROOT) \
 		--entrypoint /usr/local/bin/codex-safe-update $(IMAGE)
 

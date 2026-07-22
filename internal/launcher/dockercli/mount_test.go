@@ -36,7 +36,6 @@ func TestBuildRunAttachedArgsAllowsWritableVolumeMount(t *testing.T) {
 	t.Parallel()
 	got, err := BuildRunAttachedArgs(CreateRequest{
 		Image:      "base-image",
-		Name:       "codex-safe-codex-update",
 		Entrypoint: "/usr/local/bin/codex-safe-update",
 		Volumes:    []VolumeMount{{Source: "codex-safe-codex", Target: "/opt/codex-safe/codex"}},
 	})
@@ -45,7 +44,6 @@ func TestBuildRunAttachedArgsAllowsWritableVolumeMount(t *testing.T) {
 	}
 	want := []string{
 		"run", "--rm",
-		"--name", "codex-safe-codex-update",
 		"--mount", "type=volume,source=codex-safe-codex,target=/opt/codex-safe/codex",
 		"--entrypoint", "/usr/local/bin/codex-safe-update",
 		"base-image",
@@ -68,12 +66,14 @@ func TestBuildRunAttachedArgsOmitsDetach(t *testing.T) {
 	}
 }
 
-func TestBuildRunAttachedArgsStillRequiresImageAndName(t *testing.T) {
+func TestBuildRunAttachedArgsRequiresOnlyImage(t *testing.T) {
 	t.Parallel()
 	if _, err := BuildRunAttachedArgs(CreateRequest{Name: "maintenance"}); err == nil {
 		t.Error("an empty image must be rejected")
 	}
-	if _, err := BuildRunAttachedArgs(CreateRequest{Image: "image"}); err == nil {
-		t.Error("an empty name must be rejected")
+	if got, err := BuildRunAttachedArgs(CreateRequest{Image: "image"}); err != nil {
+		t.Fatalf("an anonymous attached run must be accepted: %v", err)
+	} else if want := []string{"run", "--rm", "image"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildRunAttachedArgs() = %#v, want %#v", got, want)
 	}
 }

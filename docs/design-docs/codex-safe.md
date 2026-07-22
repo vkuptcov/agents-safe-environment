@@ -66,7 +66,7 @@ foreground process inside that container.
 The launcher resolves the optional Codex state directory from the host's `CODEX_HOME` or operating-system user-home
 API. It does not assume `/home/<user>`, `/Users/<user>`, or a Windows profile path. An existing resolved directory is
 mounted into the container as its Codex home; otherwise Codex uses ephemeral container-local state. The executable
-always comes from the pinned container image.
+always comes from the daemon-local Codex volume mounted read-only in the session.
 
 The container has its own Docker daemon and Docker CLI. The host Docker socket is not mounted. Nested containers use
 only the container's daemon and storage and can access host files only through paths already visible inside the
@@ -135,8 +135,8 @@ agents-safe [launcher options] [--] command [argument ...]
 - Interactive mode attaches stdin, stdout, stderr, and the terminal to the container process.
 - After successful environment setup, the Codex exit code becomes the `codex-safe` exit code.
 
-`codex-safe` always executes the image-provided `codex` binary. Arguments after `--` are Codex arguments, not an
-arbitrary executable.
+`codex-safe` always executes the volume-backed `codex` binary by absolute path. Arguments after `--` are Codex
+arguments, not an arbitrary executable.
 
 `agents-safe` requires a command. Launcher options precede that command; `--` is optional and can disambiguate a
 command name that starts with a hyphen. The command and every argument remain separate argv elements and run directly
@@ -316,7 +316,7 @@ never selected as the container's launcher binary. The complete update and failu
 Every `codex-safe` invocation runs this process through the session wrapper:
 
 ```text
-codex-safe-session run -- codex --sandbox danger-full-access [forwarded Codex arguments]
+codex-safe-session run -- /opt/codex-safe/codex/bin/codex --sandbox danger-full-access [forwarded Codex arguments]
 ```
 
 The process uses the invoking host UID and GID, the selected project directory as its working directory, the
@@ -399,7 +399,7 @@ one trusted local user rather than mutually untrusted tenants.
 
 The container image includes:
 
-- a pinned Codex CLI and its runtime dependencies at an image-owned executable path;
+- `curl` and the maintenance wrapper used to install Codex into the shared volume;
 - Docker CLI, Docker daemon, and the Compose plugin;
 - `sudo` with a validated passwordless policy for the recreated host account;
 - an init process that reaps child processes and handles signals correctly;
@@ -589,7 +589,8 @@ Before creating a container, the launcher verifies:
    source. Without the degradable role, `codex-safe` warns and uses ephemeral state while `agents-safe` skips the
    mount.
 6. The optional personal-skills source is absent or is an accessible directory representable as a read-only bind.
-7. The image resolves to the pinned digest or was explicitly supplied by the user and contains the expected Codex CLI.
+7. The image resolves to the pinned digest or was explicitly supplied by the user and preserves the session runtime
+   contract; the Codex executable comes from the separately mounted volume.
 8. The mount plan contains no conflicts or paths outside the allowed set.
 9. Any provided resource-limit cap is syntactically valid; no cap is required.
 
@@ -683,7 +684,8 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Mount an existing `$HOME/.agents/skills` read-only, allow it to be absent, and reject an invalid source.
 - Reject a dangling personal-skills path before either launcher reaches Docker.
 - Prove no missing Codex-home path is created as a launcher side effect.
-- Verify `HOME` and `CODEX_HOME`, the image-owned `codex` argv, forwarded arguments, working directory, and exit status.
+- Verify `HOME` and `CODEX_HOME`, the volume-backed absolute `codex` argv, forwarded arguments, working directory,
+  and exit status.
 - Verify `agents-safe bash` preserves direct argv, starts in the selected project, rejects an omitted command, and
   propagates the command exit status.
 - Reject reuse when a Codex-home or personal-skills change alters the creation fingerprint; diagnostic labels are not
@@ -705,7 +707,7 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Mount a temporary Codex home with sentinel configuration, global instructions, and a skill; verify Codex sees them
   and writes session state back to the host without exposing a real credential.
 - Prove personal skills are readable but not writable and that an external symlink target remains unavailable.
-- Prove a host standalone Codex binary under the mounted state cannot shadow the image-owned Linux executable.
+- Prove a host standalone Codex binary under the mounted state cannot shadow the volume-backed Linux executable.
 - Verify file-based authentication with a dedicated test account only in an opt-in credentialed acceptance test; keep
   real user credentials out of fixtures, logs, and CI artifacts.
 - Prove that the primary checkout's read-only mount cannot be remounted read-write from either container layer.

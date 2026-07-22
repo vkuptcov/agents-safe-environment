@@ -87,7 +87,8 @@ The nested runtime preserves the absolute bind-mount contract, including project
 The image contains no Codex executable or dispatcher. `make docker-build` builds the image and then uses its
 maintenance entrypoint to install the current Linux Codex release in the shared `codex-safe-codex` volume.
 `codex-safe` executes `/opt/codex-safe/codex/bin/codex` directly; the same volume directory is on `PATH` for
-interactive `agents-safe` shells. Session startup never performs a network update.
+interactive `agents-safe` shells in the base image. Derived-image enforcement of that `PATH` entry is tracked in the
+[tech debt tracker](docs/reviews/tech-debt-tracker.md). Session startup never performs a network update.
 
 The environment includes Git, Docker Engine and CLI with Buildx/BuildKit, Docker Compose V2, `curl`, `sudo`, `make`,
 `less`, and `rg`.
@@ -117,8 +118,10 @@ Update the shared Linux installation from any directory:
 ```
 
 The update runs in an ordinary isolated Docker container with the installation volume read-write. It does not require
-a Git project or `sysbox-runc`, so the update path is compatible with Docker Desktop on macOS. Project sessions remain
-Linux/Sysbox-only. The official standalone installer owns release checksums, locking, and package publication.
+a Git project or `sysbox-runc`. Its container boundary is compatible with Docker Desktop, but the current host binary
+does not yet compile for Darwin; macOS launcher support is tracked in the
+[tech debt tracker](docs/reviews/tech-debt-tracker.md). Project sessions remain Linux/Sysbox-only. The official
+standalone installer owns release checksums, locking, and package publication.
 
 Start interactive Codex for the current Git project:
 
@@ -260,14 +263,14 @@ sentinel container, and performs live assertions against the Sysbox container an
 account names, global Git config, UTF-8 text, mount modes, Git writes, daemon separation, overlapping command lifetime,
 deterministic container reuse, idle removal, concurrent first callers, nested project access, file ownership, and
 cleanup. The Codex scenario also proves Codex-home state round-trip with host ownership, read-only personal skills, an
-unavailable external symlink target, image-owned-executable shadowing rejection, and the user-mount reuse-mismatch
+unavailable external symlink target, volume-backed-executable shadowing rejection, and the user-mount reuse-mismatch
 diagnostic.
 
 See [the smoke-test README](tests/smoke/README.md) for the architecture, synchronization protocol, complete assertion
 catalog, cleanup behavior, and extension guidelines.
 
-The smoke suite was run successfully on 2026-07-15 with Docker Engine 28.3.3, Sysbox in the registered runtime set,
-and the pinned Codex CLI. Other kernel, filesystem, and Sysbox combinations must pass the same test before use.
+The smoke suite was run successfully on 2026-07-22 with Docker Engine 28.3.3, Sysbox in the registered runtime set,
+and the volume-backed Codex CLI. Other kernel, filesystem, and Sysbox combinations must pass the same test before use.
 
 ## Security boundary and omissions
 

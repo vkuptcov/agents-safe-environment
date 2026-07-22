@@ -8,7 +8,7 @@ Scope:
 - initialization through `make docker-build`;
 - explicit updates through `codex-safe update`;
 - one Docker named volume shared by session and maintenance containers;
-- Docker Desktop compatibility for the update command.
+- the Docker Desktop-compatible maintenance boundary and its current host-launcher portability limitation.
 
 Host Codex state remains owned by [Safe Environment](codex-safe.md). Session lifecycle remains owned by
 [Go Session Manager](go-session-manager.md).
@@ -107,12 +107,14 @@ The product launcher invokes the installer-created executable by absolute path:
 
 The image also prepends `/opt/codex-safe/codex/bin` to `PATH`, so an interactive `agents-safe` shell resolves the same
 executable by the bare `codex` name. If the volume is empty or absent, normal executable lookup fails; recovery is
-`codex-safe update` or `make docker-build`.
+`codex-safe update` or `make docker-build`. A derived project image can currently replace that `PATH` entry without
+failing compatibility validation; enforcing it is tracked as `TD-4` in the
+[tech debt tracker](../reviews/tech-debt-tracker.md).
 
 ### 4. Update Container
 
-Both `make docker-build` and `codex-safe update` run one attached container named `codex-safe-codex-update` with
-Docker's default runtime. The container receives:
+Both `make docker-build` and `codex-safe update` run one anonymous attached container with Docker's default runtime.
+The container receives:
 
 - the default base image;
 - normal outbound network access;
@@ -127,12 +129,9 @@ The `make docker-build` target first completes `docker build`, then starts this 
 built image. The named volume is a runtime resource and is not mounted by the Dockerfile build. If installation fails,
 the Make target fails even though Docker may already have produced the image.
 
-The container exit status becomes the `codex-safe update` exit status. A deterministic container name prevents a
-second maintenance container from starting concurrently; the installer lock remains the filesystem-level guard.
-
-The launcher does not implement special cancellation cleanup. If the local Docker client is interrupted while the
-remote container continues, its deterministic name blocks another update until the first container exits. Operators
-can inspect it with ordinary Docker commands.
+The container exit status becomes the `codex-safe update` exit status. Docker assigns the container name, while the
+official installer lock serializes concurrent writers to the shared volume. The launcher does not add a second
+Docker-level update lock or special cancellation cleanup.
 
 ### 5. Session Mount and Reuse
 
@@ -147,8 +146,11 @@ not reused without the mount. Release contents and version are not fingerprint i
 
 ### 6. Platform Boundary
 
-The update path uses only the host Docker CLI and an ordinary Linux container. It does not construct
-`DockerLauncher`, inspect Git, or require `sysbox-runc`, so the same contract works with Docker Desktop on macOS.
+The maintenance path uses only the host Docker CLI and an ordinary Linux container. It does not construct
+`DockerLauncher`, inspect Git, or require `sysbox-runc`, so its container contract is compatible with Docker Desktop.
+The current host binary still uses Linux-only terminal detection and does not compile for Darwin; enabling the public
+`codex-safe update` command on macOS is tracked as `TD-3` in the
+[tech debt tracker](../reviews/tech-debt-tracker.md).
 
 Project sessions remain Linux/Sysbox-only. This design does not add a Docker Desktop session backend or claim macOS
 project-session support.
@@ -196,7 +198,7 @@ project-session support.
 - An empty disposable volume proves the absolute executable path fails until installation.
 - An ordinary-Docker update probe proves the installer creates a usable release in a disposable volume.
 - Linux/Sysbox smoke tests prove the public session sees the read-only volume when that runtime is available.
-- A real Docker Desktop macOS run is required before claiming real-host macOS verification.
+- Darwin host-binary compilation and a real Docker Desktop macOS run remain required before claiming macOS support.
 
 ## Out of Scope
 
