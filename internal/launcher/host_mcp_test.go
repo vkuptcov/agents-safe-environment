@@ -14,8 +14,8 @@ import (
 func testChannel(t *testing.T) hostmcp.Channel {
 	t.Helper()
 	return hostmcp.Channel{
-		Parent:     "/run/user/1000/codex-safe/key",
-		Generation: "/run/user/1000/codex-safe/key/g-abc123",
+		Parent:     "/run/user/1000/agents-safe/key",
+		Generation: "/run/user/1000/agents-safe/key/g-abc123",
 		Name:       "g-abc123",
 	}
 }
@@ -107,7 +107,7 @@ func TestSidecarNameEmbedsTheGeneration(t *testing.T) {
 func TestBuildCreateRequestOmitsHostMCPForAnEmptySet(t *testing.T) {
 	t.Parallel()
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		testPlan(), "image", "codex-safe-aba8b4ca4ff345d5d0443c0c", hostMCPPlan{}, "fingerprint",
+		testPlan(), "image", "agents-safe-aba8b4ca4ff345d5d0443c0c", hostMCPPlan{}, "fingerprint",
 	)
 	if err != nil {
 		t.Fatalf("buildCreateRequest() error = %v", err)
@@ -139,7 +139,7 @@ func TestBuildCreateRequestAddsHostMCPForANonEmptySet(t *testing.T) {
 	set := oneEndpointSet(t)
 	forwarding := hostMCPPlan{set: set, channel: testChannel(t), candidate: true}
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		testPlan(), "image", "codex-safe-aba8b4ca4ff345d5d0443c0c", forwarding, "fingerprint",
+		testPlan(), "image", "agents-safe-aba8b4ca4ff345d5d0443c0c", forwarding, "fingerprint",
 	)
 	if err != nil {
 		t.Fatalf("buildCreateRequest() error = %v", err)

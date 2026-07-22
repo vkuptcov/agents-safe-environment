@@ -16,7 +16,7 @@ func TestSessionCreateRequestAlwaysCarriesExplicitSysboxRuntime(t *testing.T) {
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
 		testPlan(),
 		"agents-safe-mvp:local",
-		"codex-safe-aba8b4ca4ff345d5d0443c0c",
+		"agents-safe-aba8b4ca4ff345d5d0443c0c",
 		hostMCPPlan{},
 		"fingerprint",
 	)

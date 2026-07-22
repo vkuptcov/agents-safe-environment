@@ -144,7 +144,7 @@ example, run a non-interactive Codex turn:
 ```
 
 While Codex runs, another terminal reuses the same container for the same worktree. Each project/UID pair maps
-to one deterministic `codex-safe-<24-hex-key>` container name. The launcher inspects that exact name, validates the
+to one deterministic `agents-safe-<24-hex-key>` container name. The launcher inspects that exact name, validates the
 ownership and manager-protocol labels, and compares the `agents-safe.launch-config` creation fingerprint before
 reuse. Every invocation, including the first, runs
 `docker exec agents-safe-session run -- /opt/agents-safe/codex/bin/codex [CODEX ARG...]`; no user command owns the

@@ -18,7 +18,10 @@ session used by Codex, Claude Code, and arbitrary commands, so the namespace mus
 - New sessions and host-MCP sidecars emit only `agents-safe.*` labels.
 - Reuse and cleanup filters use the same new namespace.
 - Current docs and smoke assertions show the new label contract.
-- An existing `codex-safe.*` container is rejected as a deterministic-name conflict rather than reused.
+- A container occupying the new `agents-safe-<key>` name while carrying old `codex-safe.*` labels fails ownership
+  validation rather than being reused. This is a safety net; the sibling runtime-namespace plan also renamed the
+  container name, so a genuine legacy session runs under the old `codex-safe-<key>` name and must be removed by the
+  documented clean-break migration rather than being detected as a name conflict.
 
 ## Current Baseline
 
@@ -30,8 +33,8 @@ to Codex.
 
 - No dual-read compatibility: old labels fail ownership validation, preventing a new launcher from reusing a
   container whose creation contract it cannot prove.
-- Keep product-specific names and paths unchanged: Codex and Claude executables, their volumes, and their public
-  launchers remain product-owned.
+- Keep public product commands unchanged: `codex-safe` and `claude-safe` remain product-owned. The sibling
+  runtime-namespace plan owns the shared volume names and `/opt/agents-safe/` installation roots.
 - Do not rewrite completed or review execution plans: they are historical records; only the live contract docs move.
 
 ## Phases
@@ -66,15 +69,18 @@ Done when: focused and repository checks pass, and the plan records the result.
 
 ## Risks and Constraints
 
-- A running container created with old labels cannot be reused after upgrade. It must exit or be explicitly stopped
-  before a replacement is created; this preserves the deterministic-name and ownership safety boundary.
+- A running container created with old labels is never reused: it either occupies a different (old) name and is not
+  found, or fails ownership validation under the new name. Because the sibling runtime-namespace plan also renamed the
+  container name, a legacy `codex-safe-<key>` session is not detected by name and a new launch would create a second,
+  parallel container for the same worktree. Legacy sessions and volumes must be stopped and removed by the clean-break
+  migration before launching a replacement; this preserves the single-active-session and ownership boundary.
 
 ## Out of Scope
 
 - Renaming public `codex-safe` or `claude-safe` commands.
-- Renaming product executable volumes, executable paths, or product-state labels.
-- Renaming generic container names, the session wrapper command, images, and runtime socket paths; these need a
-  separate migration because they are broader externally visible identifiers.
+- Renaming product-state labels.
+- Renaming generic container names, the session wrapper command, images, and runtime socket paths; these are broader
+  externally visible identifiers, owned by the sibling agents-safe runtime-namespace plan landing in the same change.
 
 ## Progress Notes
 

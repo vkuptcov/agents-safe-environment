@@ -117,7 +117,7 @@ hex(SHA-256(decimal UID + NUL + canonical worktree root))[:24]
 The 24 hexadecimal characters provide a fixed-length Docker-safe key. The launcher uses this container name:
 
 ```text
-codex-safe-<project key>
+agents-safe-<project key>
 ```
 
 The UID remains part of the hash input and is also stored explicitly in `agents-safe.host-uid`; repeating it in the
@@ -147,9 +147,12 @@ The project path and UID determine the container name. After ownership and proto
 `agents-safe.launch-config` is the sole creation-time reuse predicate; the product-state, personal-skills, and host-MCP
 labels are not compared independently.
 
-The label namespace is part of the ownership proof. A container carrying the previous `codex-safe.*` keys is rejected
-as a deterministic-name conflict after an upgrade; it is never read as a compatible `agents-safe.*` session. Let that
-container finish or stop it deliberately before launching a replacement.
+The label namespace is part of the ownership proof: a container occupying this session's `agents-safe-<key>` name that
+carries the previous `codex-safe.*` keys fails ownership validation and is never read as a compatible session. This is a
+safety net, not the upgrade path. The rename also changed the container name, so a legacy session for the same worktree
+runs under the previous `codex-safe-<key>` name; a new launch computing `agents-safe-<key>` does not see it by name and
+would otherwise create a second, parallel container for that worktree. Stop or remove any legacy `codex-safe-*` session
+and its installation volumes before launching a replacement, as the runtime-namespace migration requires.
 
 The deterministic name is the creation lock. Docker permits only one container with a given name, so concurrent
 launchers cannot both create the same project session.
@@ -161,14 +164,14 @@ UID:          1000
 Project root: /home/alex/sources/example-project
 Hash input:   1000\0/home/alex/sources/example-project
 Project key:  aba8b4ca4ff345d5d0443c0c
-Name:         codex-safe-aba8b4ca4ff345d5d0443c0c
+Name:         agents-safe-aba8b4ca4ff345d5d0443c0c
 ```
 
 The relevant Docker create arguments are:
 
 ```bash
 docker run --detach --rm \
-    --name codex-safe-aba8b4ca4ff345d5d0443c0c \
+    --name agents-safe-aba8b4ca4ff345d5d0443c0c \
     --label agents-safe.managed=true \
     --label agents-safe.project-path=/home/alex/sources/example-project \
     --label agents-safe.host-uid=1000 \
@@ -183,7 +186,7 @@ docker run --detach --rm \
 The path remains inspectable without decoding the hash:
 
 ```bash
-docker inspect codex-safe-aba8b4ca4ff345d5d0443c0c \
+docker inspect agents-safe-aba8b4ca4ff345d5d0443c0c \
     --format '{{json .Config.Labels}}'
 ```
 
