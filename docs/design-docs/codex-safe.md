@@ -303,10 +303,11 @@ rather than being mounted read-only while remaining writable through the other p
 
 #### Codex executable and process
 
-The container image contains a checksum-pinned Linux Codex bootstrap and a small image-owned dispatcher. Every session
-mounts the daemon-local `codex-safe-codex` volume read-only at `/opt/codex-safe/codex`. The dispatcher uses the
-official-installer release in that volume when available and the pinned bootstrap otherwise. Routine updates happen
-only through `codex-safe update`; session startup performs no network update.
+The container image contains no Codex executable or dispatcher. Every session mounts the daemon-local
+`codex-safe-codex` volume read-only at `/opt/codex-safe/codex`, and the launcher runs its `bin/codex` by absolute path.
+`make docker-build` initializes or updates the volume after building the local image; later routine updates use
+`codex-safe update`. Session startup performs no network update and fails executable lookup if the installation is
+absent.
 
 Host-side Codex binaries, including standalone package caches under the mounted state directory, remain data and are
 never selected as the container's launcher binary. The complete update and failure contract is owned by
@@ -614,8 +615,8 @@ mode.
   project's own image with no capability, no Docker socket, and a read-only root filesystem.
 - Unsafe fallback behavior is forbidden.
 - Host-side orchestration and Docker argument construction are implemented in Go.
-- `codex-safe` executes the pinned image-owned Codex binary and sets explicit container-local `CODEX_HOME` only when
-  the corresponding host mount is present.
+- `codex-safe` executes the Codex installation from the launcher-managed read-only volume and sets explicit
+  container-local `CODEX_HOME` only when the corresponding host mount is present.
 - `agents-safe` executes the requested command only inside the managed container and never through a host shell.
 - Arguments and paths are separate argv elements and are never passed through `eval` or shell reinterpretation.
 - After the final managed command finishes normally, the session does not intentionally leave nested containers

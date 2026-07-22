@@ -17,4 +17,4 @@ Use [README.md](README.md) for design-doc format and maintenance rules.
 - [Host-Backed Dependency Caches](host-backed-dependency-caches.md): explicit uv, Go, Maven, and Gradle cache
   directories, tool-specific sharing policies, and host-state trust boundaries.
 - [Persistent Container Codex Installation and Updates](persistent-codex-installation.md): Docker-managed Linux Codex
-  releases, official standalone updates, image bootstrap fallback, and concurrent read-only reuse.
+  installation, build-time initialization, official standalone updates, and concurrent read-only reuse.

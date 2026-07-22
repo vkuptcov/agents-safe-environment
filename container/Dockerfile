@@ -41,20 +41,6 @@ ADD --checksum=sha256:cc1e8ec89aef1422e0741be196f9ed099e2e09d2f48f30f27cd44a22ef
 
 FROM crun-${TARGETARCH} AS crun
 
-# The image keeps one checksum-pinned Codex binary as an offline fallback. Routine updates use the
-# official standalone installer and a Docker named volume, so they do not rebuild this image.
-FROM scratch AS codex-amd64
-ADD --checksum=sha256:37c985be9d89e8c4f43b3aa0594c1213eac212d30ae2b95221f08fec807515d1 \
-    https://github.com/openai/codex/releases/download/rust-v0.144.4/codex-x86_64-unknown-linux-musl.tar.gz \
-    /codex.tar.gz
-
-FROM scratch AS codex-arm64
-ADD --checksum=sha256:4d07243ef4ae6786b8b321d7aea3f9be4e1d2c597ae5407e7c1b9873334082b2 \
-    https://github.com/openai/codex/releases/download/rust-v0.144.4/codex-aarch64-unknown-linux-musl.tar.gz \
-    /codex.tar.gz
-
-FROM codex-${TARGETARCH} AS codex
-
 # Pin the base by digest so a rebuild does not silently consume a different Ubuntu image.
 FROM ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
 
@@ -87,26 +73,22 @@ RUN apt-get update \
 COPY container/bashrc /etc/codex-safe/bashrc
 COPY --from=crun --chmod=0755 /crun /usr/local/bin/crun
 COPY --from=session-builder --chmod=0755 /out/codex-safe-session /usr/local/bin/codex-safe-session
-COPY --chmod=0755 container/codex-dispatcher /usr/local/bin/codex
 COPY --chmod=0755 container/codex-safe-update /usr/local/bin/codex-safe-update
 
-# The dispatcher selects the volume installation when present and otherwise executes this pinned
-# bootstrap. The official installer wrapper is the only image path that writes the volume.
-COPY --from=codex /codex.tar.gz /tmp/codex.tar.gz
-RUN tar -xzf /tmp/codex.tar.gz -C /tmp \
-    && install -D -m 0755 /tmp/codex-*-unknown-linux-musl /usr/local/libexec/codex-bootstrap \
-    && rm -rf /tmp/codex.tar.gz /tmp/codex-*-unknown-linux-musl
-
 # Fail the image build immediately if any copied binary is unusable on the target platform, and
-# pin the Codex version so an unexpected artifact cannot pass silently.
+# verify the updater wrapper before the post-build volume installation runs.
 RUN /usr/local/bin/crun --version \
     && /usr/local/bin/codex-safe-session --help \
     && test -x /usr/local/bin/codex-safe-update \
-    && /usr/local/bin/codex --version | grep -q 'codex-cli 0.144.4'
+    && sh -n /usr/local/bin/codex-safe-update
 
 # Both Codex and nested containers use only the daemon socket created inside the outer
 # container. This path is not a bind mount of /var/run/docker.sock from the host.
 ENV DOCKER_HOST=unix:///var/run/docker.sock
+
+# `codex-safe` invokes the volume binary by absolute path. This PATH entry also makes the same
+# installation available as `codex` in interactive `agents-safe` shells.
+ENV PATH="/opt/codex-safe/codex/bin:${PATH}"
 
 # Project environments and repository validation build images through the private Docker daemon.
 # Select BuildKit so Docker receives the architecture arguments this Dockerfile's multi-architecture

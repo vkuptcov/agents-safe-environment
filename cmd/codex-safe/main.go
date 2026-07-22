@@ -45,7 +45,7 @@ func config() cli.Config {
 		Name:         "codex-safe",
 		DefaultImage: defaultImage,
 		Usage:        usage,
-		// The product always runs the image-owned Codex binary. Arguments after -- are Codex
+		// The product always runs the volume-backed Codex executable. Arguments after -- are Codex
 		// arguments, never a standalone executable, so no arbitrary command reaches the container.
 		BuildCommand:            launcher.CodexCommand,
 		WarnWhenCodexHomeAbsent: true,

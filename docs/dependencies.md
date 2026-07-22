@@ -63,9 +63,9 @@ artifacts. Do not add packages merely for local convenience without documenting 
 ### Approved Runtime Update Channel
 
 - OpenAI's standalone installer at `https://chatgpt.com/codex/install.sh` owns routine Codex updates in the
-  `codex-safe-codex` volume. The repository keeps a checksum-pinned image bootstrap, but an explicit
-  `codex-safe update` intentionally resolves the current official Linux release and relies on the installer's release
-  checksum verification. No update runs automatically at session startup.
+  `codex-safe-codex` volume. `make docker-build` invokes it after building the local image, and an explicit
+  `codex-safe update` invokes it later without rebuilding. Both intentionally resolve the current official Linux
+  release and rely on the installer's release checksum verification. No update runs automatically at session startup.
 
 ### Approved Smoke-Only Images
 

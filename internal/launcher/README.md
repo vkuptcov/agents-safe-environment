@@ -11,7 +11,7 @@ Child packages:
 
 ## Non-test files
 
-- `codex.go` — constructs the image-owned Codex command.
+- `codex.go` — constructs the absolute command for the volume-backed Codex installation.
 - `codex_update.go` — runs the official installer in an isolated maintenance container with the shared volume.
 - `command_execution.go` — executes the session wrapper and classifies bounded lifecycle retries.
 - `container_lifecycle.go` — owns deterministic reuse, create-race, wait, ownership, and preflight policy.

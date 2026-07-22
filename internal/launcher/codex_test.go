@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestCodexBinaryPathIsImageOwnedAbsolute(t *testing.T) {
+func TestCodexBinaryPathUsesTheSharedInstallation(t *testing.T) {
 	t.Parallel()
-	if CodexBinaryPath != "/usr/local/bin/codex" {
-		t.Fatalf("CodexBinaryPath = %q, want the image-owned absolute path", CodexBinaryPath)
+	if CodexBinaryPath != "/opt/codex-safe/codex/bin/codex" {
+		t.Fatalf("CodexBinaryPath = %q, want the volume-backed absolute path", CodexBinaryPath)
 	}
 }
 
@@ -67,10 +67,10 @@ func TestCodexCommandKeepsCustomConfiguredSandbox(t *testing.T) {
 	}
 }
 
-func TestCodexCommandKeepsDirectUpdateLeadingForDispatcher(t *testing.T) {
+func TestCodexCommandTreatsDirectUpdateLikeAnyForwardedCommand(t *testing.T) {
 	t.Parallel()
 	got := CodexCommand([]string{"--sandbox", "danger-full-access", "--model", "gpt-5"}, []string{"update"})
-	want := []string{CodexBinaryPath, "update"}
+	want := []string{CodexBinaryPath, "--sandbox", "danger-full-access", "--model", "gpt-5", "update"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("CodexCommand() = %#v, want %#v", got, want)
 	}

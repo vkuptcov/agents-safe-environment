@@ -16,8 +16,8 @@ creating another nested Docker environment.
   default `~/.codex`; `agents-safe` mounts it only when it already exists. A mounted home is read-write at
   `$HOME/.codex`, and only commands with that mount receive `CODEX_HOME=$HOME/.codex`.
 - Personal authored skills under `$HOME/.agents/skills` are mounted read-only when present.
-- The image-owned Codex dispatcher uses the shared read-only Linux installation when present and a pinned bootstrap
-  otherwise; a mounted host Codex home cannot shadow either path.
+- `codex-safe` executes Codex directly from the shared read-only Linux installation; a mounted host Codex home cannot
+  shadow that absolute path.
 - A regular Git checkout is mounted read-write without exposing other host paths.
 - A linked worktree keeps its original absolute path; its primary checkout is read-only while the common `.git`
   directory stays writable.
@@ -64,8 +64,9 @@ make install
 ```
 
 This installs `codex-safe` and `agents-safe` into `GOBIN`, or into the first `GOPATH/bin` when `GOBIN` is unset,
-and builds the local `codex-safe-mvp:local` image. Make sure that Go binary directory is on `PATH`; the launchers can
-then be run from any project directory.
+builds the local `codex-safe-mvp:local` image, and installs the current Linux Codex release into the
+`codex-safe-codex` volume. Make sure that Go binary directory is on `PATH`; the launchers can then be run from any
+project directory.
 
 For repository-local development builds, use:
 
@@ -83,10 +84,10 @@ make test
 The image pins Ubuntu 24.04 by digest. It also pins the official `crun` 1.28 binary by SHA-256 for the nested daemon.
 The nested runtime preserves the absolute bind-mount contract, including project paths that contain spaces.
 
-The image keeps the pinned Codex CLI (`codex-cli 0.144.4`, the `openai/codex` standalone musl release
-`rust-v0.144.4`) as `/usr/local/libexec/codex-bootstrap`, verified by per-architecture SHA-256 during the build.
-`/usr/local/bin/codex` is an image-owned dispatcher: it uses the Linux release in the shared `codex-safe-codex`
-volume when present and falls back to the bootstrap. Session startup never performs a network update.
+The image contains no Codex executable or dispatcher. `make docker-build` builds the image and then uses its
+maintenance entrypoint to install the current Linux Codex release in the shared `codex-safe-codex` volume.
+`codex-safe` executes `/opt/codex-safe/codex/bin/codex` directly; the same volume directory is on `PATH` for
+interactive `agents-safe` shells. Session startup never performs a network update.
 
 The environment includes Git, Docker Engine and CLI with Buildx/BuildKit, Docker Compose V2, `curl`, `sudo`, `make`,
 `less`, and `rg`.
@@ -136,8 +137,8 @@ While Codex runs, another terminal reuses the same container for the same worktr
 to one deterministic `codex-safe-<24-hex-key>` container name. The launcher inspects that exact name, validates the
 ownership and manager-protocol labels, and compares the `codex-safe.launch-config` creation fingerprint before
 reuse. Every invocation, including the first, runs
-`docker exec codex-safe-session run -- /usr/local/bin/codex [CODEX ARG...]`; no user command owns the container
-lifecycle.
+`docker exec codex-safe-session run -- /opt/codex-safe/codex/bin/codex [CODEX ARG...]`; no user command owns the
+container lifecycle.
 
 A relaunch that resolves a different Codex home or personal-skills source for a still-running worktree is rejected
 with a finish-active-session diagnostic: user mounts are fixed when the container is created, so the launcher

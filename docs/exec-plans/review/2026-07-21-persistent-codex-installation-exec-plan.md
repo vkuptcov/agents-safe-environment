@@ -11,33 +11,33 @@
 
 ## Objective
 
-Make routine container Codex updates a single `codex-safe update` operation without rebuilding project images. Keep
-the implementation small by delegating release layout, checksums, locking, and publication to OpenAI's official
-standalone installer.
+Keep one Linux Codex installation in the daemon-local volume. Initialize it after the base image build and update it
+later through `codex-safe update`, without rebuilding project images or retaining a second bootstrap binary.
 
 ## Done Criteria
 
 - `codex-safe update` runs without Git discovery or the Sysbox session preflight.
 - All sessions share one daemon-local Codex volume and mount it read-only.
 - The maintenance container is the only supported read-write path and receives no project or host Codex state.
-- The image dispatcher uses the volume installation when available and the pinned bootstrap otherwise.
-- `codex-safe -- update` is forwarded and rejected inside the session with a host-update diagnostic.
+- `make docker-build` initializes or updates the shared volume after building the local image.
+- The launcher executes only the absolute volume installation path; the image contains no Codex dispatcher.
+- `codex-safe -- update` is forwarded directly to the read-only volume installation and is not a supported writer.
 - Focused Go tests, repository gates, image build, disposable-volume Docker proof, and docs checks pass or have an
   explicit environment blocker.
 
 ## Current Baseline
 
-The image pins one raw Codex binary at `/usr/local/bin/codex`, so every update requires an image rebuild. The first
-implementation attempt added a custom store protocol, manifests, digest validation, daemon/volume CRUD, and publisher
-orchestration before a user-visible update command existed. The official installer already provides the package
-layout and update mechanics that code attempted to reproduce.
+The simplified first implementation still keeps two Codex binaries: a checksum-pinned bootstrap in the image and the
+routine installation in `codex-safe-codex`. This duplicates the executable solely to recover from an empty volume,
+even though this repository distributes a local image through a networked `make docker-build` workflow.
 
 ## Implementation Decisions
 
 - Official installer: run `https://chatgpt.com/codex/install.sh` with its documented non-interactive environment.
 - One volume: use `codex-safe-codex` per Docker daemon; store executable packages only.
 - Separate path: mount the volume at `/opt/codex-safe/codex`, not under host `CODEX_HOME`.
-- Simple dispatcher: select the installer-created alias when executable, otherwise use the pinned image bootstrap.
+- Single executable location: the launcher invokes only the installer-created alias in `codex-safe-codex`.
+- Build initialization: `make docker-build` builds the image, then runs its maintenance entrypoint against the volume.
 - Docker-native creation: let `docker run --mount type=volume` create an absent volume; add no volume CRUD API.
 - Trusted writer: use the default base image, default Docker runtime, one read-write volume, and no sensitive binds.
 - Minimal concurrency: use the deterministic maintenance-container name plus the official installer lock.
@@ -58,13 +58,13 @@ Done when: the design has no custom release protocol, publisher, manifest, daemo
 ### Phase 2: Implement Update and Selection
 Purpose: Deliver the host command, trusted writer, and read-only reader path.
 Status: done
-Done when: a new session can execute either the installed release or bootstrap, and the host command updates the
-shared volume without project discovery.
+Done when: a new session executes the installed release, and the host command updates the shared volume without
+project discovery.
 
 1. Add `codex-safe update` dispatch before the shared launcher CLI.
 2. Add the attached default-runtime maintenance request with only the writable volume.
 3. Add the read-only volume to every session create request and bump the fingerprint schema.
-4. Install the dispatcher, updater wrapper, bootstrap path, and `curl` in the image.
+4. Install the updater wrapper and `curl` in the image and invoke the volume executable by absolute path.
 
 ### Phase 3: Tests and Documentation
 Purpose: Prove the simplified boundaries and make the operational behavior discoverable.
@@ -73,7 +73,7 @@ Done when: unit tests cover dispatch/mount/exit behavior and current docs descri
 
 1. Test command routing, strict update arguments, and exit-code propagation.
 2. Test exact read-only session and read-write maintenance Docker argv.
-3. Test dispatcher fallback, updated selection, and direct-update rejection in the built image.
+3. Test the volume installation, empty-volume failure, and direct absolute executable path in the built image.
 4. Update README, architecture, dependency, testing, and package documentation.
 
 ### Phase 4: Runtime Verification and Handoff
@@ -88,15 +88,27 @@ Done when: available gates pass, unavailable real-host checks are recorded exact
 5. Record Docker Desktop macOS verification as passed only after a real macOS run.
 6. Move this plan to `review/` after implementation and all available gates complete.
 
+### Phase 5: Keep Codex Only in the Volume
+Purpose: Remove the redundant image bootstrap while preserving explicit updates and read-only session reuse.
+Status: done
+Done when: the base-image build initializes the volume, and no Codex executable remains in the image layers.
+
+1. Remove the pinned Codex download, checksum, bootstrap installation, and fallback branch from the image.
+2. Make `make docker-build` run the isolated updater after the image build.
+3. Remove the dispatcher and invoke the volume executable directly by absolute path.
+4. Update tests and durable documentation for the single-location contract.
+5. Run the focused, repository, Docker, documentation, and real Sysbox gates.
+
 ## Validation Gates
 
 - `go test ./cmd/codex-safe ./internal/launcher/dockercli ./internal/launcher` passes.
 - `go vet ./cmd/codex-safe ./internal/launcher/dockercli ./internal/launcher` passes.
-- `sh -n container/codex-dispatcher container/codex-safe-update` passes.
+- `sh -n container/codex-safe-update` passes.
 - `make lint` and `make test` pass.
-- `make docker-build` passes and `/usr/local/bin/codex --version` uses the pinned bootstrap in an empty volume.
+- `make docker-build` passes and a read-only session-style mount executes Codex from `codex-safe-codex`.
 - A disposable-volume Docker run of `/usr/local/bin/codex-safe-update` succeeds, and a later read-only run reports the
-  installed version through `/usr/local/bin/codex`.
+  installed version through `/opt/codex-safe/codex/bin/codex`.
+- An empty disposable volume has no executable at the documented absolute path and selects no image binary.
 - Session Docker argv contains `type=volume,source=codex-safe-codex,target=/opt/codex-safe/codex,readonly`.
 - Maintenance Docker argv contains the same volume without `readonly`, no bind mounts, no Sysbox runtime, and no
   Docker socket.
@@ -112,8 +124,8 @@ Done when: available gates pass, unavailable real-host checks are recorded exact
   exits. Its deterministic name prevents a second writer meanwhile.
 - The volume is daemon-wide. Users with Docker access can replace it, but they already control the images and
   containers in this trust boundary.
-- The pinned bootstrap remains older until the image itself is refreshed; it is recovery behavior, not the normal
-  update source.
+- Removing or pruning the volume makes Codex unavailable until `codex-safe update` or `make docker-build` succeeds.
+- `make docker-build` now has a networked runtime side effect after the image itself has been built successfully.
 - The current project-session backend still requires Linux and Sysbox.
 
 ## Out of Scope
@@ -134,3 +146,9 @@ Done when: available gates pass, unavailable real-host checks are recorded exact
 - 2026-07-21: Focused Go tests/vet, `make lint`, `make test`, `make docker-build`, `make test-smoke-go`, and
   `make check-docs` passed. A real Docker Desktop macOS host was unavailable, so macOS compatibility is implemented
   but not real-host verified.
+- 2026-07-22: Removed the pinned bootstrap and then removed the dispatcher after owner feedback. The launcher and
+  interactive `PATH` now resolve the installer-created volume executable directly. `make docker-build` builds the
+  image and updates the only Codex installation in the daemon-local volume.
+- 2026-07-22: Focused tests, `make lint`, `make test`, `make docker-build`, disposable empty/install/read-only proofs,
+  `make check-docs`, and the complete `make test-smoke-go` suite passed. Credentialed acceptance remained skipped
+  because no test credentials were supplied; a real Docker Desktop macOS run remains unavailable.
