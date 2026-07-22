@@ -48,6 +48,11 @@ artifacts. Do not add packages merely for local convenience without documenting 
 
 ### Approved Runtime Packages
 
+- `dnsutils`, `file`, `iproute2`, `jq`, `lsof`, `netcat-openbsd`, `procps`, `sqlite3`, `unzip`, and `xz-utils` —
+  approved by the owner on 2026-07-22 for evidence-based work inside managed sessions. Together they provide
+  structured JSON and SQLite inspection, process and socket visibility, IP/DNS/TCP diagnosis, file identification,
+  and common archive extraction without adding project-specific language toolchains or linters.
+
 - `curl` — approved by the owner on 2026-07-21 for product update commands. Isolated maintenance containers use it to
   download the official OpenAI and Anthropic installers and their release assets. It is not used during normal
   session startup.

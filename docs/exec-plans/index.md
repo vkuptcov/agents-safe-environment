@@ -6,6 +6,7 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Review
 
+- [Container Diagnostic Tools](review/2026-07-22-container-diagnostic-tools-exec-plan.md)
 - [agents-safe Runtime Namespace](review/2026-07-22-agents-safe-runtime-namespace-exec-plan.md)
 - [agents-safe Container Labels](review/2026-07-22-agents-safe-container-labels-exec-plan.md)
 - [claude-safe Support](review/2026-07-22-claude-safe-support-exec-plan.md)
