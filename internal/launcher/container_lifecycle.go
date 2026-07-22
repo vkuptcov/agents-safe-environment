@@ -191,9 +191,11 @@ func (attempt *launchAttempt) validateOwnership(inspection dockercli.ContainerIn
 func (attempt *launchAttempt) validateRunningFingerprint(inspection dockercli.ContainerInspection) error {
 	if running := inspection.Config.Labels[launchConfigLabel]; running != attempt.launchFingerprint {
 		return &launchConfigMismatchError{
-			projectRoot: attempt.plan.ProjectRoot,
-			running:     running,
-			requested:   attempt.launchFingerprint,
+			containerName: attempt.containerName,
+			containerID:   inspection.ID,
+			projectRoot:   attempt.plan.ProjectRoot,
+			running:       running,
+			requested:     attempt.launchFingerprint,
 		}
 	}
 	return nil

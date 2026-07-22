@@ -391,9 +391,10 @@ The following values are deliberately excluded:
 A running container is reusable only when its ownership, protocol, and creation-time fingerprint match the current
 request.
 
-On mismatch, the launcher fails with the running and requested fingerprints and asks the user to finish the active
-session. It never silently uses stale creation-time settings, stops another command, or replaces the container. After
-the active container exits and is removed, the next invocation creates one from the resolved config.
+On mismatch, the launcher fails with the active container's deterministic name and full ID, the running and requested
+fingerprints, and asks the user to finish the active session. It never silently uses stale creation-time settings,
+stops another command, or replaces the container. After the active container exits and is removed, the next invocation
+creates one from the resolved config.
 
 Command-time parameters are the configured and invocation argv for `codex-safe`, `claude-safe`, or `agents-safe`.
 They are not part of the creation-time fingerprint and are applied to every command through `docker exec`, including

@@ -110,15 +110,18 @@ func creationFingerprint(
 }
 
 type launchConfigMismatchError struct {
-	projectRoot string
-	running     string
-	requested   string
+	containerName string
+	containerID   string
+	projectRoot   string
+	running       string
+	requested     string
 }
 
 func (err *launchConfigMismatchError) Error() string {
 	return fmt.Sprintf(
-		"a managed session for worktree %q has creation fingerprint %q, but this launch resolved %q; "+
+		"managed session container %q (ID %q) for worktree %q has creation fingerprint %q, "+
+			"but this launch resolved %q; "+
 			"finish the active session before retrying, then relaunch",
-		err.projectRoot, err.running, err.requested,
+		err.containerName, err.containerID, err.projectRoot, err.running, err.requested,
 	)
 }

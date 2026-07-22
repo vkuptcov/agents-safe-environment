@@ -91,18 +91,26 @@ func TestCreationFingerprintKeepsVersionFiveBaselines(t *testing.T) {
 
 func TestDockerLaunchRejectsFingerprintMismatchBeforePreflight(t *testing.T) {
 	plan := simplePlan()
+	containerID := strings.Repeat("b", 64)
+	containerName := mustContainerName(t, 1000, plan.ProjectRoot)
 	labels := matchingLabels(t, plan, 1000)
 	labels[launchConfigLabel] = strings.Repeat("f", 64)
 	runner := &fakeCommandRunner{outputs: []commandResult{{
-		output: inspectionJSON(t, strings.Repeat("b", 64), true, "running", labels),
+		output: inspectionJSON(t, containerID, true, "running", labels),
 	}}}
 	err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{})
 	if err == nil || !strings.Contains(err.Error(), "creation fingerprint") || !strings.Contains(err.Error(), "finish the active session") {
 		t.Fatalf("Launch() error = %v, want fingerprint mismatch", err)
 	}
+	if !strings.Contains(err.Error(), containerName) || !strings.Contains(err.Error(), containerID) {
+		t.Fatalf("Launch() error = %v, want container name %q and ID %q", err, containerName, containerID)
+	}
 	var mismatch *launchConfigMismatchError
 	if !errors.As(err, &mismatch) {
 		t.Fatalf("Launch() error = %T, want launchConfigMismatchError", err)
+	}
+	if mismatch.containerName != containerName || mismatch.containerID != containerID {
+		t.Fatalf("mismatch container = %q/%q, want %q/%q", mismatch.containerName, mismatch.containerID, containerName, containerID)
 	}
 	if len(runner.combinedCalls) != 1 || len(runner.runCalls) != 0 {
 		t.Fatalf("mismatch reached Docker lifecycle: combined %#v run %#v", runner.combinedCalls, runner.runCalls)

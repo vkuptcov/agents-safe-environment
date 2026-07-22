@@ -223,8 +223,9 @@ The launcher follows this algorithm:
 2. Inspect that exact name.
 3. If it does not exist, create it with `docker run --detach --rm`.
 4. If an ownership, project, UID, or manager-protocol label differs, fail with a name-conflict diagnostic.
-5. If it is running and the creation fingerprint differs, report that the active session uses a different immutable
-   launch configuration and ask the user to finish that session before retrying.
+5. If it is running and the creation fingerprint differs, report the container's deterministic name and full ID,
+   explain that the active session uses a different immutable launch configuration, and ask the user to finish that
+   session before retrying.
 6. If it is running and the fingerprint matches, run the wrapper in it.
 7. If it is not running, or its manager rejects registration during shutdown, wait a bounded time for the name to be
    released and retry once.
