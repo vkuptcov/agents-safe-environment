@@ -47,8 +47,10 @@ FROM ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebff
 ARG DEBIAN_FRONTEND=noninteractive
 
 # docker.io intentionally supplies both the client and a daemon: the daemon runs inside the
-# Sysbox container, while the host Docker socket is never mounted. The remaining packages are
-# the minimum interactive tooling exercised by the MVP smoke test.
+# Sysbox container, while the host Docker socket is never mounted. nodejs is the runtime the
+# Claude Code plugin hooks (`.mjs` session and stop-review scripts) shell out to; without it the
+# Stop hook fails with `node: not found`. The remaining packages are the minimum interactive
+# tooling exercised by the MVP smoke test.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         bash \
@@ -61,10 +63,12 @@ RUN apt-get update \
         git \
         less \
         make \
+        nodejs \
         ripgrep \
         sudo \
         tini \
     && docker buildx version \
+    && node --version \
     && rm -rf /var/lib/apt/lists/*
 
 # The Go entrypoint reconciles the host account, prepares its home and sudo policy, starts the
