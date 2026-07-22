@@ -14,7 +14,7 @@ import (
 
 const (
 	goSmokeEnv     = "CODEX_SAFE_RUN_SYSBOX_SMOKE"
-	goSmokeImage   = "codex-safe-mvp:local"
+	goSmokeImage   = "agents-safe-mvp:local"
 	nestedImage    = "alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
 	smokeTimeout   = 3 * time.Minute
 	commandTimeout = 90 * time.Second

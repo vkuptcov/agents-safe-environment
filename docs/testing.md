@@ -22,7 +22,7 @@ code change complete when practical.
 go test ./internal/launcher
 go test ./internal/session
 go test ./internal/container
-go test ./cmd/codex-safe ./cmd/claude-safe ./cmd/codex-safe-session
+go test ./cmd/codex-safe ./cmd/claude-safe ./cmd/agents-safe-session
 ```
 
 ## Completion Rules

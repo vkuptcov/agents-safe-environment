@@ -49,7 +49,7 @@ func isRetryableExecError(err error) bool {
 	}
 	message := strings.ToLower(commandError.CommandStderr())
 	if dockercli.ExitCode(err) == 125 {
-		return strings.Contains(message, "codex-safe-session: register session command")
+		return strings.Contains(message, "agents-safe-session: register session command")
 	}
 	if dockercli.ExitCode(err) != 1 || !strings.Contains(message, "error response from daemon:") {
 		return false

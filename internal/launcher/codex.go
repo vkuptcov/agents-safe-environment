@@ -4,9 +4,9 @@ import "strings"
 
 const (
 	// CodexInstallationVolume is the daemon-local volume shared by every managed session.
-	CodexInstallationVolume = "codex-safe-codex"
+	CodexInstallationVolume = "agents-safe-codex"
 	// CodexInstallationRoot is the fixed path where sessions mount the volume read-only.
-	CodexInstallationRoot = "/opt/codex-safe/codex"
+	CodexInstallationRoot = "/opt/agents-safe/codex"
 	// CodexBinaryPath is the installer-created executable used by the product launcher.
 	CodexBinaryPath = CodexInstallationRoot + "/bin/codex"
 )

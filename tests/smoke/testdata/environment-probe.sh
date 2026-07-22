@@ -9,9 +9,9 @@ actual_group="$(id -gn)"
 actual_home="$HOME"
 passwd_home="$(getent passwd "$actual_user" | cut -d: -f6)"
 sudo_uid="$(sudo --non-interactive id -u)"
-sudoers_mode="$(stat -c '%a' /etc/sudoers.d/codex-safe-host)"
+sudoers_mode="$(stat -c '%a' /etc/sudoers.d/agents-safe-host)"
 sudoers_writable=false
-[[ -w /etc/sudoers.d/codex-safe-host ]] && sudoers_writable=true
+[[ -w /etc/sudoers.d/agents-safe-host ]] && sudoers_writable=true
 
 actual_git_marker="$(git config --global --get codex-safe-smoke.marker)"
 git_writable=false

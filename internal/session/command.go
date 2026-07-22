@@ -42,7 +42,7 @@ type CommandConfig struct {
 }
 
 // CommandExitError retains a child-process failure together with the exact
-// shell-compatible status the codex-safe-session process must return.
+// shell-compatible status the agents-safe-session process must return.
 type CommandExitError struct {
 	err               error
 	exitCode          int

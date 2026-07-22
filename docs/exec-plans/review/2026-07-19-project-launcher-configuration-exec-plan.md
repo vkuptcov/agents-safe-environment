@@ -4,7 +4,7 @@
 - Created: 2026-07-19
 - Design:
   - [`docs/design-docs/project-launcher-configuration.md`](../../design-docs/project-launcher-configuration.md)
-  - [`docs/design-docs/codex-safe.md`](../../design-docs/codex-safe.md)
+  - [`docs/design-docs/agents-safe.md`](../../design-docs/agents-safe.md)
   - [`docs/design-docs/host-mcp-forwarding.md`](../../design-docs/host-mcp-forwarding.md)
 - Scope:
   - `cmd/agents-safe/`, `cmd/codex-safe/`, and `internal/cli/`

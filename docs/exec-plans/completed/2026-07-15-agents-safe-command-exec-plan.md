@@ -2,7 +2,7 @@
 
 - Status: completed
 - Created: 2026-07-15
-- Design: [Safe Environment for Running Codex Agents](../../design-docs/codex-safe.md)
+- Design: [Safe Environment for Running Agents](../../design-docs/agents-safe.md)
 - Scope:
   - `cmd/agents-safe/`
   - `Makefile`

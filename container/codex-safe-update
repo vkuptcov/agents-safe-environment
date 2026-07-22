@@ -3,7 +3,7 @@
 set -eu
 umask 022
 
-installation_root="/opt/codex-safe/codex"
+installation_root="/opt/agents-safe/codex"
 installer="$(mktemp)"
 trap 'rm -f "$installer"' EXIT INT TERM
 

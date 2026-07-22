@@ -21,7 +21,7 @@ container is removed after its final command and idle timeout.
 A project can instead add one file:
 
 ```dockerfile
-ARG AGENTS_SAFE_BASE=codex-safe-mvp:local
+ARG AGENTS_SAFE_BASE=agents-safe-mvp:local
 FROM ${AGENTS_SAFE_BASE}
 
 RUN apt-get update \
@@ -87,7 +87,7 @@ The launcher first checks for a reusable deterministic session. Only the new-con
 The local tag is stable for the worktree and invoking user:
 
 ```text
-codex-safe-project-<project-key>:local
+agents-safe-project-<project-key>:local
 ```
 
 For every cold create, the launcher runs `docker build` with:
@@ -114,15 +114,15 @@ derived image that changes any static base-image contract:
 
 - architecture matches the host;
 - configured user is empty or root;
-- entrypoint is `/usr/bin/tini -- /usr/local/bin/codex-safe-session`;
+- entrypoint is `/usr/bin/tini -- /usr/local/bin/agents-safe-session`;
 - default command is `serve`;
 - `DOCKER_HOST` is `unix:///var/run/docker.sock`.
 
-The base image puts `/opt/codex-safe/codex/bin` on `PATH`, but preserving that entry is not yet a compatibility check.
+The base image puts `/opt/agents-safe/codex/bin` on `PATH`, but preserving that entry is not yet a compatibility check.
 A derived image that replaces `PATH` can therefore make bare `codex` unavailable to `agents-safe`; this is tracked as
 `TD-4` in the [tech debt tracker](../reviews/tech-debt-tracker.md). `codex-safe` uses the absolute volume path.
 
-The normal session startup exercises `tini`, `codex-safe-session`, volume-backed `codex`, Docker CLI, and the private
+The normal session startup exercises `tini`, `agents-safe-session`, volume-backed `codex`, Docker CLI, and the private
 daemon. Missing or broken runtime binaries fail without a base-image fallback.
 
 Validation does not make a Dockerfile trustworthy. The project opted into executing it by tracking the definition.
@@ -182,7 +182,7 @@ This repository's tracked [`.agents-safe/Dockerfile`](../../.agents-safe/Dockerf
 toolchain from the same digest-pinned image used by the session-builder stage:
 
 ```dockerfile
-ARG AGENTS_SAFE_BASE=codex-safe-mvp:local
+ARG AGENTS_SAFE_BASE=agents-safe-mvp:local
 
 FROM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c \
     AS go-toolchain
@@ -241,5 +241,5 @@ Real-host smoke proves:
 - `internal/launcher/dockercli/`: provides typed Docker build and image-inspection transport.
 - `tests/smoke/`: provides real Docker and Sysbox proof.
 
-This document extends image selection in [`codex-safe.md`](codex-safe.md). Command lifetime after container creation
+This document extends image selection in [`agents-safe.md`](agents-safe.md). Command lifetime after container creation
 remains owned by [`go-session-manager.md`](go-session-manager.md).

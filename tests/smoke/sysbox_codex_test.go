@@ -117,7 +117,7 @@ func (fixture *smokeFixture) assertCodexHomeMounts(sentinel codexSentinel) {
 	require.Equal(fixture.t, "true", report["managed_codex"],
 		"volume-backed Codex must exist at the absolute path")
 	require.Equal(fixture.t, "true", report["fake_codex_present"], "host Codex binary must be visible as data under the state")
-	require.Equal(fixture.t, "/opt/codex-safe/codex/bin/codex", report["codex_on_path"],
+	require.Equal(fixture.t, "/opt/agents-safe/codex/bin/codex", report["codex_on_path"],
 		"a bare codex must resolve to the managed volume, not the host binary under the mounted state")
 	require.Equal(fixture.t, agentsMarker, report["agents_marker"], "mounted global instructions must be readable")
 	require.Equal(fixture.t, codexSkillMarker, report["codex_skill_marker"], "mounted Codex skill must be readable")
@@ -156,7 +156,7 @@ func (fixture *smokeFixture) assertVolumeCodexNotShadowed(sentinel codexSentinel
 	doctor := fixture.launcher.startBinary(fixture.launcher.productBinary, fixture.project.worktree, true, nil, "doctor")
 	doctor.waitDone(fixture.t, "product codex doctor")
 	combined := doctor.stdout.String() + doctor.stderr.String()
-	require.Contains(fixture.t, combined, "/opt/codex-safe/codex/bin/codex",
+	require.Contains(fixture.t, combined, "/opt/agents-safe/codex/bin/codex",
 		"doctor must report the managed volume executable\n%s", doctor.diagnostics())
 	require.NotContains(fixture.t, combined, "FAKE_CODEX_SHADOW", "the host Codex binary must never execute")
 }
@@ -167,7 +167,7 @@ func (fixture *smokeFixture) assertReuseMismatchDiagnostic(sentinel codexSentine
 	fixture.t.Helper()
 	require.True(fixture.t, hold.running(), "the held session must still be running before the mismatch launch")
 	before := fixture.docker.inspectContainer()
-	require.Regexp(fixture.t, "^[a-f0-9]{64}$", before.Config.Labels["codex-safe.launch-config"])
+	require.Regexp(fixture.t, "^[a-f0-9]{64}$", before.Config.Labels["agents-safe.launch-config"])
 	mismatch := fixture.launcher.startBinary(
 		fixture.launcher.productBinary,
 		fixture.project.worktree,
@@ -276,7 +276,7 @@ rm -f "$skill_dir/intrusion" 2>/dev/null
 external_available=true
 cat "$HOME/.agents/skills/external/secret.txt" >/dev/null 2>&1 || external_available=false
 managed_codex=false
-[[ -x /opt/codex-safe/codex/bin/codex ]] && managed_codex=true
+[[ -x /opt/agents-safe/codex/bin/codex ]] && managed_codex=true
 fake_codex_present=false
 [[ -e "$CODEX_HOME/bin/codex" ]] && fake_codex_present=true
 codex_on_path="$(command -v codex || true)"

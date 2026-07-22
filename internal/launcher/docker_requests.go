@@ -136,7 +136,7 @@ func (docker *DockerLauncher) buildExecRequest(
 		}
 		environment = append(environment, dockercli.KeyValue{Key: key, Value: cache.Target})
 	}
-	wrappedCommand := append([]string{"codex-safe-session", "run", "--"}, command...)
+	wrappedCommand := append([]string{"agents-safe-session", "run", "--"}, command...)
 	return dockercli.ExecRequest{
 		ContainerID: containerID,
 		User:        strconv.Itoa(docker.HostUID) + ":" + strconv.Itoa(docker.HostGID),
@@ -162,7 +162,7 @@ func (docker *DockerLauncher) buildReadinessRequest(
 		ContainerID: containerID,
 		User:        "0:0",
 		WorkingDir:  plan.WorkingDir,
-		Command:     []string{"codex-safe-session", "wait-ready"},
+		Command:     []string{"agents-safe-session", "wait-ready"},
 	}, nil
 }
 

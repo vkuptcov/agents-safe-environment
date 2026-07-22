@@ -42,7 +42,7 @@ func TestNewChannelAllocatesAFreshPrivateGeneration(t *testing.T) {
 	info, err := os.Stat(first.Generation)
 	require.NoError(t, err, "the generation must be inspectable")
 	require.Equal(t, os.FileMode(0o700), info.Mode().Perm(), "the generation is 0700, private to the invoking user")
-	require.True(t, strings.HasPrefix(first.Parent, filepath.Join(runtimeDir, "codex-safe")),
+	require.True(t, strings.HasPrefix(first.Parent, filepath.Join(runtimeDir, "agents-safe")),
 		"the channel lives under the runtime directory")
 }
 
@@ -94,8 +94,8 @@ url = "http://127.0.0.1:8080/"
 	encoded, err := set.Environment()
 	require.NoError(t, err, "the environment must encode")
 	// The socket index follows the sorted order, and the session sees its own mount target.
-	require.Contains(t, encoded, `"socket":"/run/codex-safe-host-mcp/e0.sock"`, "the first endpoint is e0")
-	require.Contains(t, encoded, `"socket":"/run/codex-safe-host-mcp/e1.sock"`, "the second endpoint is e1")
+	require.Contains(t, encoded, `"socket":"/run/agents-safe-host-mcp/e0.sock"`, "the first endpoint is e0")
+	require.Contains(t, encoded, `"socket":"/run/agents-safe-host-mcp/e1.sock"`, "the second endpoint is e1")
 	require.Contains(t, encoded, `"127.0.0.1:8080"`, "the sorted-first endpoint's listener is present")
 	require.Contains(t, encoded, `"127.0.0.1:64342"`, "localhost expands to its IPv4 leg")
 	require.Contains(t, encoded, `"[::1]:64342"`, "localhost expands to its IPv6 leg")

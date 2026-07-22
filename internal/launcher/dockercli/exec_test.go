@@ -17,7 +17,7 @@ func TestBuildExecArgsPreservesCommandArguments(t *testing.T) {
 			{Key: "HOME", Value: "/home/developer"},
 			{Key: "CODEX_HOME", Value: "/home/developer/.codex"},
 		},
-		Command:     []string{"codex-safe-session", "run", "--", "printf", "value with spaces", ""},
+		Command:     []string{"agents-safe-session", "run", "--", "printf", "value with spaces", ""},
 		Interactive: true,
 		AllocateTTY: true,
 	}
@@ -33,7 +33,7 @@ func TestBuildExecArgsPreservesCommandArguments(t *testing.T) {
 		"--env", "CODEX_HOME=/home/developer/.codex",
 		"--workdir", "/project/nested",
 		containerID,
-		"codex-safe-session", "run", "--", "printf", "value with spaces", "",
+		"agents-safe-session", "run", "--", "printf", "value with spaces", "",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("BuildExecArgs() = %#v, want %#v", got, want)

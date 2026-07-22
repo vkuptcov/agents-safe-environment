@@ -1,5 +1,5 @@
 // Package container implements the privileged bootstrap and lifecycle that run inside the
-// codex-safe Sysbox container.
+// agents-safe Sysbox container.
 package container
 
 import (

@@ -40,7 +40,7 @@ func SocketName(index int) string {
 	return fmt.Sprintf("e%d.sock", index)
 }
 
-// Endpoint is one forwarded endpoint as carried in CODEX_SAFE_HOST_MCP.
+// Endpoint is one forwarded endpoint as carried in AGENTS_SAFE_HOST_MCP.
 type Endpoint struct {
 	// Listen are the concrete container addresses `serve` binds for this endpoint.
 	Listen []string `json:"listen"`

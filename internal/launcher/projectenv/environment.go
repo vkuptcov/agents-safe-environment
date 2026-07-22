@@ -69,5 +69,5 @@ func validateProjectRoot(projectRoot string) error {
 
 // LocalImageName creates the stable Docker tag rebuilt for one project whenever a session is created.
 func LocalImageName(projectKey string) string {
-	return "codex-safe-project-" + projectKey + ":local"
+	return "agents-safe-project-" + projectKey + ":local"
 }

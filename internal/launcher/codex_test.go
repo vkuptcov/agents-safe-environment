@@ -7,17 +7,17 @@ import (
 
 func TestCodexBinaryPathUsesTheSharedInstallation(t *testing.T) {
 	t.Parallel()
-	if CodexBinaryPath != "/opt/codex-safe/codex/bin/codex" {
+	if CodexBinaryPath != "/opt/agents-safe/codex/bin/codex" {
 		t.Fatalf("CodexBinaryPath = %q, want the volume-backed absolute path", CodexBinaryPath)
 	}
 }
 
 func TestCodexInstallationUsesOneDaemonLocalVolume(t *testing.T) {
 	t.Parallel()
-	if CodexInstallationVolume != "codex-safe-codex" {
+	if CodexInstallationVolume != "agents-safe-codex" {
 		t.Fatalf("CodexInstallationVolume = %q", CodexInstallationVolume)
 	}
-	if CodexInstallationRoot != "/opt/codex-safe/codex" {
+	if CodexInstallationRoot != "/opt/agents-safe/codex" {
 		t.Fatalf("CodexInstallationRoot = %q", CodexInstallationRoot)
 	}
 }

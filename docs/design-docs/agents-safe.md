@@ -1,10 +1,10 @@
-# Safe Environment for Running Codex Agents
+# Safe Environment for Running Agents
 
 Status: Implemented
 
 Scope:
 
-- the common `codex-safe`, `claude-safe`, and `agents-safe` container contract on a Linux host;
+- the common `codex-safe`, `claude-safe`, and `agents-safe` runtime contract on a Linux host;
 - discovery and mounting of the active Git project, linked worktrees, host `.gitconfig`, the resolved Codex home,
   and personal Codex skills;
 - the Codex CLI executable, process environment, argument forwarding, and authentication handoff;
@@ -310,7 +310,7 @@ rather than being mounted read-only while remaining writable through the other p
 #### Codex executable and process
 
 The container image contains no Codex executable or dispatcher. Every session mounts the daemon-local
-`codex-safe-codex` volume read-only at `/opt/codex-safe/codex`, and the launcher runs its `bin/codex` by absolute path.
+`agents-safe-codex` volume read-only at `/opt/agents-safe/codex`, and the launcher runs its `bin/codex` by absolute path.
 `make docker-build` initializes or updates the volume after building the local image; later routine updates use
 `codex-safe update`. Session startup performs no network update and fails executable lookup if the installation is
 absent.
@@ -322,7 +322,7 @@ never selected as the container's launcher binary. The complete update and failu
 Every `codex-safe` invocation runs this process through the session wrapper:
 
 ```text
-codex-safe-session run -- /opt/codex-safe/codex/bin/codex --sandbox danger-full-access [forwarded Codex arguments]
+agents-safe-session run -- /opt/agents-safe/codex/bin/codex --sandbox danger-full-access [forwarded Codex arguments]
 ```
 
 The process uses the invoking host UID and GID, the selected project directory as its working directory, the
@@ -496,15 +496,15 @@ to the host MCP servers named by the resolved Codex home is owned by
 ### 10. Lifecycle and Concurrency
 
 A new container has a deterministic name derived from the canonical worktree root and invoking host UID. The
-launcher inspects that exact name, then validates `codex-safe.managed`, `codex-safe.project-path`,
-`codex-safe.host-uid`, and `codex-safe.manager-protocol`, then validates `codex-safe.launch-config`, the deterministic
+launcher inspects that exact name, then validates `agents-safe.managed`, `agents-safe.project-path`,
+`agents-safe.host-uid`, and `agents-safe.manager-protocol`, then validates `agents-safe.launch-config`, the deterministic
 fingerprint of all creation-time parameters defined by
 [Project Launcher Configuration](project-launcher-configuration.md#4-parameter-classes-and-active-containers).
 
-The product-state and `codex-safe.personal-skills` labels each contain the canonical resolved source or the literal
+The product-state and `agents-safe.personal-skills` labels each contain the canonical resolved source or the literal
 `absent`. They remain diagnostic metadata and are not independent reuse predicates; their effective mount state is
-already covered by `codex-safe.launch-config`. `codex-safe.host-mcp` is also diagnostic metadata owned by
-[`host-mcp-forwarding.md`](host-mcp-forwarding.md). That design sets `codex-safe.host-mcp-channel`, which locates a
+already covered by `agents-safe.launch-config`. `agents-safe.host-mcp` is also diagnostic metadata owned by
+[`host-mcp-forwarding.md`](host-mcp-forwarding.md). That design sets `agents-safe.host-mcp-channel`, which locates a
 running container's MCP channel and is read rather than compared. A compatible running container receives the new
 command through `docker exec`; an absent name is created with detached `docker run --rm`. Different worktrees continue
 to use distinct Docker daemons and writable layers.
@@ -520,7 +520,7 @@ creation-time fingerprint. It uses the same generic fingerprint-mismatch rejecti
 change; diagnostic product-state labels do not select a separate active-session error path.
 
 The container's foreground workload is a Go session manager. Every `docker exec`, including the first, invokes
-`codex-safe-session run -- COMMAND`. That wrapper connects to a container-local Unix socket, runs the requested command,
+`agents-safe-session run -- COMMAND`. That wrapper connects to a container-local Unix socket, runs the requested command,
 and holds the connection until its direct child exits. The manager exits after the last registered command finishes
 and the single idle timeout expires. The detailed protocol, race handling, and shutdown contract are defined in
 [`go-session-manager.md`](go-session-manager.md).
@@ -553,7 +553,7 @@ sequenceDiagram
         Launcher->>Container: docker exec root wait-ready
         Container-->>Launcher: Session socket published
     end
-    Launcher->>Container: docker exec codex-safe-session run -- command
+    Launcher->>Container: docker exec agents-safe-session run -- command
     Container->>Wrapper: Start wrapper
     Wrapper->>Manager: Register active command
     Wrapper->>Command: Start command

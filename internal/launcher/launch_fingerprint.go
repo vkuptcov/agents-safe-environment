@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	launchConfigLabel         = "codex-safe.launch-config"
+	launchConfigLabel         = "agents-safe.launch-config"
 	launchConfigSchemaVersion = 4
 )
 

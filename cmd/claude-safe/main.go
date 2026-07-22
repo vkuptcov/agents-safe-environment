@@ -14,7 +14,7 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
 )
 
-const defaultImage = "codex-safe-mvp:local"
+const defaultImage = "agents-safe-mvp:local"
 
 const usage = `Usage: claude-safe update
        claude-safe [--project PATH] [--image REF] [--no-host-mcp] [-- CLAUDE ARG...]

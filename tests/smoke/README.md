@@ -20,8 +20,8 @@ make test-smoke-go
 
 The target:
 
-1. builds `bin/codex-safe`, `bin/claude-safe`, `bin/agents-safe`, and `bin/codex-safe-session`;
-2. builds the `codex-safe-mvp:local` image;
+1. builds `bin/codex-safe`, `bin/claude-safe`, `bin/agents-safe`, and `bin/agents-safe-session`;
+2. builds the `agents-safe-mvp:local` image;
 3. enables the opt-in smoke test with `CODEX_SAFE_RUN_SYSBOX_SMOKE=1`;
 4. runs every `TestSysbox` scenario (linked worktree, both product launchers, shared-session coexistence,
    `agents-safe bash`, configured mounts, and project-image selection) without the Go test cache.
@@ -76,7 +76,7 @@ Host Go test
              │ agents-safe --project <linked worktree> -- <command>
              ▼
 Managed container (sysbox-runc, not privileged)
-├── codex-safe-session manager
+├── agents-safe-session manager
 ├── recreated host user, group, and home path
 ├── mounted project, common Git directory, and read-only .gitconfig
 ├── explicitly configured host directories mounted read-write at the same paths
@@ -217,8 +217,8 @@ The forced container removal is also the fallback when an assertion stops the sc
 are written. An abrupt kill of the Go test process can bypass `t.Cleanup`; inspect possible leftovers with:
 
 ```bash
-docker ps -a --filter label=codex-safe.managed=true
-docker ps -a --filter label=codex-safe.smoke=go
+docker ps -a --filter label=agents-safe.managed=true
+docker ps -a --filter label=agents-safe.smoke=go
 ```
 
 Container names include the project key, so independent smoke runs do not share a host sentinel or managed

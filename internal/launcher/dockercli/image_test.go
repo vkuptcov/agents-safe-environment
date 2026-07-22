@@ -53,7 +53,7 @@ func TestPreflightDoesNotPullAPresentImage(t *testing.T) {
 		"info":          runtimesReply(),
 		"image inspect": {output: []byte("[{}]")},
 	}}
-	if err := New("docker", runner).Preflight(context.Background(), "sysbox-runc", "codex-safe-mvp:local"); err != nil {
+	if err := New("docker", runner).Preflight(context.Background(), "sysbox-runc", "agents-safe-mvp:local"); err != nil {
 		t.Fatalf("Preflight() error = %v", err)
 	}
 	for _, call := range runner.calls {
@@ -107,7 +107,7 @@ func TestResolveImageIDReturnsTheImmutableContentID(t *testing.T) {
 	runner := &scriptedRunner{replies: map[string]scriptedReply{
 		"image inspect": {output: []byte(testImageID + "\n")},
 	}}
-	got, err := New("docker", runner).ResolveImageID(context.Background(), "codex-safe-mvp:local")
+	got, err := New("docker", runner).ResolveImageID(context.Background(), "agents-safe-mvp:local")
 	if err != nil {
 		t.Fatalf("ResolveImageID() error = %v", err)
 	}
@@ -119,7 +119,7 @@ func TestResolveImageIDReturnsTheImmutableContentID(t *testing.T) {
 // A malformed value must never reach a create as if it pinned the image.
 func TestResolveImageIDRejectsAMalformedID(t *testing.T) {
 	t.Parallel()
-	for _, malformed := range []string{"", "codex-safe-mvp:local", "sha256:short", "sha256:" + strings.Repeat("z", 64)} {
+	for _, malformed := range []string{"", "agents-safe-mvp:local", "sha256:short", "sha256:" + strings.Repeat("z", 64)} {
 		runner := &scriptedRunner{replies: map[string]scriptedReply{
 			"image inspect": {output: []byte(malformed)},
 		}}

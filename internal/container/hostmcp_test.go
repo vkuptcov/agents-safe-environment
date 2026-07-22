@@ -416,13 +416,13 @@ func TestHostMCPEndpointsFromEnvironment(t *testing.T) {
 		}
 	})
 	t.Run("decoded", func(t *testing.T) {
-		raw := `[{"listen":["127.0.0.1:64342","[::1]:64342"],"socket":"/run/codex-safe-host-mcp/e0.sock"}]`
+		raw := `[{"listen":["127.0.0.1:64342","[::1]:64342"],"socket":"/run/agents-safe-host-mcp/e0.sock"}]`
 		endpoints, err := hostMCPEndpointsFromEnvironment(func(string) (string, bool) { return raw, true })
 		if err != nil {
 			t.Fatalf("a valid set must decode: %v", err)
 		}
 		if len(endpoints) != 1 || len(endpoints[0].Listen) != 2 ||
-			endpoints[0].Socket != "/run/codex-safe-host-mcp/e0.sock" {
+			endpoints[0].Socket != "/run/agents-safe-host-mcp/e0.sock" {
 			t.Fatalf("decoded = %#v", endpoints)
 		}
 	})

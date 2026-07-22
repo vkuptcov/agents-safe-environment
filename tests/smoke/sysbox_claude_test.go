@@ -35,8 +35,8 @@ func TestSysboxClaudeAndCodexShareOneSession(t *testing.T) {
 	requireMount(t, inspection, fixture.project.claudeConfig, fixture.project.claudeConfig, true)
 	requireVolumeMount(t, inspection, launcher.ClaudeInstallationVolume, launcher.ClaudeInstallationRoot, false)
 	requireVolumeMount(t, inspection, launcher.CodexInstallationVolume, launcher.CodexInstallationRoot, false)
-	require.Equal(t, fixture.project.claudeHome, inspection.Config.Labels["codex-safe.claude-home"])
-	require.Equal(t, fixture.project.claudeConfig, inspection.Config.Labels["codex-safe.claude-config"])
+	require.Equal(t, fixture.project.claudeHome, inspection.Config.Labels["agents-safe.claude-home"])
+	require.Equal(t, fixture.project.claudeConfig, inspection.Config.Labels["agents-safe.claude-config"])
 
 	claudeVersion := fixture.launcher.startBinary(
 		fixture.launcher.claudeBinary, fixture.project.worktree, true, nil, "--version",

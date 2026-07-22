@@ -144,7 +144,7 @@ arguments = ["line\nbreak"]
 [[common.mounts]]
 role = "host_mcp_channel"
 source = "runtime://unexpected"
-target = "/run/codex-safe-host-mcp"
+target = "/run/agents-safe-host-mcp"
 read_only = false
 `,
 			want: "invalid host MCP channel mount",

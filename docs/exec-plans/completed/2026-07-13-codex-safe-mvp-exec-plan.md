@@ -2,7 +2,7 @@
 
 - Status: completed
 - Created: 2026-07-13
-- Design: [`docs/design-docs/codex-safe.md`](../../design-docs/codex-safe.md)
+- Design: [`docs/design-docs/agents-safe.md`](../../design-docs/agents-safe.md)
 - Scope:
   - `go.mod`, `cmd/codex-safe/`, `internal/gitproject/`, `internal/launcher/`
   - `container/`

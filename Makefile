@@ -3,12 +3,12 @@ DOCKER := docker
 CODEX_BINARY := bin/codex-safe
 CLAUDE_BINARY := bin/claude-safe
 AGENTS_BINARY := bin/agents-safe
-SESSION_BINARY := bin/codex-safe-session
-IMAGE := codex-safe-mvp:local
-CODEX_VOLUME := codex-safe-codex
-CODEX_INSTALL_ROOT := /opt/codex-safe/codex
-CLAUDE_VOLUME := codex-safe-claude
-CLAUDE_INSTALL_ROOT := /opt/codex-safe/claude
+SESSION_BINARY := bin/agents-safe-session
+IMAGE := agents-safe-mvp:local
+CODEX_VOLUME := agents-safe-codex
+CODEX_INSTALL_ROOT := /opt/agents-safe/codex
+CLAUDE_VOLUME := agents-safe-claude
+CLAUDE_INSTALL_ROOT := /opt/agents-safe/claude
 SMOKE_DIR := tests/smoke
 GOLANGCI_LINT_MODFILE := tools/go.mod
 TOOLS_BIN_DIR := bin
@@ -22,7 +22,7 @@ build:
 	$(GO) build -o $(CODEX_BINARY) ./cmd/codex-safe
 	$(GO) build -o $(CLAUDE_BINARY) ./cmd/claude-safe
 	$(GO) build -o $(AGENTS_BINARY) ./cmd/agents-safe
-	$(GO) build -o $(SESSION_BINARY) ./cmd/codex-safe-session
+	$(GO) build -o $(SESSION_BINARY) ./cmd/agents-safe-session
 
 install: docker-build
 	$(GO) install ./cmd/codex-safe ./cmd/claude-safe ./cmd/agents-safe

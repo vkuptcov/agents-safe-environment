@@ -29,7 +29,7 @@ const (
 	RoleAdditional      MountRole = "additional"
 
 	HostMCPChannelSource = "runtime://host-mcp-channel"
-	HostMCPChannelTarget = "/run/codex-safe-host-mcp"
+	HostMCPChannelTarget = "/run/agents-safe-host-mcp"
 )
 
 // ProjectConfig is the local, host-specific launcher configuration serialized by agents-safe init.

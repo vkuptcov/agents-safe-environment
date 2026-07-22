@@ -2,7 +2,7 @@
 
 The project reduces the blast radius of local agent execution; it is not a complete sandbox or production security
 boundary. The durable runtime contract lives in [Architecture](../ARCHITECTURE.md) and the
-[safe-environment design](design-docs/codex-safe.md).
+[safe-environment design](design-docs/agents-safe.md).
 
 ## Credential Rules
 
