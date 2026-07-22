@@ -72,6 +72,61 @@ func TestSysboxRegularCheckoutNormalizesProjectRoles(t *testing.T) {
 	fixture.docker.waitForContainerRemoval()
 }
 
+// TestSysboxProjectVenvIsIsolated proves discovered Python environments cannot read or modify their host directories.
+func TestSysboxProjectVenvIsIsolated(t *testing.T) {
+	if os.Getenv(goSmokeEnv) != "1" {
+		t.Skipf("set %s=1 to run the real Sysbox project virtual-environment test", goSmokeEnv)
+	}
+	fixture := newSmokeFixture(t)
+	hostVenv := filepath.Join(fixture.project.worktree, ".venv")
+	hostServiceVenv := filepath.Join(fixture.project.worktree, "service", ".venv-dev")
+	hostSentinel := filepath.Join(hostVenv, "host-sentinel")
+	hostServiceSentinel := filepath.Join(hostServiceVenv, "host-sentinel")
+	containerSentinel := filepath.Join(hostVenv, "container-sentinel")
+	containerServiceSentinel := filepath.Join(hostServiceVenv, "container-sentinel")
+	report := filepath.Join(fixture.project.worktree, "project-venv.report")
+	ready := filepath.Join(fixture.project.worktree, "project-venv.ready")
+	release := filepath.Join(fixture.project.worktree, "project-venv.release")
+	for _, path := range []string{hostVenv, hostServiceVenv} {
+		require.NoError(t, os.MkdirAll(path, 0o755), "host virtual environment directory must exist")
+		require.NoError(t, os.WriteFile(filepath.Join(path, "pyvenv.cfg"), []byte("home = /usr/bin\n"), 0o600),
+			"host virtual environment marker must exist")
+	}
+	require.NoError(t, os.WriteFile(hostSentinel, []byte("host\n"), 0o600), "host virtual environment sentinel must exist")
+	require.NoError(t, os.WriteFile(hostServiceSentinel, []byte("host-service\n"), 0o600),
+		"nested host virtual environment sentinel must exist")
+
+	command := fixture.launcher.startAgents(
+		fixture.project.worktree,
+		"bash", "-c", `test ! -e .venv/host-sentinel
+test ! -e service/.venv-dev/host-sentinel
+printf 'container\n' > .venv/container-sentinel
+printf 'container-service\n' > service/.venv-dev/container-sentinel
+printf 'isolated=yes\n' > "$1"
+: > "$2"
+while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
+	)
+	fixture.waitForFile(ready, command)
+	require.Equal(t, "yes", parseReport(t, report)["isolated"])
+	require.Equal(t, "host\n", readFile(t, hostSentinel), "container must not replace host .venv content")
+	require.Equal(t, "host-service\n", readFile(t, hostServiceSentinel),
+		"container must not replace nested host virtual-environment content")
+	_, err := os.Stat(containerSentinel)
+	require.True(t, os.IsNotExist(err), "container .venv writes must not reach the host")
+	_, err = os.Stat(containerServiceSentinel)
+	require.True(t, os.IsNotExist(err), "container nested virtual-environment writes must not reach the host")
+
+	fixture.release(release, command, "project virtual-environment command")
+	fixture.docker.waitForContainerRemoval()
+	require.Equal(t, "host\n", readFile(t, hostSentinel), "host .venv must remain unchanged after session removal")
+	require.Equal(t, "host-service\n", readFile(t, hostServiceSentinel),
+		"nested host virtual environment must remain unchanged after session removal")
+	_, err = os.Stat(containerSentinel)
+	require.True(t, os.IsNotExist(err), "container .venv must disappear with the session")
+	_, err = os.Stat(containerServiceSentinel)
+	require.True(t, os.IsNotExist(err), "container nested virtual environment must disappear with the session")
+}
+
 // TestSysboxAgentsSafeWithoutCodexHome proves the optional policy reaches the real Docker boundary:
 // no host Codex-home mount is added and the managed command receives no CODEX_HOME.
 func TestSysboxAgentsSafeWithoutCodexHome(t *testing.T) {

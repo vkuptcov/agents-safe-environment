@@ -76,6 +76,8 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 	image := flags.String("image", cfg.DefaultImage, "container image")
 	noHostMCP := flags.Bool("no-host-mcp", false,
 		"disable host MCP forwarding: no product config read, no forwarders, no relay, no mount")
+	useHostPythonVenv := flags.Bool("use-host-python-venv", false,
+		"use project-local host Python virtual environments instead of masking them")
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -102,10 +104,12 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		return 1
 	}
 	overrides := launchplan.Overrides{
-		Image:             *image,
-		ImageOverride:     flags.Changed("image"),
-		NoHostMCP:         *noHostMCP,
-		NoHostMCPOverride: flags.Changed("no-host-mcp"),
+		Image:                     *image,
+		ImageOverride:             flags.Changed("image"),
+		NoHostMCP:                 *noHostMCP,
+		NoHostMCPOverride:         flags.Changed("no-host-mcp"),
+		UseHostPythonVenv:         *useHostPythonVenv,
+		UseHostPythonVenvOverride: flags.Changed("use-host-python-venv"),
 	}
 	resolved, err := dependencies.ResolveConfig(project, cfg.DefaultImage, overrides)
 	if err != nil {

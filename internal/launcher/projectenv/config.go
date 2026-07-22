@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -30,6 +31,7 @@ const (
 
 	HostMCPChannelSource = "runtime://host-mcp-channel"
 	HostMCPChannelTarget = "/run/agents-safe-host-mcp"
+	DefaultTmpfsMode     = "1777"
 )
 
 // ProjectConfig is the local, host-specific launcher configuration serialized by agents-safe init.
@@ -42,10 +44,19 @@ type ProjectConfig struct {
 
 // CommonConfig contains settings that affect every public launcher.
 type CommonConfig struct {
-	Image            string                  `toml:"image"`
-	NoHostMCP        bool                    `toml:"no_host_mcp"`
-	Mounts           []MountConfig           `toml:"mounts"`
-	DependencyCaches []DependencyCacheConfig `toml:"dependency_caches"`
+	Image             string                  `toml:"image"`
+	NoHostMCP         bool                    `toml:"no_host_mcp"`
+	UseHostPythonVenv bool                    `toml:"use_host_python_venv"`
+	Mounts            []MountConfig           `toml:"mounts"`
+	TmpfsMounts       []TmpfsMountConfig      `toml:"tmpfs_mounts"`
+	DependencyCaches  []DependencyCacheConfig `toml:"dependency_caches"`
+}
+
+// TmpfsMountConfig describes one container-local writable filesystem. It has no host source.
+type TmpfsMountConfig struct {
+	Target  string `toml:"target"`
+	Mode    string `toml:"mode"`
+	Comment string `toml:"comment"`
 }
 
 // DependencyCacheKind identifies a host dependency cache whose tool routing is owned by the launcher.
@@ -102,10 +113,12 @@ type configOverlay struct {
 }
 
 type commonOverlay struct {
-	Image            *string                  `toml:"image"`
-	NoHostMCP        *bool                    `toml:"no_host_mcp"`
-	Mounts           *[]MountConfig           `toml:"mounts"`
-	DependencyCaches *[]DependencyCacheConfig `toml:"dependency_caches"`
+	Image             *string                  `toml:"image"`
+	NoHostMCP         *bool                    `toml:"no_host_mcp"`
+	UseHostPythonVenv *bool                    `toml:"use_host_python_venv"`
+	Mounts            *[]MountConfig           `toml:"mounts"`
+	TmpfsMounts       *[]TmpfsMountConfig      `toml:"tmpfs_mounts"`
+	DependencyCaches  *[]DependencyCacheConfig `toml:"dependency_caches"`
 }
 
 type codexOverlay struct {
@@ -193,6 +206,16 @@ func Validate(config ProjectConfig) error {
 			return err
 		}
 	}
+	seenTmpfsTargets := make(map[string]struct{}, len(config.Common.TmpfsMounts))
+	for index, mount := range config.Common.TmpfsMounts {
+		if err := validateTmpfsMount(index, mount); err != nil {
+			return err
+		}
+		if _, found := seenTmpfsTargets[mount.Target]; found {
+			return fmt.Errorf("common.tmpfs_mounts repeats target %q", mount.Target)
+		}
+		seenTmpfsTargets[mount.Target] = struct{}{}
+	}
 	seenCaches := make(map[DependencyCacheKind]struct{}, len(config.Common.DependencyCaches))
 	for index, cache := range config.Common.DependencyCaches {
 		if !supportedDependencyCacheKind(cache.Kind) {
@@ -217,9 +240,15 @@ func applyOverlay(config *ProjectConfig, overlay configOverlay) {
 		if overlay.Common.NoHostMCP != nil {
 			config.Common.NoHostMCP = *overlay.Common.NoHostMCP
 		}
+		if overlay.Common.UseHostPythonVenv != nil {
+			config.Common.UseHostPythonVenv = *overlay.Common.UseHostPythonVenv
+		}
 		if overlay.Common.Mounts != nil {
 			config.Common.Mounts = make([]MountConfig, len(*overlay.Common.Mounts))
 			copy(config.Common.Mounts, *overlay.Common.Mounts)
+		}
+		if overlay.Common.TmpfsMounts != nil {
+			config.Common.TmpfsMounts = append([]TmpfsMountConfig(nil), (*overlay.Common.TmpfsMounts)...)
 		}
 		if overlay.Common.DependencyCaches != nil {
 			config.Common.DependencyCaches = append([]DependencyCacheConfig(nil), (*overlay.Common.DependencyCaches)...)
@@ -235,10 +264,27 @@ func applyOverlay(config *ProjectConfig, overlay configOverlay) {
 
 func cloneConfig(config ProjectConfig) ProjectConfig {
 	config.Common.Mounts = append([]MountConfig(nil), config.Common.Mounts...)
+	config.Common.TmpfsMounts = append([]TmpfsMountConfig(nil), config.Common.TmpfsMounts...)
 	config.Common.DependencyCaches = append([]DependencyCacheConfig(nil), config.Common.DependencyCaches...)
 	config.Codex.Arguments = append([]string(nil), config.Codex.Arguments...)
 	config.Claude.Arguments = append([]string(nil), config.Claude.Arguments...)
 	return config
+}
+
+func validateTmpfsMount(index int, mount TmpfsMountConfig) error {
+	if err := ValidatePath(fmt.Sprintf("common.tmpfs_mounts[%d].target", index), mount.Target, false); err != nil {
+		return err
+	}
+	if len(mount.Mode) < 3 || len(mount.Mode) > 4 {
+		return fmt.Errorf("common.tmpfs_mounts[%d].mode must be a 3- or 4-digit octal mode", index)
+	}
+	if _, err := strconv.ParseUint(mount.Mode, 8, 16); err != nil {
+		return fmt.Errorf("common.tmpfs_mounts[%d].mode must be a 3- or 4-digit octal mode", index)
+	}
+	if strings.ContainsAny(mount.Comment, "\x00\n\r") {
+		return fmt.Errorf("common.tmpfs_mounts[%d].comment is not a single-line string", index)
+	}
+	return nil
 }
 
 func supportedDependencyCacheKind(kind DependencyCacheKind) bool {

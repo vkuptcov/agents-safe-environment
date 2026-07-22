@@ -146,7 +146,9 @@ func (docker *DockerLauncher) Launch(
 	if err := attempt.planHostMCP(); err != nil {
 		return err
 	}
-	fingerprint, err := creationFingerprint(plan, image, options.ImageOverride, options.NoHostMCP, attempt.hostMCP.set)
+	fingerprint, err := creationFingerprint(
+		plan, image, options.ImageOverride, options.NoHostMCP, options.UseHostPythonVenv, attempt.hostMCP.set,
+	)
 	if err != nil {
 		return err
 	}

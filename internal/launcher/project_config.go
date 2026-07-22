@@ -50,6 +50,9 @@ func ResolveProjectConfig(
 	if overrides.NoHostMCPOverride {
 		config.Common.NoHostMCP = overrides.NoHostMCP
 	}
+	if overrides.UseHostPythonVenvOverride {
+		config.Common.UseHostPythonVenv = overrides.UseHostPythonVenv
+	}
 	resolution, err := launchplan.ResolveWithHostHome(project, defaults, config, host.HomeDir)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
@@ -61,8 +64,9 @@ func ResolveProjectConfig(
 		Defaults:   defaults,
 		Resolution: resolution,
 		Options: launchplan.Options{
-			ImageOverride: overrides.ImageOverride,
-			NoHostMCP:     config.Common.NoHostMCP,
+			ImageOverride:     overrides.ImageOverride,
+			NoHostMCP:         config.Common.NoHostMCP,
+			UseHostPythonVenv: config.Common.UseHostPythonVenv,
 		},
 		DefaultCodexHomeSet:  defaultCodexHomeSet,
 		DefaultClaudeHomeSet: defaultClaudeHomeSet,
@@ -163,7 +167,10 @@ func DefaultProjectConfig(
 	})
 
 	config := projectenv.ProjectConfig{
-		Common: projectenv.CommonConfig{Image: image, Mounts: mounts},
+		Common: projectenv.CommonConfig{
+			Image:  image,
+			Mounts: mounts,
+		},
 		Codex:  projectenv.CodexConfig{Arguments: append([]string(nil), codexDefaultSandboxArgs...)},
 		Claude: projectenv.ClaudeConfig{Arguments: append([]string(nil), claudeDefaultPermissionArgs...)},
 	}

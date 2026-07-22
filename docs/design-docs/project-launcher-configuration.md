@@ -41,6 +41,7 @@ resolution begins.
 | Bootstrap | `--project .` | Discover the Git worktree from the current directory. |
 | Common | `image = "agents-safe-mvp:local"` | Base or direct session image. |
 | Common | `no_host_mcp = false` | Forward eligible host MCP servers. |
+| Common | `use_host_python_venv = false` | Mask discovered project-local Python virtual environments. |
 | Common | resolved logical mount snapshot | Complete project/Git topology and available host integrations. |
 | Codex | `arguments = ['--sandbox', 'danger-full-access']` | Use the Sysbox container as the sandbox boundary. |
 | Claude | `arguments = ['--permission-mode', 'auto']` | Delegate permission decisions to Claude Code's automatic mode. |
@@ -88,6 +89,7 @@ For this repository, `agents-safe init` generates:
 [common]
 image = "agents-safe-mvp:local"
 no_host_mcp = false
+use_host_python_venv = false
 
 [[common.mounts]]
 role = "host_git_config"
@@ -255,10 +257,18 @@ The implemented Go and uv cache contract of [Host-Backed Dependency Caches](host
 
 ```go
 type CommonConfig struct {
-	Image            string                  `toml:"image"`
-	NoHostMCP        bool                    `toml:"no_host_mcp"`
-	Mounts           []MountConfig           `toml:"mounts"`
-	DependencyCaches []DependencyCacheConfig `toml:"dependency_caches"`
+	Image             string                  `toml:"image"`
+	NoHostMCP         bool                    `toml:"no_host_mcp"`
+	UseHostPythonVenv bool                    `toml:"use_host_python_venv"`
+	Mounts            []MountConfig           `toml:"mounts"`
+	TmpfsMounts       []TmpfsMountConfig      `toml:"tmpfs_mounts"`
+	DependencyCaches  []DependencyCacheConfig `toml:"dependency_caches"`
+}
+
+type TmpfsMountConfig struct {
+	Target  string `toml:"target"`
+	Mode    string `toml:"mode"`
+	Comment string `toml:"comment"`
 }
 ```
 
@@ -266,6 +276,22 @@ type CommonConfig struct {
 path-preserving targets, managed container routing, and validation policy remain owned by the cache design; this
 document owns its typed schema, overlay behavior, and participation in container reuse. `go_build`, `go_modules`, and
 `uv` are implemented; the field is part of the version 2 fingerprint. Maven and Gradle are deferred.
+
+`tmpfs_mounts` is an optional explicit base for the Python-environment isolation plan and is empty by default; the
+generated config preconfigures no venv target. Targets must be canonical absolute paths strictly inside the selected
+worktree; modes are three- or four-digit octal strings. Duplicate and overlapping targets fail before Docker access.
+Comments are serialized documentation and do not affect creation.
+
+`use_host_python_venv` is a creation-time policy and defaults to `false`. After TOML and explicit CLI overrides are
+applied, the safe default scans the selected worktree for existing directories containing a regular `pyvenv.cfg`,
+appends new targets to the configured base with mode `1777`, and removes exact duplicates. Nothing is masked for a
+virtual environment that does not exist. Discovery does not follow symlinks, skips Git metadata, stops descending
+after finding an environment, and fails closed on unreadable or non-regular markers. Every resolved target receives a
+session-local `tmpfs` after the worktree bind.
+
+`use_host_python_venv = true` skips both configured tmpfs targets and discovery, so the image sees project virtual
+environments exactly as the host does. `--use-host-python-venv` and `--use-host-python-venv=false` explicitly override
+the file for one invocation. Reusable Python downloads remain a separate uv-cache concern.
 
 ### 3. File Layering
 
@@ -275,6 +301,8 @@ The decoder starts from a complete default `ProjectConfig` and overlays the TOML
 - present scalar: replace the typed default;
 - omitted `common.mounts`: retain the resolved default mount snapshot;
 - present `common.mounts`: replace the entire list; mounts are never merged by index, role, source, or target.
+- omitted `common.tmpfs_mounts`: retain the empty default base;
+- present `common.tmpfs_mounts`: replace that complete configured base before launch-time marker discovery.
 
 The config is authoritative when present. The launcher does not silently reinsert a deleted entry or replace a stale
 path. It compares the resolved list with the host-derived default roles: a missing required role fails, while a
@@ -298,11 +326,12 @@ The creation-time fingerprint is the SHA-256 digest of one versioned canonical s
 
 | Field | Canonical value |
 | --- | --- |
-| `schema_version` | Integer `4`; incremented whenever encoding or implicit creation behavior changes. |
+| `schema_version` | Integer `5`; incremented whenever encoding or implicit creation behavior changes. |
 | `image_reference` | Resolved requested image reference, before resolving or building an immutable image ID. |
 | `image_override` | Explicit `--image` bypasses the project Dockerfile, even when its reference is unchanged. |
 | `mounts` | Ordered physical binds with canonical `source`, `target`, and `read_only`. |
 | `no_host_mcp` | Resolved boolean after defaults, TOML, and explicit CLI overrides. |
+| `use_host_python_venv` | Resolved host-virtual-environment policy after TOML and explicit CLI overrides. |
 | `host_mcp_endpoints` | Eligible endpoints as canonical `host:port` strings, sorted by host and then port. |
 
 The host-backed dependency-cache implementation increments `schema_version` to `2` and appends one field after
@@ -332,6 +361,14 @@ Schema version 4 introduces Claude state roles, the implicit read-only `agents-s
 Codex/Claude host-MCP endpoints. It prevents reuse of a version 3 container that cannot accept `claude-safe`. Product
 release contents and versions remain outside the fingerprint, so updating either volume does not invalidate a live
 session.
+
+Schema version 5 introduces `use_host_python_venv`, the configured `tmpfs_mounts` base, and launch-time
+virtual-environment discovery. It prevents reuse of a version 4 session that can still access host environments or
+lacks the resolved tmpfs targets.
+
+| Field | Canonical value |
+| --- | --- |
+| `tmpfs_mounts` | Ordered target/mode pairs from the configured base plus regular `pyvenv.cfg` discovery. |
 
 `mounts` uses the exact deterministic order passed to Docker after alias and nesting normalization. It excludes the
 materialized `host_mcp_channel` bind because that bind has a random generation-directory source;

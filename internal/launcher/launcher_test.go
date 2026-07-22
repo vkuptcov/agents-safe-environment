@@ -257,6 +257,9 @@ func planWithCodex(root, workingDir, codexHome string) launchplan.Plan {
 		ProjectRoot: root,
 		WorkingDir:  workingDir,
 		Mounts:      []launchplan.BindMount{primary, commonGit, worktree, codex},
+		TmpfsMounts: []launchplan.TmpfsMount{{
+			Target: filepath.Join(root, ".venv"), Mode: projectenv.DefaultTmpfsMode,
+		}},
 		Provenance: []launchplan.MountProvenance{
 			{Mount: primary, Roles: []projectenv.MountRole{projectenv.RolePrimaryCheckout}},
 			{Mount: commonGit, Roles: []projectenv.MountRole{projectenv.RoleCommonGitDir}},
@@ -299,7 +302,7 @@ func mustContainerName(t *testing.T, hostUID int, projectRoot string) string {
 
 func matchingLabels(t *testing.T, plan launchplan.Plan, hostUID int) map[string]string {
 	t.Helper()
-	fingerprint, err := creationFingerprint(plan, "image", false, false, hostmcp.Set{})
+	fingerprint, err := creationFingerprint(plan, "image", false, false, false, hostmcp.Set{})
 	if err != nil {
 		t.Fatal(err)
 	}

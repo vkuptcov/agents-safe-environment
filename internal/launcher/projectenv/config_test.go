@@ -17,6 +17,7 @@ func TestLoadTypedConfigOverlaysPresentValues(t *testing.T) {
 [common]
 image = "configured:image"
 no_host_mcp = false
+use_host_python_venv = true
 
 [codex]
 arguments = ["exec", "--model", "gpt-5"]
@@ -35,14 +36,41 @@ arguments = ["--model", "opus"]
 	if config.Common.NoHostMCP {
 		t.Error("no_host_mcp = true, want explicit false")
 	}
+	if !config.Common.UseHostPythonVenv {
+		t.Error("use_host_python_venv = false, want explicit true")
+	}
 	if !reflect.DeepEqual(config.Common.Mounts, defaults.Common.Mounts) {
 		t.Errorf("mounts = %#v, want omitted default %#v", config.Common.Mounts, defaults.Common.Mounts)
+	}
+	if !reflect.DeepEqual(config.Common.TmpfsMounts, defaults.Common.TmpfsMounts) {
+		t.Errorf("tmpfs_mounts = %#v, want omitted default %#v", config.Common.TmpfsMounts, defaults.Common.TmpfsMounts)
 	}
 	if want := []string{"exec", "--model", "gpt-5"}; !reflect.DeepEqual(config.Codex.Arguments, want) {
 		t.Errorf("arguments = %#v, want %#v", config.Codex.Arguments, want)
 	}
 	if want := []string{"--model", "opus"}; !reflect.DeepEqual(config.Claude.Arguments, want) {
 		t.Errorf("Claude arguments = %#v, want %#v", config.Claude.Arguments, want)
+	}
+}
+
+func TestLoadTypedConfigReplacesTmpfsMounts(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configured := filepath.Join(root, "service", ".venv")
+	defaults := typedDefaults(t)
+	writeConfig(t, root, "[[common.tmpfs_mounts]]\ntarget = \""+configured+"\"\nmode = \"0755\"\ncomment = \"service environment\"\n")
+
+	config, err := Load(root, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []TmpfsMountConfig{{Target: configured, Mode: "0755", Comment: "service environment"}}
+	if !reflect.DeepEqual(config.Common.TmpfsMounts, want) {
+		t.Fatalf("tmpfs_mounts = %#v, want %#v", config.Common.TmpfsMounts, want)
+	}
+	config.Common.TmpfsMounts[0].Mode = "0700"
+	if defaults.Common.TmpfsMounts[0].Mode == "0700" {
+		t.Fatal("Load() mutated default tmpfs mounts")
 	}
 }
 
@@ -149,6 +177,15 @@ read_only = false
 `,
 			want: "invalid host MCP channel mount",
 		},
+		{
+			name: "unsafe tmpfs mode",
+			content: `
+[[common.tmpfs_mounts]]
+target = "/project/.venv"
+mode = "1888"
+`,
+			want: "octal mode",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -183,6 +220,12 @@ func TestEncodeTypedConfigIsDeterministic(t *testing.T) {
 	if !strings.Contains(first.String(), "dependency_caches = []") {
 		t.Fatalf("Encode() = %q, want explicit empty dependency-cache snapshot", first.String())
 	}
+	if !strings.Contains(first.String(), "use_host_python_venv = false") {
+		t.Fatalf("Encode() = %q, want explicit host virtual-environment policy", first.String())
+	}
+	if !strings.Contains(first.String(), "[[common.tmpfs_mounts]]") {
+		t.Fatalf("Encode() = %q, want explicit tmpfs mount snapshot", first.String())
+	}
 }
 
 func typedDefaults(t *testing.T) ProjectConfig {
@@ -190,12 +233,16 @@ func typedDefaults(t *testing.T) ProjectConfig {
 	source := t.TempDir()
 	return ProjectConfig{
 		Common: CommonConfig{
-			Image:     "default:image",
-			NoHostMCP: true,
+			Image:             "default:image",
+			NoHostMCP:         true,
+			UseHostPythonVenv: false,
 			Mounts: []MountConfig{{
 				Role:   RoleAdditional,
 				Source: source,
 				Target: source,
+			}},
+			TmpfsMounts: []TmpfsMountConfig{{
+				Target: filepath.Join(source, ".venv"), Mode: DefaultTmpfsMode,
 			}},
 		},
 		Codex:  CodexConfig{Arguments: []string{"--sandbox", "danger-full-access"}},
