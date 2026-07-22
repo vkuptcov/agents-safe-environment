@@ -73,6 +73,7 @@ func (fixture *smokeFixture) assertEnvironment() {
 	require.Equal(fixture.t, "true", report["tool_less"], "less must be available")
 	require.Equal(fixture.t, "true", report["tool_make"], "make must be available")
 	require.Equal(fixture.t, "true", report["tool_rg"], "rg must be available")
+	require.Empty(fixture.t, report["missing_diagnostic_tools"], "every diagnostic tool must be available")
 	require.Equal(fixture.t, "true", report["docker_compose"], "Docker Compose must be available")
 	require.Equal(fixture.t, "true", report["make_completion"], "Make completion must be registered")
 }

@@ -98,7 +98,8 @@ in the base image. Derived-image enforcement of those `PATH` entries is tracked 
 [tech debt tracker](docs/reviews/tech-debt-tracker.md). Session startup never performs a network update.
 
 The environment includes Git, Docker Engine and CLI with Buildx/BuildKit, Docker Compose V2, `curl`, `sudo`, `make`,
-`less`, and `rg`.
+`less`, and `rg`. It also includes `jq`, `sqlite3`, process and socket inspection, IP/DNS/TCP diagnostics, file-type
+inspection, and ZIP/XZ archive tools for evidence-based repository and service troubleshooting.
 The recreated host user has passwordless `sudo` for container-local administration such as `sudo apt-get update`.
 Interactive Bash sessions also load the system completion framework, including Make target completion.
 The image defaults to `C.UTF-8` and `TERM=xterm-256color`, so Bash and text tools handle Cyrillic and terminal colors.

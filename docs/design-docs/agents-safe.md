@@ -407,6 +407,8 @@ The container image includes:
 
 - `curl` and the maintenance wrapper used to install Codex into the shared volume;
 - Docker CLI, Docker daemon, and the Compose plugin;
+- Git, Make, Less, and Ripgrep for routine repository inspection;
+- `jq` and SQLite clients, file and archive inspection tools, and process, socket, IP, DNS, and TCP diagnostics;
 - `sudo` with a validated passwordless policy for the recreated host account;
 - an init process that reaps child processes and handles signals correctly;
 - a Go session-manager entrypoint that performs account bootstrap and supervises the nested daemon.

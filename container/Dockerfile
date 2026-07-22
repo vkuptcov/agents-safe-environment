@@ -49,24 +49,39 @@ ARG DEBIAN_FRONTEND=noninteractive
 # docker.io intentionally supplies both the client and a daemon: the daemon runs inside the
 # Sysbox container, while the host Docker socket is never mounted. nodejs is the runtime the
 # Claude Code plugin hooks (`.mjs` session and stop-review scripts) shell out to; without it the
-# Stop hook fails with `node: not found`. The remaining packages are the minimum interactive
-# tooling exercised by the MVP smoke test.
+# Stop hook fails with `node: not found`.
+#
+# The agent-facing tools are grouped by purpose. Git, Make, Less, and Ripgrep cover routine
+# repository inspection. jq and SQLite provide structured data inspection; file and the archive
+# utilities identify and unpack unfamiliar artifacts. procps, iproute2, lsof, netcat, and DNS tools
+# expose the container's own process, socket, network, and name-resolution state when Docker,
+# service, or MCP behavior needs evidence-based diagnosis.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         bash \
         bash-completion \
         ca-certificates \
         curl \
+        dnsutils \
         docker-buildx \
         docker-compose-v2 \
         docker.io \
+        file \
         git \
+        iproute2 \
+        jq \
         less \
+        lsof \
         make \
+        netcat-openbsd \
         nodejs \
+        procps \
         ripgrep \
+        sqlite3 \
         sudo \
         tini \
+        unzip \
+        xz-utils \
     && docker buildx version \
     && node --version \
     && rm -rf /var/lib/apt/lists/*

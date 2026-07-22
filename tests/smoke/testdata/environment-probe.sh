@@ -30,16 +30,22 @@ tool_make=false
 command -v make >/dev/null && tool_make=true
 tool_rg=false
 command -v rg >/dev/null && tool_rg=true
+missing_diagnostic_tools=
+for tool in dig file ip jq lsof nc ps sqlite3 unzip xz; do
+    if ! command -v "$tool" >/dev/null; then
+        missing_diagnostic_tools="${missing_diagnostic_tools:+${missing_diagnostic_tools},}${tool}"
+    fi
+done
 docker_compose=false
 docker compose version >/dev/null && docker_compose=true
 make_completion=false
 bash -ic '_completion_loader make; complete -p make' >/dev/null 2>&1 && make_completion=true
 
-printf 'user=%s\ngroup=%s\nhome=%s\npasswd_home=%s\nsudo_uid=%s\nsudoers_mode=%s\nsudoers_writable=%s\ngit_marker=%s\ngit_writable=%s\nlocale=%s\ncolors=%s\ncolor_prompt=%s\ncolor_ls=%s\ntool_less=%s\ntool_make=%s\ntool_rg=%s\ndocker_compose=%s\nmake_completion=%s\n' \
+printf 'user=%s\ngroup=%s\nhome=%s\npasswd_home=%s\nsudo_uid=%s\nsudoers_mode=%s\nsudoers_writable=%s\ngit_marker=%s\ngit_writable=%s\nlocale=%s\ncolors=%s\ncolor_prompt=%s\ncolor_ls=%s\ntool_less=%s\ntool_make=%s\ntool_rg=%s\nmissing_diagnostic_tools=%s\ndocker_compose=%s\nmake_completion=%s\n' \
     "$actual_user" "$actual_group" "$actual_home" "$passwd_home" "$sudo_uid" "$sudoers_mode" \
     "$sudoers_writable" "$actual_git_marker" "$git_writable" "$locale_name" "$colors" \
-    "$color_prompt" "$color_ls" "$tool_less" "$tool_make" "$tool_rg" "$docker_compose" \
-    "$make_completion" > "$report"
+    "$color_prompt" "$color_ls" "$tool_less" "$tool_make" "$tool_rg" "$missing_diagnostic_tools" \
+    "$docker_compose" "$make_completion" > "$report"
 
 printf ready > "$ready"
 while [[ ! -e "$release" ]]; do
