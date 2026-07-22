@@ -270,7 +270,7 @@ The creation-time fingerprint is the SHA-256 digest of one versioned canonical s
 
 | Field | Canonical value |
 | --- | --- |
-| `schema_version` | Integer `2`; incremented whenever encoding or field meaning changes. |
+| `schema_version` | Integer `3`; incremented whenever encoding or implicit creation behavior changes. |
 | `image_reference` | Resolved requested image reference, before resolving or building an immutable image ID. |
 | `image_override` | Explicit `--image` bypasses the project Dockerfile, even when its reference is unchanged. |
 | `mounts` | Ordered physical binds with canonical `source`, `target`, and `read_only`. |
@@ -295,6 +295,10 @@ list cannot express. Cache contents, timestamps, size, and hit rate remain exclu
 Changing from schema version 1 to 2 makes every container created by an older launcher incompatible after upgrade,
 including projects whose resolved cache list is empty. The first version 2 invocation therefore follows the normal
 active-container mismatch path instead of reusing version 1 state.
+
+Schema version 3 introduces the implicit read-only `codex-safe-codex` volume mount. The mount is launcher policy and
+is not duplicated in the configured physical-bind list, so the schema bump prevents reuse of a version 2 container
+that lacks it. Codex release contents and version remain outside the fingerprint.
 
 `mounts` uses the exact deterministic order passed to Docker after alias and nesting normalization. It excludes the
 materialized `host_mcp_channel` bind because that bind has a random generation-directory source;

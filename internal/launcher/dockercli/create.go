@@ -37,18 +37,30 @@ func (client *Client) Create(ctx context.Context, request CreateRequest) (contai
 // that previously made a session container falling off sysbox-runc impossible, so the session's own
 // creation path enforces the explicit-runtime invariant instead.
 func BuildCreateArgs(request CreateRequest) ([]string, error) {
-	if strings.TrimSpace(request.Image) == "" {
-		return nil, errors.New("container image is required")
-	}
 	if request.Name == "" {
 		return nil, errors.New("container name is required")
 	}
+	return buildRunArgs([]string{"run", "--detach", "--rm"}, request)
+}
 
-	args := []string{"run", "--detach", "--rm"}
+// BuildRunAttachedArgs encodes a typed create request as foreground `docker run` argv, used by the
+// attached maintenance-container transport.
+func BuildRunAttachedArgs(request CreateRequest) ([]string, error) {
+	return buildRunArgs([]string{"run", "--rm"}, request)
+}
+
+func buildRunArgs(head []string, request CreateRequest) ([]string, error) {
+	if strings.TrimSpace(request.Image) == "" {
+		return nil, errors.New("container image is required")
+	}
+
+	args := append([]string{}, head...)
 	if request.Runtime != "" {
 		args = append(args, "--runtime="+request.Runtime)
 	}
-	args = append(args, "--name", request.Name)
+	if request.Name != "" {
+		args = append(args, "--name", request.Name)
+	}
 	if request.User != "" {
 		args = append(args, "--user", request.User)
 	}
@@ -75,6 +87,12 @@ func BuildCreateArgs(request CreateRequest) ([]string, error) {
 	}
 	for _, mount := range request.Mounts {
 		args = append(args, "--mount", bindMountArg(mount))
+	}
+	for _, volume := range request.Volumes {
+		args = append(args, "--mount", volumeMountArg(volume))
+	}
+	if request.Entrypoint != "" {
+		args = append(args, "--entrypoint", request.Entrypoint)
 	}
 	args = append(args, request.Image)
 	// An empty command preserves the image's default; the sidecar sets it to select relay.
@@ -108,6 +126,14 @@ func bindMountArg(mount Mount) string {
 	return specification
 }
 
+func volumeMountArg(mount VolumeMount) string {
+	specification := "type=volume,source=" + mount.Source + ",target=" + mount.Target
+	if mount.ReadOnly {
+		specification += ",readonly"
+	}
+	return specification
+}
+
 func validateContainerID(containerID string) error {
 	if len(containerID) < 12 || len(containerID) > 64 || len(containerID)%2 != 0 {
 		return fmt.Errorf("invalid Docker container ID %q", containerID)
@@ -122,6 +148,6 @@ func isContainerNameConflict(output []byte, err error) bool {
 	if ExitCode(err) != 125 {
 		return false
 	}
-	message := strings.ToLower(string(output))
-	return strings.Contains(message, "container name") && strings.Contains(message, "already in use")
+	lowered := strings.ToLower(string(output))
+	return strings.Contains(lowered, "container name") && strings.Contains(lowered, "already in use")
 }

@@ -50,35 +50,35 @@ func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
 	}
 }
 
-func TestCreationFingerprintIncludesSchemaVersionTwoForEmptyCaches(t *testing.T) {
+func TestCreationFingerprintIncludesSchemaVersionThree(t *testing.T) {
 	plan := testPlan()
 	got := mustCreationFingerprint(t, plan, "image", false, false, hostmcp.Set{})
-	legacyInput := launchFingerprintInput{SchemaVersion: 1, ImageReference: "image", Mounts: []fingerprintMount{
+	legacyInput := launchFingerprintInput{SchemaVersion: 2, ImageReference: "image", Mounts: []fingerprintMount{
 		{Source: plan.Mounts[0].Source, Target: plan.Mounts[0].Target, ReadOnly: plan.Mounts[0].ReadOnly},
 		{Source: plan.Mounts[1].Source, Target: plan.Mounts[1].Target, ReadOnly: plan.Mounts[1].ReadOnly},
 		{Source: plan.Mounts[2].Source, Target: plan.Mounts[2].Target, ReadOnly: plan.Mounts[2].ReadOnly},
 		{Source: plan.Mounts[3].Source, Target: plan.Mounts[3].Target, ReadOnly: plan.Mounts[3].ReadOnly},
 	}}
 	_ = legacyInput
-	if launchConfigSchemaVersion != 2 || got == "" {
+	if launchConfigSchemaVersion != 3 || got == "" {
 		t.Fatalf("schema/fingerprint = %d/%q", launchConfigSchemaVersion, got)
 	}
 }
 
-func TestCreationFingerprintKeepsVersionTwoBaselines(t *testing.T) {
+func TestCreationFingerprintKeepsVersionThreeBaselines(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		plan launchplan.Plan
 		want string
 	}{
-		{name: "empty", plan: testPlan(), want: "728078747ef0ddecc0f84ea0ae6bbe7d8a5dcce6cb08209add3c0bcb746ad01d"},
-		{name: "go only", plan: planWithCache(testPlan()), want: "1251f932423ff9cddbf4267bead2b0f7590faa8a4ed9c1ace076192acb4d3900"},
+		{name: "empty", plan: testPlan(), want: "a7fd282e9367d4e10d4ae9b8d69a719f170da3f54d5f96cc0d50f321a0976bc0"},
+		{name: "go only", plan: planWithCache(testPlan()), want: "592d3d37c3ae17bd27e83744d72e1347240838e875a326acafdb610fdcc68c54"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if got := mustCreationFingerprint(t, test.plan, "image", false, false, hostmcp.Set{}); got != test.want {
-				t.Fatalf("fingerprint = %q, want version-2 baseline %q", got, test.want)
+				t.Fatalf("fingerprint = %q, want version-3 baseline %q", got, test.want)
 			}
 		})
 	}

@@ -66,7 +66,7 @@ foreground process inside that container.
 The launcher resolves the optional Codex state directory from the host's `CODEX_HOME` or operating-system user-home
 API. It does not assume `/home/<user>`, `/Users/<user>`, or a Windows profile path. An existing resolved directory is
 mounted into the container as its Codex home; otherwise Codex uses ephemeral container-local state. The executable
-always comes from the pinned container image.
+always comes from the daemon-local Codex volume mounted read-only in the session.
 
 The container has its own Docker daemon and Docker CLI. The host Docker socket is not mounted. Nested containers use
 only the container's daemon and storage and can access host files only through paths already visible inside the
@@ -135,8 +135,8 @@ agents-safe [launcher options] [--] command [argument ...]
 - Interactive mode attaches stdin, stdout, stderr, and the terminal to the container process.
 - After successful environment setup, the Codex exit code becomes the `codex-safe` exit code.
 
-`codex-safe` always executes the image-provided `codex` binary. Arguments after `--` are Codex arguments, not an
-arbitrary executable.
+`codex-safe` always executes the volume-backed `codex` binary by absolute path. Arguments after `--` are Codex
+arguments, not an arbitrary executable.
 
 `agents-safe` requires a command. Launcher options precede that command; `--` is optional and can disambiguate a
 command name that starts with a hyphen. The command and every argument remain separate argv elements and run directly
@@ -144,9 +144,11 @@ through the session wrapper. For example, `agents-safe bash` runs image-provided
 `agents-safe bash -c 'make test'` passes the script to that Bash. `agents-safe` does not invoke a shell implicitly.
 It can execute only programs available in the image or explicitly mounted project paths.
 
-`agents-safe init` is the only host-side subcommand. It creates the files specified by
+`agents-safe init` creates the files specified by
 [Project Launcher Configuration](project-launcher-configuration.md) and returns without initializing Docker. Because
 a leading `init` is reserved for that operation, `agents-safe -- init` executes a container command named `init`.
+`codex-safe update` is the other host-side subcommand. It updates the shared Linux Codex installation before Git
+discovery and without constructing a Sysbox session. `codex-safe -- update` remains a forwarded Codex command.
 
 Both commands use the same project discovery, mount plan, image selection, session-reuse validation, terminal
 attachment, and exit-code propagation. The lower-level session wrapper remains command-agnostic for container-local
@@ -301,18 +303,20 @@ rather than being mounted read-only while remaining writable through the other p
 
 #### Codex executable and process
 
-The container image contains a pinned Linux Codex CLI and its runtime dependencies. The build records the version and
-verifies the downloaded artifact or package through the repository's dependency policy. Updating Codex requires a new
-image build; the launcher does not install or update Codex from the network at startup.
+The container image contains no Codex executable or dispatcher. Every session mounts the daemon-local
+`codex-safe-codex` volume read-only at `/opt/codex-safe/codex`, and the launcher runs its `bin/codex` by absolute path.
+`make docker-build` initializes or updates the volume after building the local image; later routine updates use
+`codex-safe update`. Session startup performs no network update and fails executable lookup if the installation is
+absent.
 
-The executable is selected from an image-owned path that the Codex-home mount cannot shadow. Host-side Codex binaries,
-including standalone package caches under the mounted state directory, are data and are never executed as the
-container's launcher binary.
+Host-side Codex binaries, including standalone package caches under the mounted state directory, remain data and are
+never selected as the container's launcher binary. The complete update and failure contract is owned by
+[Persistent Container Codex Installation and Updates](persistent-codex-installation.md).
 
 Every `codex-safe` invocation runs this process through the session wrapper:
 
 ```text
-codex-safe-session run -- codex --sandbox danger-full-access [forwarded Codex arguments]
+codex-safe-session run -- /opt/codex-safe/codex/bin/codex --sandbox danger-full-access [forwarded Codex arguments]
 ```
 
 The process uses the invoking host UID and GID, the selected project directory as its working directory, the
@@ -335,9 +339,10 @@ absence is degradable rather than a launch failure. The command exit status prop
 #### Persistent state, configuration, and skills
 
 The read-write Codex-home mount persists Codex's documented configuration, authentication, logs, sessions, skills,
-and standalone package metadata. Other files physically present below the mounted source remain visible, but the
-launcher does not promise that Codex interprets them. Project-scoped `.codex` configuration and repository skills
-remain available through the project mount and keep their normal precedence.
+and host standalone package metadata. The managed Linux executable store is a separate read-only named volume, so
+host-native packages remain visible as state but are not selected. Other files physically present below the mounted
+source remain visible, but the launcher does not promise that Codex interprets them. Project-scoped `.codex`
+configuration and repository skills remain available through the project mount and keep their normal precedence.
 
 The launcher does not rewrite configuration. Hooks, MCP server commands, skills, plugins, or config values that refer
 to host paths or binaries outside the allowed mounts can fail inside the Linux container. Platform-specific binaries
@@ -394,7 +399,7 @@ one trusted local user rather than mutually untrusted tenants.
 
 The container image includes:
 
-- a pinned Codex CLI and its runtime dependencies at an image-owned executable path;
+- `curl` and the maintenance wrapper used to install Codex into the shared volume;
 - Docker CLI, Docker daemon, and the Compose plugin;
 - `sudo` with a validated passwordless policy for the recreated host account;
 - an init process that reaps child processes and handles signals correctly;
@@ -584,7 +589,8 @@ Before creating a container, the launcher verifies:
    source. Without the degradable role, `codex-safe` warns and uses ephemeral state while `agents-safe` skips the
    mount.
 6. The optional personal-skills source is absent or is an accessible directory representable as a read-only bind.
-7. The image resolves to the pinned digest or was explicitly supplied by the user and contains the expected Codex CLI.
+7. The image resolves to the pinned digest or was explicitly supplied by the user and preserves the session runtime
+   contract; the Codex executable comes from the separately mounted volume.
 8. The mount plan contains no conflicts or paths outside the allowed set.
 9. Any provided resource-limit cap is syntactically valid; no cap is required.
 
@@ -610,8 +616,8 @@ mode.
   project's own image with no capability, no Docker socket, and a read-only root filesystem.
 - Unsafe fallback behavior is forbidden.
 - Host-side orchestration and Docker argument construction are implemented in Go.
-- `codex-safe` executes the pinned image-owned Codex binary and sets explicit container-local `CODEX_HOME` only when
-  the corresponding host mount is present.
+- `codex-safe` executes the Codex installation from the launcher-managed read-only volume and sets explicit
+  container-local `CODEX_HOME` only when the corresponding host mount is present.
 - `agents-safe` executes the requested command only inside the managed container and never through a host shell.
 - Arguments and paths are separate argv elements and are never passed through `eval` or shell reinterpretation.
 - After the final managed command finishes normally, the session does not intentionally leave nested containers
@@ -678,7 +684,8 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Mount an existing `$HOME/.agents/skills` read-only, allow it to be absent, and reject an invalid source.
 - Reject a dangling personal-skills path before either launcher reaches Docker.
 - Prove no missing Codex-home path is created as a launcher side effect.
-- Verify `HOME` and `CODEX_HOME`, the image-owned `codex` argv, forwarded arguments, working directory, and exit status.
+- Verify `HOME` and `CODEX_HOME`, the volume-backed absolute `codex` argv, forwarded arguments, working directory,
+  and exit status.
 - Verify `agents-safe bash` preserves direct argv, starts in the selected project, rejects an omitted command, and
   propagates the command exit status.
 - Reject reuse when a Codex-home or personal-skills change alters the creation fingerprint; diagnostic labels are not
@@ -700,7 +707,7 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Mount a temporary Codex home with sentinel configuration, global instructions, and a skill; verify Codex sees them
   and writes session state back to the host without exposing a real credential.
 - Prove personal skills are readable but not writable and that an external symlink target remains unavailable.
-- Prove a host standalone Codex binary under the mounted state cannot shadow the image-owned Linux executable.
+- Prove a host standalone Codex binary under the mounted state cannot shadow the volume-backed Linux executable.
 - Verify file-based authentication with a dedicated test account only in an opt-in credentialed acceptance test; keep
   real user credentials out of fixtures, logs, and CI artifacts.
 - Prove that the primary checkout's read-only mount cannot be remounted read-write from either container layer.

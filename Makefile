@@ -4,6 +4,8 @@ CODEX_BINARY := bin/codex-safe
 AGENTS_BINARY := bin/agents-safe
 SESSION_BINARY := bin/codex-safe-session
 IMAGE := codex-safe-mvp:local
+CODEX_VOLUME := codex-safe-codex
+CODEX_INSTALL_ROOT := /opt/codex-safe/codex
 SMOKE_DIR := tests/smoke
 GOLANGCI_LINT_MODFILE := tools/go.mod
 TOOLS_BIN_DIR := bin
@@ -23,6 +25,9 @@ install: docker-build
 
 docker-build:
 	$(DOCKER) build -t $(IMAGE) -f container/Dockerfile .
+	$(DOCKER) run --rm \
+		--mount type=volume,source=$(CODEX_VOLUME),target=$(CODEX_INSTALL_ROOT) \
+		--entrypoint /usr/local/bin/codex-safe-update $(IMAGE)
 
 install-tools: $(GOLANGCI_LINT_BINARY)
 
@@ -42,6 +47,7 @@ test:
 	$(GO) -C $(SMOKE_DIR) test ./...
 	$(GO) -C $(SMOKE_DIR) vet ./...
 	bash -n container/bashrc
+	sh -n container/codex-safe-update
 
 test-smoke-go: build docker-build
 	CODEX_SAFE_RUN_SYSBOX_SMOKE=1 $(GO) -C $(SMOKE_DIR) test . -run TestSysbox -count=1 -v

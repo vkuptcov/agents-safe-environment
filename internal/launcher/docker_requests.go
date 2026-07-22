@@ -86,6 +86,11 @@ func (docker *DockerLauncher) buildCreateRequest(
 		Labels:      labels,
 		Environment: environment,
 		Mounts:      mounts,
+		Volumes: []dockercli.VolumeMount{{
+			Source:   CodexInstallationVolume,
+			Target:   CodexInstallationRoot,
+			ReadOnly: true,
+		}},
 	}, nil
 }
 

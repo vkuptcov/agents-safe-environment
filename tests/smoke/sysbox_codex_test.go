@@ -53,7 +53,7 @@ func TestSysboxCodexProductLaunch(t *testing.T) {
 	initialContainerID := fixture.docker.inspectContainer().ID
 	fixture.assertCodexHomeMounts(sentinel)
 	fixture.assertCodexReadsSentinelAndWritesState()
-	fixture.assertImageCodexNotShadowed(sentinel)
+	fixture.assertVolumeCodexNotShadowed(sentinel)
 	require.Equal(t, initialContainerID, fixture.docker.inspectContainer().ID,
 		"command-time Codex argv must reuse the held session")
 	fixture.assertReuseMismatchDiagnostic(sentinel, hold)
@@ -75,7 +75,7 @@ func (fixture *smokeFixture) setupCodexSentinel() codexSentinel {
 		"---\nname: sentinel-skill\n---\n"+codexSkillMarker+"\n")
 
 	// A host Codex binary under the mounted state must remain inert data: the launcher invokes the
-	// image-owned absolute path, never a bare name resolved through this directory.
+	// volume-backed absolute path, never a bare name resolved through this directory.
 	fakeBinary := filepath.Join(home, "bin", "codex")
 	writeFile(fixture.t, fakeBinary, "#!/bin/sh\necho FAKE_CODEX_SHADOW\nexit 0\n")
 	require.NoError(fixture.t, os.Chmod(fakeBinary, 0o755), "fake host Codex binary must be executable")
@@ -104,7 +104,7 @@ func (fixture *smokeFixture) setupCodexSentinel() codexSentinel {
 
 // assertCodexHomeMounts inspects the container view through the probe: personal skills are readable
 // but not writable, the external symlink target is unavailable, and the Codex home is mounted with
-// the fake binary present as inert data beside the image-owned Codex.
+// the fake binary present as inert data beside the managed volume installation.
 func (fixture *smokeFixture) assertCodexHomeMounts(sentinel codexSentinel) {
 	fixture.t.Helper()
 	probe := fixture.launcher.start(fixture.project.worktree, "bash", "-c", codexInspectScript, "bash", sentinel.inspectReport)
@@ -114,10 +114,11 @@ func (fixture *smokeFixture) assertCodexHomeMounts(sentinel codexSentinel) {
 	require.Equal(fixture.t, "true", report["skill_readable"], "personal skill must be readable in the container")
 	require.Equal(fixture.t, "false", report["skill_writable"], "personal skills must be mounted read-only")
 	require.Equal(fixture.t, "false", report["external_available"], "external skills symlink target must be unavailable")
-	require.Equal(fixture.t, "true", report["image_codex"], "image-owned Codex must exist at the absolute path")
+	require.Equal(fixture.t, "true", report["managed_codex"],
+		"volume-backed Codex must exist at the absolute path")
 	require.Equal(fixture.t, "true", report["fake_codex_present"], "host Codex binary must be visible as data under the state")
-	require.Equal(fixture.t, "/usr/local/bin/codex", report["codex_on_path"],
-		"a bare codex must resolve to the image binary, not the host binary under the mounted state")
+	require.Equal(fixture.t, "/opt/codex-safe/codex/bin/codex", report["codex_on_path"],
+		"a bare codex must resolve to the managed volume, not the host binary under the mounted state")
 	require.Equal(fixture.t, agentsMarker, report["agents_marker"], "mounted global instructions must be readable")
 	require.Equal(fixture.t, codexSkillMarker, report["codex_skill_marker"], "mounted Codex skill must be readable")
 	require.Equal(fixture.t, fixture.project.codexHome, report["codex_home_env"],
@@ -147,16 +148,16 @@ func (fixture *smokeFixture) assertCodexReadsSentinelAndWritesState() {
 	requireHostOwnership(fixture.t, sessions)
 }
 
-// assertImageCodexNotShadowed runs the product doctor and proves the running executable is the
-// image-owned path even though a host Codex binary sits under the mounted Codex home.
-func (fixture *smokeFixture) assertImageCodexNotShadowed(sentinel codexSentinel) {
+// assertVolumeCodexNotShadowed runs the product doctor and proves the running executable comes from the managed
+// volume even though a host Codex binary sits under the mounted Codex home.
+func (fixture *smokeFixture) assertVolumeCodexNotShadowed(sentinel codexSentinel) {
 	fixture.t.Helper()
 	require.FileExists(fixture.t, sentinel.fakeBinary, "the host Codex binary under the state must still exist")
 	doctor := fixture.launcher.startBinary(fixture.launcher.productBinary, fixture.project.worktree, true, nil, "doctor")
 	doctor.waitDone(fixture.t, "product codex doctor")
 	combined := doctor.stdout.String() + doctor.stderr.String()
-	require.Contains(fixture.t, combined, "/usr/local/bin/codex",
-		"doctor must report the image-owned executable\n%s", doctor.diagnostics())
+	require.Contains(fixture.t, combined, "/opt/codex-safe/codex/bin/codex",
+		"doctor must report the managed volume executable\n%s", doctor.diagnostics())
 	require.NotContains(fixture.t, combined, "FAKE_CODEX_SHADOW", "the host Codex binary must never execute")
 }
 
@@ -274,13 +275,13 @@ skill_writable=true
 rm -f "$skill_dir/intrusion" 2>/dev/null
 external_available=true
 cat "$HOME/.agents/skills/external/secret.txt" >/dev/null 2>&1 || external_available=false
-image_codex=false
-[[ -x /usr/local/bin/codex ]] && image_codex=true
+managed_codex=false
+[[ -x /opt/codex-safe/codex/bin/codex ]] && managed_codex=true
 fake_codex_present=false
 [[ -e "$CODEX_HOME/bin/codex" ]] && fake_codex_present=true
 codex_on_path="$(command -v codex || true)"
 agents_marker="$(cat "$CODEX_HOME/AGENTS.md" 2>/dev/null | tr -d '\n')"
 codex_skill_marker="$(cat "$CODEX_HOME/skills/sentinel-skill/SKILL.md" 2>/dev/null | grep ` + codexSkillMarker + `)"
-printf 'skill_readable=%s\nskill_writable=%s\nexternal_available=%s\nimage_codex=%s\nfake_codex_present=%s\ncodex_on_path=%s\nagents_marker=%s\ncodex_skill_marker=%s\ncodex_home_env=%s\n' \
-    "$skill_readable" "$skill_writable" "$external_available" "$image_codex" "$fake_codex_present" \
+printf 'skill_readable=%s\nskill_writable=%s\nexternal_available=%s\nmanaged_codex=%s\nfake_codex_present=%s\ncodex_on_path=%s\nagents_marker=%s\ncodex_skill_marker=%s\ncodex_home_env=%s\n' \
+    "$skill_readable" "$skill_writable" "$external_available" "$managed_codex" "$fake_codex_present" \
     "$codex_on_path" "$agents_marker" "$codex_skill_marker" "$CODEX_HOME" > "$report"`

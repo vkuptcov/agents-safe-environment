@@ -1,0 +1,17 @@
+#!/bin/sh
+
+set -eu
+umask 022
+
+installation_root="/opt/codex-safe/codex"
+installer="$(mktemp)"
+trap 'rm -f "$installer"' EXIT INT TERM
+
+export CODEX_HOME="$installation_root/home"
+export CODEX_INSTALL_DIR="$installation_root/bin"
+export CODEX_NON_INTERACTIVE=1
+export PATH="$CODEX_INSTALL_DIR:$PATH"
+
+mkdir -p "$CODEX_HOME" "$CODEX_INSTALL_DIR"
+curl -fsSL https://chatgpt.com/codex/install.sh -o "$installer"
+sh "$installer"

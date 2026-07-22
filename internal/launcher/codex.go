@@ -2,10 +2,14 @@ package launcher
 
 import "strings"
 
-// CodexBinaryPath is the absolute image-owned path of the Codex CLI. The product always invokes
-// Codex from this path so a mounted Codex home cannot shadow it through PATH, and host-side Codex
-// binaries under the mounted state are treated as data, never as the launcher's executable.
-const CodexBinaryPath = "/usr/local/bin/codex"
+const (
+	// CodexInstallationVolume is the daemon-local volume shared by every managed session.
+	CodexInstallationVolume = "codex-safe-codex"
+	// CodexInstallationRoot is the fixed path where sessions mount the volume read-only.
+	CodexInstallationRoot = "/opt/codex-safe/codex"
+	// CodexBinaryPath is the installer-created executable used by the product launcher.
+	CodexBinaryPath = CodexInstallationRoot + "/bin/codex"
+)
 
 // codexDefaultSandboxArgs disable Codex's own inner sandbox. The Sysbox container is already the
 // isolation boundary, so Codex's bubblewrap-based sandbox is redundant, and the image ships no

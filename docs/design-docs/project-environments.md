@@ -44,7 +44,8 @@ There is no additional launcher prompt or trust database.
 - Every cold create invokes `docker build`; Docker/BuildKit decides which layers need rebuilding.
 - Two projects can use different toolchain versions without sharing writable SDK state.
 - The build context exposes no project or host files outside `.agents-safe/`.
-- A derived image preserves the session manager, Codex CLI, nested Docker, and root-bootstrap contracts.
+- A derived image preserves the session manager, nested Docker, and root-bootstrap contracts; the launcher mounts
+  the Codex executable separately from the image.
 - Changing or removing the Dockerfile never mutates an active session.
 - Build or compatibility failure stops the launch without falling back to the base image.
 
@@ -117,8 +118,12 @@ derived image that changes any static base-image contract:
 - default command is `serve`;
 - `DOCKER_HOST` is `unix:///var/run/docker.sock`.
 
-The normal session startup exercises `tini`, `codex-safe-session`, `codex`, Docker CLI, and the private daemon. Missing
-or broken runtime binaries fail without a base-image fallback.
+The base image puts `/opt/codex-safe/codex/bin` on `PATH`, but preserving that entry is not yet a compatibility check.
+A derived image that replaces `PATH` can therefore make bare `codex` unavailable to `agents-safe`; this is tracked as
+`TD-4` in the [tech debt tracker](../reviews/tech-debt-tracker.md). `codex-safe` uses the absolute volume path.
+
+The normal session startup exercises `tini`, `codex-safe-session`, volume-backed `codex`, Docker CLI, and the private
+daemon. Missing or broken runtime binaries fail without a base-image fallback.
 
 Validation does not make a Dockerfile trustworthy. The project opted into executing it by tracking the definition.
 

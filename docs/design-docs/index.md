@@ -16,3 +16,5 @@ Use [README.md](README.md) for design-doc format and maintenance rules.
   CLI precedence, creation-time reuse fingerprinting, and local `.agents-safe/.gitignore` behavior.
 - [Host-Backed Dependency Caches](host-backed-dependency-caches.md): explicit uv, Go, Maven, and Gradle cache
   directories, tool-specific sharing policies, and host-state trust boundaries.
+- [Persistent Container Codex Installation and Updates](persistent-codex-installation.md): Docker-managed Linux Codex
+  installation, build-time initialization, official standalone updates, and concurrent read-only reuse.

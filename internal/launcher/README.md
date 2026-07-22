@@ -11,11 +11,12 @@ Child packages:
 
 ## Non-test files
 
-- `codex.go` — constructs the image-owned Codex command.
+- `codex.go` — constructs the absolute command for the volume-backed Codex installation.
+- `codex_update.go` — runs the official installer in an isolated maintenance container with the shared volume.
 - `command_execution.go` — executes the session wrapper and classifies bounded lifecycle retries.
 - `container_lifecycle.go` — owns deterministic reuse, create-race, wait, ownership, and preflight policy.
 - `docker_requests.go` — maps prepared launcher state to typed Docker create and exec requests, including managed
-  Go and uv cache routing (`GOCACHE`, `GOMODCACHE`, and `UV_CACHE_DIR`).
+  Go and uv cache routing plus the read-only Codex installation volume.
 - `host_environment.go` — validates host identity and launcher configuration and discovers host Git configuration.
 - `identity.go` — derives deterministic project keys and container names.
 - `launcher.go` — constructs the launcher, resolves host and user-mount state, and coordinates one launch.
