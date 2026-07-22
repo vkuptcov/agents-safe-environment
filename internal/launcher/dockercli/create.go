@@ -89,7 +89,7 @@ func buildRunArgs(head []string, request CreateRequest) ([]string, error) {
 		args = append(args, "--mount", bindMountArg(mount))
 	}
 	for _, mount := range request.Tmpfs {
-		args = append(args, "--mount", tmpfsMountArg(mount))
+		args = append(args, "--tmpfs", tmpfsMountArg(mount))
 	}
 	for _, volume := range request.Volumes {
 		args = append(args, "--mount", volumeMountArg(volume))
@@ -138,9 +138,9 @@ func volumeMountArg(mount VolumeMount) string {
 }
 
 func tmpfsMountArg(mount TmpfsMount) string {
-	specification := "type=tmpfs,target=" + mount.Target
+	specification := mount.Target
 	if mount.Mode != "" {
-		specification += ",tmpfs-mode=" + mount.Mode
+		specification += ":mode=" + mount.Mode
 	}
 	return specification
 }

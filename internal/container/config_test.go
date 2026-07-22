@@ -10,6 +10,7 @@ import (
 func TestConfigFromEnvironment(t *testing.T) {
 	environment := validEnvironment()
 	environment["CODEX_SAFE_DOCKER_READY_TIMEOUT"] = "17"
+	environment[tmpfsMountsEnvironment] = `[{"target":"/project/.venv","mode":"1777"}]`
 	config, err := ConfigFromEnvironment(mapLookup(environment))
 	require.NoError(t, err, "valid host environment must parse")
 	require.Equal(t, 1000, config.HostUID, "host UID must be parsed")
@@ -19,6 +20,31 @@ func TestConfigFromEnvironment(t *testing.T) {
 	require.Equal(t, "/home/alex", config.HostHome, "host home must be parsed")
 	require.Equal(t, 17*time.Second, config.DockerReadyTimeout, "daemon readiness timeout must be configurable")
 	require.Equal(t, defaultDockerShutdownTimeout, config.DockerShutdownTimeout, "shutdown timeout must use its default")
+	require.Equal(t, []TmpfsMount{{Target: "/project/.venv", Mode: "1777"}}, config.TmpfsMounts)
+}
+
+func TestConfigFromEnvironmentRejectsInvalidTmpfsMounts(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "empty", value: ""},
+		{name: "malformed JSON", value: "["},
+		{name: "null", value: "null"},
+		{name: "relative target", value: `[{"target":"project/.venv","mode":"1777"}]`},
+		{name: "root target", value: `[{"target":"/","mode":"1777"}]`},
+		{name: "option delimiter", value: `[{"target":"/project/venv:unsafe","mode":"1777"}]`},
+		{name: "invalid mode", value: `[{"target":"/project/.venv","mode":"1888"}]`},
+		{name: "duplicate target", value: `[{"target":"/project/.venv","mode":"1777"},{"target":"/project/.venv","mode":"0700"}]`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			environment := validEnvironment()
+			environment[tmpfsMountsEnvironment] = test.value
+			_, err := ConfigFromEnvironment(mapLookup(environment))
+			require.Error(t, err, "invalid bootstrap tmpfs plan must be rejected")
+		})
+	}
 }
 
 func TestConfigFromEnvironmentRejectsInvalidValues(t *testing.T) {

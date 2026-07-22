@@ -3,6 +3,7 @@
 package container
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -16,9 +17,17 @@ import (
 const (
 	defaultDockerReadyTimeout    = 60 * time.Second
 	defaultDockerShutdownTimeout = 15 * time.Second
+	tmpfsMountsEnvironment       = "AGENTS_SAFE_TMPFS_MOUNTS"
 )
 
 var accountNamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]*[$]?$`)
+
+// TmpfsMount is one container-local filesystem that privileged bootstrap must make effective
+// after Sysbox has attached the broader project bind.
+type TmpfsMount struct {
+	Target string `json:"target"`
+	Mode   string `json:"mode"`
+}
 
 // Config is the validated host identity and timing policy received by the Go
 // container entrypoint.
@@ -43,6 +52,9 @@ type Config struct {
 	// HostMCP is the forwarded endpoint set, fixed at container creation and empty for a session
 	// that forwards nothing.
 	HostMCP []mcpchannel.Endpoint
+	// TmpfsMounts repeats Docker's creation-time tmpfs plan inside privileged bootstrap. Sysbox
+	// may attach the broader idmapped worktree bind after Docker's tmpfs and cover it.
+	TmpfsMounts []TmpfsMount
 }
 
 // ConfigFromEnvironment parses the launcher contract without modifying the
@@ -92,6 +104,10 @@ func ConfigFromEnvironment(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	tmpfsMounts, err := tmpfsMountsFromEnvironment(lookup)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		HostUID:               hostUID,
@@ -102,7 +118,53 @@ func ConfigFromEnvironment(lookup func(string) (string, bool)) (Config, error) {
 		DockerReadyTimeout:    readyTimeout,
 		DockerShutdownTimeout: defaultDockerShutdownTimeout,
 		HostMCP:               hostMCP,
+		TmpfsMounts:           tmpfsMounts,
 	}, nil
+}
+
+func tmpfsMountsFromEnvironment(lookup func(string) (string, bool)) ([]TmpfsMount, error) {
+	value, found := lookup(tmpfsMountsEnvironment)
+	if !found {
+		return nil, nil
+	}
+	var mounts []TmpfsMount
+	if value == "" || json.Unmarshal([]byte(value), &mounts) != nil {
+		return nil, fmt.Errorf("%s must be a JSON array of tmpfs mounts", tmpfsMountsEnvironment)
+	}
+	if mounts == nil {
+		return nil, fmt.Errorf("%s must be a JSON array of tmpfs mounts", tmpfsMountsEnvironment)
+	}
+	if err := validateTmpfsMounts(tmpfsMountsEnvironment, mounts); err != nil {
+		return nil, err
+	}
+	return mounts, nil
+}
+
+func validateTmpfsMounts(label string, mounts []TmpfsMount) error {
+	seen := make(map[string]struct{}, len(mounts))
+	for index, mount := range mounts {
+		name := fmt.Sprintf("%s[%d].target", label, index)
+		if err := validateAbsolutePath(name, mount.Target); err != nil {
+			return err
+		}
+		if mount.Target == "/" {
+			return fmt.Errorf("%s cannot be the filesystem root", name)
+		}
+		if strings.Contains(mount.Target, ":") {
+			return fmt.Errorf("%s cannot be represented safely with Docker --tmpfs", name)
+		}
+		if _, found := seen[mount.Target]; found {
+			return fmt.Errorf("%s repeats target %q", label, mount.Target)
+		}
+		seen[mount.Target] = struct{}{}
+		if len(mount.Mode) < 3 || len(mount.Mode) > 4 {
+			return fmt.Errorf("%s[%d].mode must be a 3- or 4-digit octal mode", label, index)
+		}
+		if _, err := strconv.ParseUint(mount.Mode, 8, 16); err != nil {
+			return fmt.Errorf("%s[%d].mode must be a 3- or 4-digit octal mode", label, index)
+		}
+	}
+	return nil
 }
 
 func requiredNonNegativeInteger(lookup func(string) (string, bool), name string) (int, error) {

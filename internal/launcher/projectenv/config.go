@@ -275,6 +275,9 @@ func validateTmpfsMount(index int, mount TmpfsMountConfig) error {
 	if err := ValidatePath(fmt.Sprintf("common.tmpfs_mounts[%d].target", index), mount.Target, false); err != nil {
 		return err
 	}
+	if strings.Contains(mount.Target, ":") {
+		return fmt.Errorf("common.tmpfs_mounts[%d].target cannot be represented safely with Docker --tmpfs", index)
+	}
 	if len(mount.Mode) < 3 || len(mount.Mode) > 4 {
 		return fmt.Errorf("common.tmpfs_mounts[%d].mode must be a 3- or 4-digit octal mode", index)
 	}
