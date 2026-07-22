@@ -21,6 +21,13 @@ type VolumeMount struct {
 	ReadOnly bool
 }
 
+// TmpfsMount is one container-local filesystem mount selected by the launcher.
+// It intentionally has no host source and disappears with the container.
+type TmpfsMount struct {
+	Target string
+	Mode   string
+}
+
 // CreateRequest contains the Docker-specific inputs for one container run.
 //
 // It describes two roles. The session container carries an explicit Runtime and WorkingDir and no
@@ -53,6 +60,7 @@ type CreateRequest struct {
 	Labels      []KeyValue
 	Environment []KeyValue
 	Mounts      []Mount
+	Tmpfs       []TmpfsMount
 	Volumes     []VolumeMount
 	// Entrypoint overrides the image entrypoint. Empty preserves it.
 	Entrypoint string

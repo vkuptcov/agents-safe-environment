@@ -100,7 +100,16 @@ func (docker *DockerLauncher) buildCreateRequest(
 				ReadOnly: true,
 			},
 		},
+		Tmpfs: dockerTmpfsMounts(plan.TmpfsMounts),
 	}, nil
+}
+
+func dockerTmpfsMounts(resolved []launchplan.TmpfsMount) []dockercli.TmpfsMount {
+	mounts := make([]dockercli.TmpfsMount, 0, len(resolved))
+	for _, mount := range resolved {
+		mounts = append(mounts, dockercli.TmpfsMount{Target: mount.Target, Mode: mount.Mode})
+	}
+	return mounts
 }
 
 func (docker *DockerLauncher) buildExecRequest(

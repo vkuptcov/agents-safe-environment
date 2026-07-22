@@ -109,6 +109,47 @@ func TestInitializeSerializesExplicitEmptyDependencyCaches(t *testing.T) {
 	}
 }
 
+func TestInitializeSerializesHostVirtualEnvironmentPolicy(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	config := initializationConfig(t)
+	config.Common.UseHostPythonVenv = false
+	contextPath, err := Initialize(root, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(contextPath, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "use_host_python_venv = false") {
+		t.Fatalf("config.toml = %q, want explicit host virtual-environment policy", data)
+	}
+}
+
+func TestInitializeSerializesTmpfsMounts(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	config := initializationConfig(t)
+	config.Common.TmpfsMounts = []TmpfsMountConfig{{
+		Target: filepath.Join(root, ".venv"), Mode: DefaultTmpfsMode, Comment: "project venv",
+	}}
+	contextPath, err := Initialize(root, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(contextPath, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "[[common.tmpfs_mounts]]") ||
+		!strings.Contains(content, "target = \""+filepath.Join(root, ".venv")+"\"") ||
+		!strings.Contains(content, "mode = \"1777\"") {
+		t.Fatalf("config.toml = %q, want explicit tmpfs mount", data)
+	}
+}
+
 func TestInitializeRejectsSymlinkLocalFilesWithoutReadingRootIgnore(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

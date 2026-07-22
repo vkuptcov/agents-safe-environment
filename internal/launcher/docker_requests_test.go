@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -28,6 +29,10 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(request.Volumes, wantVolume) {
 		t.Fatalf("volumes = %#v, want %#v", request.Volumes, wantVolume)
+	}
+	wantTmpfs := []dockercli.TmpfsMount{{Target: filepath.Join(plan.ProjectRoot, ".venv"), Mode: projectenv.DefaultTmpfsMode}}
+	if !reflect.DeepEqual(request.Tmpfs, wantTmpfs) {
+		t.Fatalf("tmpfs = %#v, want %#v", request.Tmpfs, wantTmpfs)
 	}
 	fingerprintFound := false
 	uvCacheFound := false
@@ -68,6 +73,45 @@ func TestCreateRequestLabelsResolvedUVCache(t *testing.T) {
 		}
 	}
 	t.Fatalf("labels = %#v, want %s=/physical/uv-cache", request.Labels, uvCacheLabel)
+}
+
+func TestCreateRequestMasksDiscoveredPythonVirtualEnvironments(t *testing.T) {
+	t.Parallel()
+	plan := testPlan()
+	plan.TmpfsMounts = []launchplan.TmpfsMount{
+		{Target: filepath.Join(plan.ProjectRoot, ".venv"), Mode: projectenv.DefaultTmpfsMode},
+		{Target: filepath.Join(plan.ProjectRoot, ".venv-dev"), Mode: "0755"},
+		{Target: filepath.Join(plan.ProjectRoot, "venvs", "python311"), Mode: projectenv.DefaultTmpfsMode},
+	}
+	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []dockercli.TmpfsMount{
+		{Target: filepath.Join(plan.ProjectRoot, ".venv"), Mode: projectenv.DefaultTmpfsMode},
+		{Target: filepath.Join(plan.ProjectRoot, ".venv-dev"), Mode: "0755"},
+		{Target: filepath.Join(plan.ProjectRoot, "venvs", "python311"), Mode: projectenv.DefaultTmpfsMode},
+	}
+	if !reflect.DeepEqual(request.Tmpfs, want) {
+		t.Fatalf("tmpfs = %#v, want %#v", request.Tmpfs, want)
+	}
+}
+
+func TestCreateRequestOmitsTmpfsWhenHostVirtualEnvironmentsAreUsed(t *testing.T) {
+	t.Parallel()
+	plan := testPlan()
+	plan.TmpfsMounts = nil
+	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Tmpfs) != 0 {
+		t.Fatalf("tmpfs = %#v, want host virtual environments exposed", request.Tmpfs)
+	}
 }
 
 func dockerMounts(mounts []launchplan.BindMount) []dockercli.Mount {

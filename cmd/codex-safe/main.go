@@ -17,7 +17,7 @@ import (
 const defaultImage = "agents-safe-mvp:local"
 
 const usage = `Usage: codex-safe update
-       codex-safe [--project PATH] [--image REF] [--no-host-mcp] [-- CODEX ARG...]
+       codex-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [-- CODEX ARG...]
 
 Run interactive Codex for the current Git project inside an ephemeral Sysbox container.
 Arguments after -- are forwarded to Codex; the launcher never runs another executable.
@@ -26,6 +26,7 @@ The update command updates the Linux Codex installation shared by managed contai
 
   --no-host-mcp  Do not forward host MCP servers into the container. By default eligible loopback
                  servers from Codex and Claude host configuration use one confined relay.
+  --use-host-python-venv Expose project-local host Python virtual environments instead of masking them.
   --image        Explicitly select an image and bypass automatic .agents-safe/Dockerfile selection.`
 
 const updateUsage = `Usage: codex-safe update

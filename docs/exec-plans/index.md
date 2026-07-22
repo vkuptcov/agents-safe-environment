@@ -4,6 +4,8 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
+- [Project Virtual Environment Isolation](active/2026-07-22-project-venv-isolation-exec-plan.md)
+
 ## Review
 
 - [agents-safe Runtime Namespace](review/2026-07-22-agents-safe-runtime-namespace-exec-plan.md)

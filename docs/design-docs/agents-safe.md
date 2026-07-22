@@ -219,6 +219,20 @@ also lets the nested Docker daemon resolve absolute bind paths from Compose conf
 The primary checkout is read-only so the agent cannot accidentally modify a second working copy. The common Git
 directory stays read-write because commits, refs, the linked-worktree index, and Git lock files must persist.
 
+#### Project Python virtual environments
+
+By default `common.tmpfs_mounts` contains the worktree-root `.venv` target. Every existing directory under the active
+worktree that contains a regular `pyvenv.cfg` is added to that configured base and masked by a writable session-local
+`tmpfs` mounted after the worktree bind. Duplicate targets are removed. Discovery does not follow symlinks, skips
+`.git`, and stops descending once it finds an environment. The image cannot read or modify those host environments,
+and tmpfs content disappears with the managed container. The explicit root entry also reserves `.venv` before it
+exists. The same contract applies to regular and linked worktrees.
+
+`common.use_host_python_venv = true` or the explicit `--use-host-python-venv` flag skips both configured venv tmpfs
+mounts and discovery, exposing those directories through the normal worktree bind. The resolved policy and complete
+tmpfs target/mode list are creation-time fingerprint inputs. Reusable Python downloads belong in the separately
+configured [host-backed uv cache](host-backed-dependency-caches.md), not in a virtual environment.
+
 #### Path overlaps
 
 The launcher builds the complete mount plan before launch and removes exact duplicates. For nested targets, it mounts

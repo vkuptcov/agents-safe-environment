@@ -22,15 +22,20 @@ type Options struct {
 	// NoHostMCP skips host MCP discovery entirely: no config.toml read, no forwarders, no mount, and
 	// no relay. It selects creation-time state and so cannot narrow a session that already forwards.
 	NoHostMCP bool
+	// UseHostPythonVenv exposes project-local host Python virtual environments instead of masking them.
+	// It selects creation-time state and must match for active-container reuse.
+	UseHostPythonVenv bool
 }
 
 // Overrides records only launcher flags explicitly present in argv. The resolver applies these after loading the
 // project file, preserving a configured false value when --no-host-mcp is omitted.
 type Overrides struct {
-	Image             string
-	ImageOverride     bool
-	NoHostMCP         bool
-	NoHostMCPOverride bool
+	Image                     string
+	ImageOverride             bool
+	NoHostMCP                 bool
+	NoHostMCPOverride         bool
+	UseHostPythonVenv         bool
+	UseHostPythonVenvOverride bool
 }
 
 // BindMount describes one host path exposed to the Sysbox container through a Docker bind mount.
@@ -42,6 +47,12 @@ type BindMount struct {
 	Target string
 	// ReadOnly prevents writes through this mount when true.
 	ReadOnly bool
+}
+
+// TmpfsMount describes one container-local writable filesystem with no host source.
+type TmpfsMount struct {
+	Target string
+	Mode   string
 }
 
 // Plan is the validated filesystem contract passed from Git-project discovery to the launcher.
@@ -64,6 +75,9 @@ type Plan struct {
 	// DependencyCaches keeps cache identity distinct from generic mount normalization. Source is the
 	// symlink-resolved host bind source; Target is the configured tool-visible container path.
 	DependencyCaches []DependencyCache
+	// TmpfsMounts are the complete ordered container-local filesystems selected by project configuration and
+	// Python virtual-environment discovery.
+	TmpfsMounts []TmpfsMount
 }
 
 // DependencyCache is the ordered, validated dependency-cache routing contract.
@@ -287,6 +301,14 @@ func ResolveWithHostHome(
 		physical = append(physical, BindMount{Source: cache.Source, Target: cache.Target})
 		provenance = append(provenance, MountProvenance{Mount: BindMount{Source: cache.Source, Target: cache.Target}, Roles: []projectenv.MountRole{}})
 	}
+	tmpfsMounts, err := resolveTmpfsMounts(
+		project.WorktreeRoot,
+		config.Common.TmpfsMounts,
+		config.Common.UseHostPythonVenv,
+	)
+	if err != nil {
+		return Resolution{}, err
+	}
 
 	_, hostMCPChannel := configRoles[projectenv.RoleHostMCPChannel]
 	degradations := make([]Degradation, 0, len(degradableRoleOrder))
@@ -306,9 +328,55 @@ func ResolveWithHostHome(
 			Provenance:       provenance,
 			HostMCPChannel:   hostMCPChannel,
 			DependencyCaches: caches,
+			TmpfsMounts:      tmpfsMounts,
 		},
 		Degradations: degradations,
 	}, nil
+}
+
+func resolveTmpfsMounts(
+	projectRoot string,
+	configured []projectenv.TmpfsMountConfig,
+	useHostPythonVenv bool,
+) ([]TmpfsMount, error) {
+	for _, mount := range configured {
+		if !pathContains(projectRoot, mount.Target) || mount.Target == projectRoot {
+			return nil, fmt.Errorf("tmpfs target %q must be inside working-tree root %q", mount.Target, projectRoot)
+		}
+	}
+	if useHostPythonVenv {
+		return nil, nil
+	}
+
+	result := make([]TmpfsMount, 0, len(configured))
+	seen := make(map[string]struct{}, len(configured))
+	for _, mount := range configured {
+		result = append(result, TmpfsMount{Target: mount.Target, Mode: mount.Mode})
+		seen[mount.Target] = struct{}{}
+	}
+	discovered, err := DiscoverPythonVirtualEnvironments(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	for _, target := range discovered {
+		if _, found := seen[target]; found {
+			continue
+		}
+		result = append(result, TmpfsMount{Target: target, Mode: projectenv.DefaultTmpfsMode})
+		seen[target] = struct{}{}
+	}
+	for first := range result {
+		for second := first + 1; second < len(result); second++ {
+			if PathsOverlap(result[first].Target, result[second].Target) {
+				return nil, fmt.Errorf(
+					"tmpfs target %q overlaps tmpfs target %q",
+					result[first].Target,
+					result[second].Target,
+				)
+			}
+		}
+	}
+	return result, nil
 }
 
 func resolveDependencyCaches(

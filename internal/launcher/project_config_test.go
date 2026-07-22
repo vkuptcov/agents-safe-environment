@@ -86,6 +86,17 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 	if want := []string{"--permission-mode", "auto"}; !reflect.DeepEqual(config.Claude.Arguments, want) {
 		t.Errorf("Claude arguments = %#v, want %#v", config.Claude.Arguments, want)
 	}
+	if config.Common.UseHostPythonVenv {
+		t.Error("UseHostPythonVenv = true, want safe default false")
+	}
+	wantTmpfs := []projectenv.TmpfsMountConfig{{
+		Target:  filepath.Join(worktree, ".venv"),
+		Mode:    projectenv.DefaultTmpfsMode,
+		Comment: "Mask the conventional project Python virtual environment.",
+	}}
+	if !reflect.DeepEqual(config.Common.TmpfsMounts, wantTmpfs) {
+		t.Errorf("TmpfsMounts = %#v, want %#v", config.Common.TmpfsMounts, wantTmpfs)
+	}
 }
 
 func TestResolveHostEnvironmentUsesOneCanonicalOptionalSnapshot(t *testing.T) {
@@ -203,6 +214,7 @@ func TestResolveProjectConfigAppliesOnlyExplicitOverridesAfterTOML(t *testing.T)
 	config := `[common]
 image = "configured:image"
 no_host_mcp = true
+use_host_python_venv = true
 `
 	if err := os.WriteFile(filepath.Join(projectRoot, projectenv.Directory, projectenv.ConfigName), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -213,17 +225,19 @@ no_host_mcp = true
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withoutFlags.Config.Common.Image != "configured:image" || !withoutFlags.Options.NoHostMCP || withoutFlags.Options.ImageOverride {
+	if withoutFlags.Config.Common.Image != "configured:image" || !withoutFlags.Options.NoHostMCP ||
+		!withoutFlags.Options.UseHostPythonVenv || withoutFlags.Options.ImageOverride {
 		t.Fatalf("file resolution = %#v", withoutFlags)
 	}
 
 	withFlags, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{
-		Image: "flag:image", ImageOverride: true, NoHostMCPOverride: true,
+		Image: "flag:image", ImageOverride: true, NoHostMCPOverride: true, UseHostPythonVenvOverride: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withFlags.Config.Common.Image != "flag:image" || withFlags.Options.NoHostMCP || !withFlags.Options.ImageOverride {
+	if withFlags.Config.Common.Image != "flag:image" || withFlags.Options.NoHostMCP || withFlags.Options.UseHostPythonVenv ||
+		!withFlags.Options.ImageOverride {
 		t.Fatalf("explicit resolution = %#v", withFlags)
 	}
 	if data, err := os.ReadFile(filepath.Join(projectRoot, projectenv.Directory, projectenv.ConfigName)); err != nil || string(data) != config {

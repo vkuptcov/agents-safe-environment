@@ -13,19 +13,26 @@ import (
 
 const (
 	launchConfigLabel         = "agents-safe.launch-config"
-	launchConfigSchemaVersion = 4
+	launchConfigSchemaVersion = 5
 )
 
 // launchFingerprintInput is deliberately an ordered struct: maps and TOML bytes would make an
 // otherwise-identical creation contract depend on incidental encoding details.
 type launchFingerprintInput struct {
-	SchemaVersion    int                          `json:"schema_version"`
-	ImageReference   string                       `json:"image_reference"`
-	ImageOverride    bool                         `json:"image_override"`
-	Mounts           []fingerprintMount           `json:"mounts"`
-	NoHostMCP        bool                         `json:"no_host_mcp"`
-	HostMCPEndpoints []string                     `json:"host_mcp_endpoints"`
-	DependencyCaches []fingerprintDependencyCache `json:"dependency_caches"`
+	SchemaVersion     int                          `json:"schema_version"`
+	ImageReference    string                       `json:"image_reference"`
+	ImageOverride     bool                         `json:"image_override"`
+	Mounts            []fingerprintMount           `json:"mounts"`
+	NoHostMCP         bool                         `json:"no_host_mcp"`
+	UseHostPythonVenv bool                         `json:"use_host_python_venv"`
+	HostMCPEndpoints  []string                     `json:"host_mcp_endpoints"`
+	DependencyCaches  []fingerprintDependencyCache `json:"dependency_caches"`
+	TmpfsMounts       []fingerprintTmpfsMount      `json:"tmpfs_mounts"`
+}
+
+type fingerprintTmpfsMount struct {
+	Target string `json:"target"`
+	Mode   string `json:"mode"`
 }
 
 type fingerprintDependencyCache struct {
@@ -48,6 +55,7 @@ func creationFingerprint(
 	image string,
 	imageOverride bool,
 	noHostMCP bool,
+	useHostPythonVenv bool,
 	endpoints hostmcp.Set,
 ) (string, error) {
 	mounts := make([]fingerprintMount, 0, len(plan.Mounts))
@@ -66,6 +74,10 @@ func creationFingerprint(
 			Kind: string(cache.Kind), PhysicalSource: cache.Source, EnvironmentKey: environmentKey,
 		})
 	}
+	tmpfsMounts := make([]fingerprintTmpfsMount, 0, len(plan.TmpfsMounts))
+	for _, mount := range plan.TmpfsMounts {
+		tmpfsMounts = append(tmpfsMounts, fingerprintTmpfsMount{Target: mount.Target, Mode: mount.Mode})
+	}
 
 	orderedEndpoints := append([]hostmcp.Endpoint(nil), endpoints.Endpoints...)
 	sort.Slice(orderedEndpoints, func(first, second int) bool {
@@ -80,13 +92,15 @@ func creationFingerprint(
 	}
 
 	encoded, err := json.Marshal(launchFingerprintInput{
-		SchemaVersion:    launchConfigSchemaVersion,
-		ImageReference:   image,
-		ImageOverride:    imageOverride,
-		Mounts:           mounts,
-		NoHostMCP:        noHostMCP,
-		HostMCPEndpoints: addresses,
-		DependencyCaches: caches,
+		SchemaVersion:     launchConfigSchemaVersion,
+		ImageReference:    image,
+		ImageOverride:     imageOverride,
+		Mounts:            mounts,
+		NoHostMCP:         noHostMCP,
+		UseHostPythonVenv: useHostPythonVenv,
+		HostMCPEndpoints:  addresses,
+		DependencyCaches:  caches,
+		TmpfsMounts:       tmpfsMounts,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode launch fingerprint: %w", err)

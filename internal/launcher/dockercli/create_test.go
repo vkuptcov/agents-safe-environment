@@ -25,6 +25,7 @@ func TestBuildCreateArgsPreservesOrderedInputs(t *testing.T) {
 			{Source: "/primary", Target: "/primary", ReadOnly: true},
 			{Source: "/project", Target: "/project"},
 		},
+		Tmpfs: []TmpfsMount{{Target: "/project/.venv", Mode: "1777"}},
 	}
 
 	got, err := BuildCreateArgs(request)
@@ -42,6 +43,7 @@ func TestBuildCreateArgsPreservesOrderedInputs(t *testing.T) {
 		"--workdir", "/project/nested",
 		"--mount", "type=bind,source=/primary,target=/primary,bind-propagation=rprivate,readonly",
 		"--mount", "type=bind,source=/project,target=/project,bind-propagation=rprivate",
+		"--mount", "type=tmpfs,target=/project/.venv,tmpfs-mode=1777",
 		"image",
 	}
 	if !reflect.DeepEqual(got, want) {

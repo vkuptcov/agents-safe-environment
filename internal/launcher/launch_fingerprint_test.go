@@ -14,27 +14,32 @@ import (
 func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
 	plan := testPlan()
 	endpoints := hostmcp.Set{Endpoints: []hostmcp.Endpoint{{Host: "localhost", Port: 8080, Names: []string{"idea"}}}}
-	base := mustCreationFingerprint(t, plan, "image:one", false, false, endpoints)
+	base := mustCreationFingerprint(t, plan, "image:one", false, false, false, endpoints)
 
 	mutations := []struct {
-		name          string
-		plan          launchplan.Plan
-		image         string
-		imageOverride bool
-		noHostMCP     bool
-		endpoints     hostmcp.Set
+		name              string
+		plan              launchplan.Plan
+		image             string
+		imageOverride     bool
+		noHostMCP         bool
+		useHostPythonVenv bool
+		endpoints         hostmcp.Set
 	}{
 		{name: "image reference", plan: plan, image: "image:two", endpoints: endpoints},
 		{name: "image override", plan: plan, image: "image:one", imageOverride: true, endpoints: endpoints},
 		{name: "mount", plan: changedMountPlan(plan), image: "image:one", endpoints: endpoints},
 		{name: "host MCP policy", plan: plan, image: "image:one", noHostMCP: true, endpoints: endpoints},
+		{name: "host virtual environment policy", plan: plan, image: "image:one", useHostPythonVenv: true, endpoints: endpoints},
 		{name: "endpoint", plan: plan, image: "image:one", endpoints: hostmcp.Set{Endpoints: []hostmcp.Endpoint{{Host: "localhost", Port: 8081}}}},
 		{name: "dependency cache", plan: planWithCache(plan), image: "image:one", endpoints: endpoints},
 		{name: "uv cache", plan: planWithUVCache(plan), image: "image:one", endpoints: endpoints},
+		{name: "tmpfs mount", plan: planWithTmpfsMount(plan), image: "image:one", endpoints: endpoints},
 	}
 	for _, mutation := range mutations {
 		t.Run(mutation.name, func(t *testing.T) {
-			if got := mustCreationFingerprint(t, mutation.plan, mutation.image, mutation.imageOverride, mutation.noHostMCP, mutation.endpoints); got == base {
+			if got := mustCreationFingerprint(
+				t, mutation.plan, mutation.image, mutation.imageOverride, mutation.noHostMCP, mutation.useHostPythonVenv, mutation.endpoints,
+			); got == base {
 				t.Fatalf("fingerprint = %q, want change from %q", got, base)
 			}
 		})
@@ -44,15 +49,15 @@ func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
 	commandOnly.WorkingDir = "/another/invocation/directory"
 	commandOnly.HostMCPChannel = !plan.HostMCPChannel
 	commandOnly.Provenance = nil
-	if got := mustCreationFingerprint(t, commandOnly, "image:one", false, false,
+	if got := mustCreationFingerprint(t, commandOnly, "image:one", false, false, false,
 		hostmcp.Set{Endpoints: []hostmcp.Endpoint{{Host: "localhost", Port: 8080, Names: []string{"renamed"}}}}); got != base {
 		t.Fatalf("non-creation fields changed fingerprint = %q, want %q", got, base)
 	}
 }
 
-func TestCreationFingerprintIncludesSchemaVersionFour(t *testing.T) {
+func TestCreationFingerprintIncludesSchemaVersionFive(t *testing.T) {
 	plan := testPlan()
-	got := mustCreationFingerprint(t, plan, "image", false, false, hostmcp.Set{})
+	got := mustCreationFingerprint(t, plan, "image", false, false, false, hostmcp.Set{})
 	legacyInput := launchFingerprintInput{SchemaVersion: 2, ImageReference: "image", Mounts: []fingerprintMount{
 		{Source: plan.Mounts[0].Source, Target: plan.Mounts[0].Target, ReadOnly: plan.Mounts[0].ReadOnly},
 		{Source: plan.Mounts[1].Source, Target: plan.Mounts[1].Target, ReadOnly: plan.Mounts[1].ReadOnly},
@@ -60,25 +65,25 @@ func TestCreationFingerprintIncludesSchemaVersionFour(t *testing.T) {
 		{Source: plan.Mounts[3].Source, Target: plan.Mounts[3].Target, ReadOnly: plan.Mounts[3].ReadOnly},
 	}}
 	_ = legacyInput
-	if launchConfigSchemaVersion != 4 || got == "" {
+	if launchConfigSchemaVersion != 5 || got == "" {
 		t.Fatalf("schema/fingerprint = %d/%q", launchConfigSchemaVersion, got)
 	}
 }
 
-func TestCreationFingerprintKeepsVersionFourBaselines(t *testing.T) {
+func TestCreationFingerprintKeepsVersionFiveBaselines(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		plan launchplan.Plan
 		want string
 	}{
-		{name: "empty", plan: testPlan(), want: "b7d16c1f16a023f2e231dc8e6de48fac4b152c44a5a2b49346f3bc4c2045a9b8"},
-		{name: "go only", plan: planWithCache(testPlan()), want: "a94a6396273c5c5ff951351d85d5bb647ea1020277e08750180ed2ad80a25f96"},
+		{name: "empty", plan: testPlan(), want: "a877a8f64be7dfcd03922929d15d860bf4d0e75b6f83b9a6dda0c288b01b957b"},
+		{name: "go only", plan: planWithCache(testPlan()), want: "2ec6be81f46be7faf15fda5614e5719e1e6b4c424a9ec9879b5113486ca37ce2"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := mustCreationFingerprint(t, test.plan, "image", false, false, hostmcp.Set{}); got != test.want {
-				t.Fatalf("fingerprint = %q, want version-4 baseline %q", got, test.want)
+			if got := mustCreationFingerprint(t, test.plan, "image", false, false, false, hostmcp.Set{}); got != test.want {
+				t.Fatalf("fingerprint = %q, want version-5 baseline %q", got, test.want)
 			}
 		})
 	}
@@ -104,9 +109,17 @@ func TestDockerLaunchRejectsFingerprintMismatchBeforePreflight(t *testing.T) {
 	}
 }
 
-func mustCreationFingerprint(t *testing.T, plan launchplan.Plan, image string, imageOverride, noHostMCP bool, endpoints hostmcp.Set) string {
+func mustCreationFingerprint(
+	t *testing.T,
+	plan launchplan.Plan,
+	image string,
+	imageOverride bool,
+	noHostMCP bool,
+	useHostPythonVenv bool,
+	endpoints hostmcp.Set,
+) string {
 	t.Helper()
-	fingerprint, err := creationFingerprint(plan, image, imageOverride, noHostMCP, endpoints)
+	fingerprint, err := creationFingerprint(plan, image, imageOverride, noHostMCP, useHostPythonVenv, endpoints)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,10 +151,16 @@ func planWithUVCache(plan launchplan.Plan) launchplan.Plan {
 	return changed
 }
 
+func planWithTmpfsMount(plan launchplan.Plan) launchplan.Plan {
+	changed := plan
+	changed.TmpfsMounts = []launchplan.TmpfsMount{{Target: "/project/.venv-dev", Mode: projectenv.DefaultTmpfsMode}}
+	return changed
+}
+
 func TestCreationFingerprintRejectsUnknownDependencyCacheKind(t *testing.T) {
 	plan := testPlan()
 	plan.DependencyCaches = []launchplan.DependencyCache{{Kind: "future", Source: "/physical/cache", Target: "/host/cache"}}
-	if _, err := creationFingerprint(plan, "image", false, false, hostmcp.Set{}); err == nil {
+	if _, err := creationFingerprint(plan, "image", false, false, false, hostmcp.Set{}); err == nil {
 		t.Fatal("creationFingerprint() accepted unknown cache kind")
 	}
 }

@@ -143,6 +143,67 @@ func TestResolveDependencyCachesPreservesTargetAndUsesPhysicalSource(t *testing.
 	}
 }
 
+func TestResolvePythonVirtualEnvironmentsUsesDiscoveredTargetsUnlessHostUseIsEnabled(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	gitDir := filepath.Join(root, ".git")
+	environments := []string{filepath.Join(root, ".venv"), filepath.Join(root, "service", ".venv")}
+	for _, path := range append([]string{gitDir}, environments...) {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range environments {
+		if err := os.WriteFile(filepath.Join(path, pythonVenvMarker), []byte("home = /usr/bin\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	defaults := resolvedConfig(project, false)
+	defaults.Common.TmpfsMounts = []projectenv.TmpfsMountConfig{{
+		Target: environments[0], Mode: projectenv.DefaultTmpfsMode,
+	}}
+	config := defaults
+	resolution, err := Resolve(project, defaults, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []TmpfsMount{
+		{Target: environments[0], Mode: projectenv.DefaultTmpfsMode},
+		{Target: environments[1], Mode: projectenv.DefaultTmpfsMode},
+	}
+	if !reflect.DeepEqual(resolution.Plan.TmpfsMounts, want) {
+		t.Fatalf("TmpfsMounts = %#v, want %#v", resolution.Plan.TmpfsMounts, want)
+	}
+
+	config.Common.UseHostPythonVenv = true
+	resolution, err = Resolve(project, defaults, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolution.Plan.TmpfsMounts) != 0 {
+		t.Fatalf("TmpfsMounts = %#v, want host environments exposed", resolution.Plan.TmpfsMounts)
+	}
+}
+
+func TestResolveTmpfsMountsRejectsTargetsOutsideProject(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	gitDir := filepath.Join(root, ".git")
+	if err := os.Mkdir(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	defaults := resolvedConfig(project, false)
+	config := defaults
+	config.Common.TmpfsMounts = []projectenv.TmpfsMountConfig{{
+		Target: filepath.Join(filepath.Dir(root), ".venv"), Mode: projectenv.DefaultTmpfsMode,
+	}}
+	if _, err := Resolve(project, defaults, config); err == nil || !strings.Contains(err.Error(), "inside working-tree root") {
+		t.Fatalf("Resolve() error = %v, want out-of-project tmpfs rejection", err)
+	}
+}
+
 func TestResolveDependencyCachesRejectsProjectAndHomeOverlaps(t *testing.T) {
 	t.Parallel()
 	base := t.TempDir()
