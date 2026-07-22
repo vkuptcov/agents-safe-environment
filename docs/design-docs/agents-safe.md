@@ -226,7 +226,12 @@ worktree that contains a regular `pyvenv.cfg` is masked by a writable session-lo
 bind; nothing is created for an environment that does not exist. Discovery does not follow symlinks, skips `.git`, and
 stops descending once it finds an environment. `common.tmpfs_mounts` optionally adds further explicit targets to that
 discovered set, and duplicate targets are removed. The image cannot read or modify those host environments, and tmpfs
-content disappears with the managed container. The same contract applies to regular and linked worktrees.
+content disappears with the managed container. Docker receives these masks through its dedicated `--tmpfs` option;
+the launcher also passes the same validated target/mode list to privileged container bootstrap. Sysbox 0.7 can attach
+the broader idmapped worktree bind after Docker's tmpfs and cover it, so bootstrap reapplies every tmpfs inside the
+final mount namespace and verifies its effective filesystem type before session readiness. A missing target, mount
+failure, or non-tmpfs result fails startup without running an agent. The same contract applies to regular and linked
+worktrees.
 
 `common.use_host_python_venv = true` or the explicit `--use-host-python-venv` flag skips both discovered and configured
 venv tmpfs mounts, exposing those directories through the normal worktree bind. The resolved policy and complete

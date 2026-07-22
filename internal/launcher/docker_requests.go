@@ -1,7 +1,9 @@
 package launcher
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -13,7 +15,15 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
-const mountAbsent = "absent"
+const (
+	mountAbsent            = "absent"
+	tmpfsMountsEnvironment = "AGENTS_SAFE_TMPFS_MOUNTS"
+)
+
+type bootstrapTmpfsMount struct {
+	Target string `json:"target"`
+	Mode   string `json:"mode"`
+}
 
 // Host identity is validated once by validateConfiguration before a launch starts, so the request
 // builders below assume it and check only what is specific to the request they encode.
@@ -60,6 +70,13 @@ func (docker *DockerLauncher) buildCreateRequest(
 		{Key: "CODEX_SAFE_HOST_GROUP", Value: docker.HostGroup},
 		{Key: "CODEX_SAFE_HOST_HOME", Value: docker.HostHome},
 	}
+	if len(plan.TmpfsMounts) > 0 {
+		encoded, err := encodeBootstrapTmpfsMounts(plan.TmpfsMounts)
+		if err != nil {
+			return dockercli.CreateRequest{}, err
+		}
+		environment = append(environment, dockercli.KeyValue{Key: tmpfsMountsEnvironment, Value: encoded})
+	}
 
 	// An empty endpoint set is the zero-cost path: no environment variable, no mount, and no channel
 	// label. A user with no local MCP servers sees the launcher behave exactly as it did before.
@@ -102,6 +119,18 @@ func (docker *DockerLauncher) buildCreateRequest(
 		},
 		Tmpfs: dockerTmpfsMounts(plan.TmpfsMounts),
 	}, nil
+}
+
+func encodeBootstrapTmpfsMounts(mounts []launchplan.TmpfsMount) (string, error) {
+	wire := make([]bootstrapTmpfsMount, 0, len(mounts))
+	for _, mount := range mounts {
+		wire = append(wire, bootstrapTmpfsMount{Target: mount.Target, Mode: mount.Mode})
+	}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return "", fmt.Errorf("encode container tmpfs mounts: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func dockerTmpfsMounts(resolved []launchplan.TmpfsMount) []dockercli.TmpfsMount {

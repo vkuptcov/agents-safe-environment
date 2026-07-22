@@ -279,8 +279,10 @@ document owns its typed schema, overlay behavior, and participation in container
 
 `tmpfs_mounts` is an optional explicit base for the Python-environment isolation plan and is empty by default; the
 generated config preconfigures no venv target. Targets must be canonical absolute paths strictly inside the selected
-worktree; modes are three- or four-digit octal strings. Duplicate and overlapping targets fail before Docker access.
-Comments are serialized documentation and do not affect creation.
+worktree and cannot contain Docker's `--tmpfs` option delimiter (`:`); modes are three- or four-digit octal strings.
+Duplicate and overlapping targets fail before Docker access. Each configured target must exist as a directory when
+privileged container bootstrap reapplies the mask; otherwise startup fails closed. Comments are serialized
+documentation and do not affect creation.
 
 `use_host_python_venv` is a creation-time policy and defaults to `false`. After TOML and explicit CLI overrides are
 applied, the safe default scans the selected worktree for existing directories containing a regular `pyvenv.cfg`,

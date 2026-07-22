@@ -102,12 +102,17 @@ func TestSysboxProjectVenvIsIsolated(t *testing.T) {
 test ! -e service/.venv-dev/host-sentinel
 printf 'container\n' > .venv/container-sentinel
 printf 'container-service\n' > service/.venv-dev/container-sentinel
-printf 'isolated=yes\n' > "$1"
+printf 'isolated=yes\nroot_fstype=%s\nservice_fstype=%s\n' \
+  "$(stat -f -c %T .venv)" \
+  "$(stat -f -c %T service/.venv-dev)" > "$1"
 : > "$2"
 while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	)
 	fixture.waitForFile(ready, command)
-	require.Equal(t, "yes", parseReport(t, report)["isolated"])
+	observed := parseReport(t, report)
+	require.Equal(t, "yes", observed["isolated"])
+	require.Equal(t, "tmpfs", observed["root_fstype"], "root venv mask must be the effective filesystem")
+	require.Equal(t, "tmpfs", observed["service_fstype"], "nested venv mask must be the effective filesystem")
 	require.Equal(t, "host\n", readFile(t, hostSentinel), "container must not replace host .venv content")
 	require.Equal(t, "host-service\n", readFile(t, hostServiceSentinel),
 		"container must not replace nested host virtual-environment content")

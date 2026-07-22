@@ -366,6 +366,9 @@ func resolveTmpfsMounts(
 		seen[target] = struct{}{}
 	}
 	for first := range result {
+		if strings.Contains(result[first].Target, ":") {
+			return nil, fmt.Errorf("tmpfs target %q cannot be represented safely with Docker --tmpfs", result[first].Target)
+		}
 		for second := first + 1; second < len(result); second++ {
 			if PathsOverlap(result[first].Target, result[second].Target) {
 				return nil, fmt.Errorf(

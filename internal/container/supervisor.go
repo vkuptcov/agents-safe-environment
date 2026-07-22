@@ -77,6 +77,9 @@ func (supervisor *Supervisor) Serve(ctx context.Context) error {
 	// design's cold-start bound; the launcher bounds container creation as the other half.
 	bootstrapContext, cancelBootstrap := context.WithTimeout(ctx, PreLeaseDeadline)
 	defer cancelBootstrap()
+	if err := mountContainerTmpfs(bootstrapContext, supervisor.config.TmpfsMounts, supervisor.commands); err != nil {
+		return fmt.Errorf("mount container tmpfs: %w", err)
+	}
 	if err := reconcileContainerAccount(bootstrapContext, supervisor.config, supervisor.commands); err != nil {
 		return fmt.Errorf("reconcile container account: %w", err)
 	}
@@ -180,6 +183,9 @@ func validateConfig(config Config) error {
 	}
 	if config.DockerShutdownTimeout <= 0 {
 		return fmt.Errorf("Docker shutdown timeout must be positive, got %s", config.DockerShutdownTimeout)
+	}
+	if err := validateTmpfsMounts("tmpfs mounts", config.TmpfsMounts); err != nil {
+		return err
 	}
 	return nil
 }

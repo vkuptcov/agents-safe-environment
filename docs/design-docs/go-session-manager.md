@@ -255,12 +255,19 @@ tini -- agents-safe-session serve
 
 The Go `serve` process starts as root and performs the existing privileged bootstrap:
 
-1. create the host-matching account and group;
-2. create the container-local home and install shell configuration;
-3. configure passwordless container-local sudo;
-4. start the nested Docker daemon and wait for it to become ready;
-5. create `/run/agents-safe` for the recreated host user;
-6. create the manager listener owned by that user.
+1. reapply and verify the launcher's project tmpfs mounts inside the final Sysbox mount namespace;
+2. create the host-matching account and group;
+3. create the container-local home and install shell configuration;
+4. configure passwordless container-local sudo;
+5. start the nested Docker daemon and wait for it to become ready;
+6. create `/run/agents-safe` for the recreated host user;
+7. create the manager listener owned by that user.
+
+The tmpfs list arrives as creation-time JSON in `AGENTS_SAFE_TMPFS_MOUNTS`. `serve` validates every absolute target
+and octal mode, mounts with the same `nosuid,nodev,noexec` policy as Docker `--tmpfs`, and checks the effective
+filesystem with `statfs` before continuing. This compensates for Sysbox 0.7 attaching a broader idmapped worktree bind
+over Docker's earlier tmpfs; the mount exists only in the container namespace. Empty configuration keeps bootstrap's
+previous zero-mount path.
 
 The Go process remains root because it owns the root-started dockerd child and must stop it cleanly. It never executes
 user commands. Each `docker exec` explicitly runs `agents-safe-session run` and its child with the recreated host UID

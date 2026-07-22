@@ -34,6 +34,10 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 	if !reflect.DeepEqual(request.Tmpfs, wantTmpfs) {
 		t.Fatalf("tmpfs = %#v, want %#v", request.Tmpfs, wantTmpfs)
 	}
+	wantBootstrapTmpfs := `[{"target":"/sources/feature worktree/.venv","mode":"1777"}]`
+	if !containsKeyValue(request.Environment, tmpfsMountsEnvironment+"="+wantBootstrapTmpfs) {
+		t.Fatalf("environment = %#v, want encoded bootstrap tmpfs plan", request.Environment)
+	}
 	fingerprintFound := false
 	uvCacheFound := false
 	for _, label := range request.Labels {
@@ -111,6 +115,11 @@ func TestCreateRequestOmitsTmpfsWhenHostVirtualEnvironmentsAreUsed(t *testing.T)
 	}
 	if len(request.Tmpfs) != 0 {
 		t.Fatalf("tmpfs = %#v, want host virtual environments exposed", request.Tmpfs)
+	}
+	for _, environment := range request.Environment {
+		if environment.Key == tmpfsMountsEnvironment {
+			t.Fatalf("environment = %#v, want no bootstrap tmpfs plan", request.Environment)
+		}
 	}
 }
 

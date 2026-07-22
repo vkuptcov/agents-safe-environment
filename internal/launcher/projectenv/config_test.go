@@ -186,6 +186,15 @@ mode = "1888"
 `,
 			want: "octal mode",
 		},
+		{
+			name: "tmpfs target with option delimiter",
+			content: `
+[[common.tmpfs_mounts]]
+target = "/project/venv:unsafe"
+mode = "1777"
+`,
+			want: "Docker --tmpfs",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

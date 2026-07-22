@@ -43,7 +43,7 @@ func TestBuildCreateArgsPreservesOrderedInputs(t *testing.T) {
 		"--workdir", "/project/nested",
 		"--mount", "type=bind,source=/primary,target=/primary,bind-propagation=rprivate,readonly",
 		"--mount", "type=bind,source=/project,target=/project,bind-propagation=rprivate",
-		"--mount", "type=tmpfs,target=/project/.venv,tmpfs-mode=1777",
+		"--tmpfs", "/project/.venv:mode=1777",
 		"image",
 	}
 	if !reflect.DeepEqual(got, want) {
