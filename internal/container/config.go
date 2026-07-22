@@ -128,10 +128,7 @@ func tmpfsMountsFromEnvironment(lookup func(string) (string, bool)) ([]TmpfsMoun
 		return nil, nil
 	}
 	var mounts []TmpfsMount
-	if value == "" || json.Unmarshal([]byte(value), &mounts) != nil {
-		return nil, fmt.Errorf("%s must be a JSON array of tmpfs mounts", tmpfsMountsEnvironment)
-	}
-	if mounts == nil {
+	if err := json.Unmarshal([]byte(value), &mounts); err != nil || mounts == nil {
 		return nil, fmt.Errorf("%s must be a JSON array of tmpfs mounts", tmpfsMountsEnvironment)
 	}
 	if err := validateTmpfsMounts(tmpfsMountsEnvironment, mounts); err != nil {
