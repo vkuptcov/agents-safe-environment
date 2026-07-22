@@ -1,6 +1,6 @@
 // Package launchcli composes host and project resolution into the launch-facing configuration the
 // public binaries hand to cli.Run. It sits above both launcher and cli so neither leaf package has to
-// depend on the other, and it is the single adapter both commands share so they cannot silently drift
+// depend on the other, and it is the single adapter all launchers share so they cannot silently drift
 // when the resolved configuration shape changes.
 package launchcli
 
@@ -27,12 +27,14 @@ func ResolveConfig(
 		return cli.ResolvedConfig{}, err
 	}
 	return cli.ResolvedConfig{
-		Plan:                resolved.Resolution.Plan,
-		Image:               resolved.Config.Common.Image,
-		Options:             resolved.Options,
-		CodexArguments:      resolved.Config.Codex.Arguments,
-		Degradations:        resolved.Resolution.Degradations,
-		DefaultCodexHomeSet: resolved.DefaultCodexHomeSet,
-		HostHome:            host.HomeDir,
+		Plan:                 resolved.Resolution.Plan,
+		Image:                resolved.Config.Common.Image,
+		Options:              resolved.Options,
+		CodexArguments:       resolved.Config.Codex.Arguments,
+		ClaudeArguments:      resolved.Config.Claude.Arguments,
+		Degradations:         resolved.Resolution.Degradations,
+		DefaultCodexHomeSet:  resolved.DefaultCodexHomeSet,
+		DefaultClaudeHomeSet: resolved.DefaultClaudeHomeSet,
+		HostHome:             host.HomeDir,
 	}, nil
 }

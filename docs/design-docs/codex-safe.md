@@ -1,10 +1,10 @@
 # Safe Environment for Running Codex Agents
 
-Status: Proposed
+Status: Implemented
 
 Scope:
 
-- the `codex-safe` and `agents-safe` command contracts on a Linux host;
+- the common `codex-safe`, `claude-safe`, and `agents-safe` container contract on a Linux host;
 - discovery and mounting of the active Git project, linked worktrees, host `.gitconfig`, the resolved Codex home,
   and personal Codex skills;
 - the Codex CLI executable, process environment, argument forwarding, and authentication handoff;
@@ -59,9 +59,9 @@ rewriting repository metadata.
 
 ### Chosen Shape
 
-`codex-safe` and `agents-safe` are trusted Go programs running on the host. They validate the environment, compute the
-minimum bind-mount set, start an ephemeral system container through `sysbox-runc`, and hand control to a managed
-foreground process inside that container.
+`codex-safe`, `claude-safe`, and `agents-safe` are trusted Go programs running on the host. They validate the
+environment, compute one common bind-mount set, start an ephemeral system container through `sysbox-runc`, and hand
+control to managed foreground processes inside that container.
 
 The launcher resolves the optional Codex state directory from the host's `CODEX_HOME` or operating-system user-home
 API. It does not assume `/home/<user>`, `/Users/<user>`, or a Windows profile path. An existing resolved directory is
@@ -85,6 +85,7 @@ managed-container identity, label expectations, lifecycle, reuse, user mounts, a
 ### Success Criteria
 
 - One `codex-safe` invocation starts interactive Codex in the current Git project.
+- One `claude-safe` invocation starts interactive Claude Code in the same isolated project environment.
 - One `agents-safe bash` invocation starts Bash in that same isolated project environment.
 - Project changes and Codex state persist on the host with usable file ownership.
 - Codex can read and persist its documented configuration, authentication, logs, sessions, skills, and standalone
@@ -116,6 +117,7 @@ The user-facing interface is:
 
 ```text
 codex-safe [launcher options] [-- codex arguments]
+claude-safe [launcher options] [-- Claude Code arguments]
 agents-safe init [--project path]
 agents-safe [launcher options] [--] command [argument ...]
 ```
@@ -147,10 +149,11 @@ It can execute only programs available in the image or explicitly mounted projec
 `agents-safe init` creates the files specified by
 [Project Launcher Configuration](project-launcher-configuration.md) and returns without initializing Docker. Because
 a leading `init` is reserved for that operation, `agents-safe -- init` executes a container command named `init`.
-`codex-safe update` is the other host-side subcommand. It updates the shared Linux Codex installation before Git
-discovery and without constructing a Sysbox session. `codex-safe -- update` remains a forwarded Codex command.
+`codex-safe update` and `claude-safe update` are host-side subcommands. Each updates its shared Linux installation
+before Git discovery and without constructing a Sysbox session. A product command after `--` remains forwarded to
+that product.
 
-Both commands use the same project discovery, mount plan, image selection, session-reuse validation, terminal
+All three commands use the same project discovery, mount plan, image selection, session-reuse validation, terminal
 attachment, and exit-code propagation. The lower-level session wrapper remains command-agnostic for container-local
 supervision.
 
@@ -230,6 +233,9 @@ Every regular-checkout and linked-worktree launch receives the same user mounts:
 
 - The resolved host Codex home, when present, is mounted read-write as the container's Codex home. Without that
   optional role, `codex-safe` uses ephemeral container-local Codex state and `agents-safe` receives no Codex mount.
+- Complete default Claude state is mounted read-write at its native `~/.claude` and `~/.claude.json` paths. An explicit
+  `CLAUDE_CONFIG_DIR` is mounted as one directory and preserved in managed-command environments. The detailed policy
+  belongs to [Safe Claude Code Integration](claude-safe.md).
 - When host `$HOME/.agents/skills` exists, that exact directory is mounted read-only at the equivalent path for the
   container user.
 
@@ -495,9 +501,9 @@ launcher inspects that exact name, then validates `codex-safe.managed`, `codex-s
 fingerprint of all creation-time parameters defined by
 [Project Launcher Configuration](project-launcher-configuration.md#4-parameter-classes-and-active-containers).
 
-The `codex-safe.codex-home` and `codex-safe.personal-skills` labels each contain the canonical resolved source or the
-literal `absent`. They remain diagnostic metadata and are not independent reuse predicates; their effective mount
-state is already covered by `codex-safe.launch-config`. `codex-safe.host-mcp` is also diagnostic metadata owned by
+The product-state and `codex-safe.personal-skills` labels each contain the canonical resolved source or the literal
+`absent`. They remain diagnostic metadata and are not independent reuse predicates; their effective mount state is
+already covered by `codex-safe.launch-config`. `codex-safe.host-mcp` is also diagnostic metadata owned by
 [`host-mcp-forwarding.md`](host-mcp-forwarding.md). That design sets `codex-safe.host-mcp-channel`, which locates a
 running container's MCP channel and is read rather than compared. A compatible running container receives the new
 command through `docker exec`; an absent name is created with detached `docker run --rm`. Different worktrees continue
@@ -509,9 +515,9 @@ active session before retrying; it does not silently use stale configuration, te
 the container. Ownership or protocol label mismatches remain name conflicts. Command-time parameters are excluded
 from the fingerprint and apply to each new `docker exec`.
 
-A change between absent and present `codex_home` state changes the normalized physical mount plan and therefore the
+A change between absent and present product state changes the normalized physical mount plan and therefore the
 creation-time fingerprint. It uses the same generic fingerprint-mismatch rejection as every other creation-time
-change; the diagnostic Codex-home label does not select a separate active-session error path.
+change; diagnostic product-state labels do not select a separate active-session error path.
 
 The container's foreground workload is a Go session manager. Every `docker exec`, including the first, invokes
 `codex-safe-session run -- COMMAND`. That wrapper connects to a container-local Unix socket, runs the requested command,
@@ -605,8 +611,9 @@ mode.
 - Each worktree session receives a separate nested Docker daemon; registered concurrent commands in that session share
   it.
 - No user command is the container's lifecycle-owning main process.
-- Read-write host access is limited to the active working tree, linked-worktree common Git directory, resolved
-  Codex home, and the host MCP channel directory defined by [`host-mcp-forwarding.md`](host-mcp-forwarding.md).
+- Read-write host access is limited to the configured mount plan, including the active working tree, linked-worktree
+  common Git directory, resolved product state, and the host MCP channel directory defined by
+  [`host-mcp-forwarding.md`](host-mcp-forwarding.md).
 - Personal host skills outside the Codex home are exposed only through the narrow read-only
   `$HOME/.agents/skills` mount.
 - The linked worktree's primary checkout is read-only except for the nested common Git directory.
@@ -618,6 +625,8 @@ mode.
 - Host-side orchestration and Docker argument construction are implemented in Go.
 - `codex-safe` executes the Codex installation from the launcher-managed read-only volume and sets explicit
   container-local `CODEX_HOME` only when the corresponding host mount is present.
+- `claude-safe` executes the independent Claude Code installation from its launcher-managed read-only volume and uses
+  either the native split state paths or the validated explicit `CLAUDE_CONFIG_DIR`.
 - `agents-safe` executes the requested command only inside the managed container and never through a host shell.
 - Arguments and paths are separate argv elements and are never passed through `eval` or shell reinterpretation.
 - After the final managed command finishes normally, the session does not intentionally leave nested containers
@@ -630,7 +639,7 @@ It also reduces the impact of root access inside the agent environment through t
 
 The trusted computing base includes:
 
-- the host-side Go `codex-safe` and `agents-safe` programs;
+- the host-side Go `codex-safe`, `claude-safe`, and `agents-safe` programs;
 - the container-side Go session manager and its registration protocol;
 - the local Docker Engine and its configuration;
 - Sysbox and the Linux kernel;
@@ -639,12 +648,12 @@ The trusted computing base includes:
 
 The design intentionally does not promise:
 
-- protection of the active project, common Git directory, or resolved Codex home from the agent;
-- protection of Codex tokens from code running in the same environment;
+- protection of the active project, common Git directory, or resolved product homes from either agent;
+- protection of Codex or Claude credentials from code running in the same environment;
 - network isolation or exfiltration prevention;
 - protection from vulnerabilities in the kernel, Docker, Sysbox, or the container image;
 - isolation between untrusted local tenants when Sysbox CE uses a shared UID/GID mapping;
-- safe concurrent writes by multiple agents to one worktree or resolved Codex home;
+- safe concurrent writes by multiple agents to one shared worktree;
 - access to USB, GPU, FUSE, or other host devices;
 - SSH agent forwarding, Git credential helpers, or automatic `git push`;
 - Docker Desktop, macOS, Windows, rootless host Docker, or remote Docker daemons in the first release;
@@ -688,6 +697,8 @@ target, and absolute project bind paths inside nested Docker would differ from h
   and exit status.
 - Verify `agents-safe bash` preserves direct argv, starts in the selected project, rejects an omitted command, and
   propagates the command exit status.
+- Verify `claude-safe` preserves permission-mode precedence, uses the absolute managed executable, and persists
+  complete default or explicit Claude state without changing the Codex state contract.
 - Reject reuse when a Codex-home or personal-skills change alters the creation fingerprint; diagnostic labels are not
   compatibility predicates.
 - Reject launches outside Git or without Docker or `sysbox-runc`.
@@ -714,6 +725,8 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - With no caps, run load from multiple nested containers and prove no default CPU, memory, or PID limit is imposed.
 - With explicit `--cpus`, `--memory`, and `--pids-limit`, prove each cap is enforced on the container session.
 - Run a second command for one live worktree and prove it shares the container and nested Docker daemon.
+- Hold one live session and prove both product launchers use its same container and independent installation/state
+  mounts.
 - Exit the first of two overlapping commands and prove the second command and container remain alive.
 - Run sessions for two worktrees concurrently and prove they do not share nested Docker state.
 - Run `agents-safe bash` and prove the public generic command path starts Bash in the selected project.

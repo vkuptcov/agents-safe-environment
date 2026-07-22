@@ -22,9 +22,10 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 	if !reflect.DeepEqual(request.Mounts, dockerMounts(plan.Mounts)) {
 		t.Fatalf("mounts = %#v, want resolved plan %#v", request.Mounts, plan.Mounts)
 	}
-	wantVolume := []dockercli.VolumeMount{{
-		Source: CodexInstallationVolume, Target: CodexInstallationRoot, ReadOnly: true,
-	}}
+	wantVolume := []dockercli.VolumeMount{
+		{Source: CodexInstallationVolume, Target: CodexInstallationRoot, ReadOnly: true},
+		{Source: ClaudeInstallationVolume, Target: ClaudeInstallationRoot, ReadOnly: true},
+	}
 	if !reflect.DeepEqual(request.Volumes, wantVolume) {
 		t.Fatalf("volumes = %#v, want %#v", request.Volumes, wantVolume)
 	}
@@ -90,6 +91,48 @@ func TestExecRequestUsesResolvedCodexTarget(t *testing.T) {
 	}
 	if want := "CODEX_HOME=/container/codex"; !containsKeyValue(request.Environment, want) {
 		t.Fatalf("environment = %#v, want %q", request.Environment, want)
+	}
+}
+
+func TestExecRequestUsesExplicitClaudeConfigDirectory(t *testing.T) {
+	t.Parallel()
+	plan := testPlan()
+	claude := launchplan.BindMount{Source: "/host/claude", Target: "/home/developer/.claude"}
+	plan.Mounts = append(plan.Mounts, claude)
+	plan.Provenance = append(plan.Provenance, launchplan.MountProvenance{
+		Mount: claude, Roles: []projectenv.MountRole{projectenv.RoleClaudeHome},
+	})
+	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildExecRequest(
+		plan, []string{"true"}, strings.Repeat("a", 64),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "CLAUDE_CONFIG_DIR=/home/developer/.claude"; !containsKeyValue(request.Environment, want) {
+		t.Fatalf("environment = %#v, want %q", request.Environment, want)
+	}
+}
+
+func TestExecRequestKeepsDefaultClaudeSplitPaths(t *testing.T) {
+	t.Parallel()
+	plan := testPlan()
+	claude := launchplan.BindMount{Source: "/host/.claude", Target: "/home/developer/.claude"}
+	config := launchplan.BindMount{Source: "/host/.claude.json", Target: "/home/developer/.claude.json"}
+	plan.Mounts = append(plan.Mounts, claude, config)
+	plan.Provenance = append(plan.Provenance,
+		launchplan.MountProvenance{Mount: claude, Roles: []projectenv.MountRole{projectenv.RoleClaudeHome}},
+		launchplan.MountProvenance{Mount: config, Roles: []projectenv.MountRole{projectenv.RoleClaudeConfig}},
+	)
+	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildExecRequest(
+		plan, []string{"true"}, strings.Repeat("a", 64),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, environment := range request.Environment {
+		if environment.Key == "CLAUDE_CONFIG_DIR" {
+			t.Fatalf("default split paths must not set CLAUDE_CONFIG_DIR: %#v", request.Environment)
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package hostmcp
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -13,8 +14,16 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// configFileName is the only file this package reads, directly below the resolved Codex home.
+// configFileName is the only Codex file this package reads, directly below the resolved Codex home.
 const configFileName = "config.toml"
+
+// Sources are the trusted host-side product configurations whose loopback endpoints must be
+// available to every command in one shared managed session.
+type Sources struct {
+	CodexHome        string
+	ClaudeConfigFile string
+	ProjectRoot      string
+}
 
 // configFile is a partial decode of the Codex configuration. Only the base mcp_servers table is
 // read; every other key, table, and file is left alone.
@@ -54,6 +63,95 @@ func Discover(codexHome string) (Set, error) {
 		return Set{}, fmt.Errorf("read Codex configuration %q: %w", path, err)
 	}
 	return parse(path, data)
+}
+
+// DiscoverAll returns the canonical union of Codex and Claude host loopback endpoints. Product
+// names are qualified before merging so the security banner identifies which configuration granted
+// each capability.
+func DiscoverAll(sources Sources) (Set, error) {
+	codex, err := Discover(sources.CodexHome)
+	if err != nil {
+		return Set{}, err
+	}
+	qualifyNames(&codex, "codex:")
+	claude, err := discoverClaude(sources.ClaudeConfigFile, sources.ProjectRoot)
+	if err != nil {
+		return Set{}, err
+	}
+	return mergeSets(codex, claude)
+}
+
+type claudeConfigFile struct {
+	MCPServers map[string]claudeServerEntry          `json:"mcpServers"`
+	Projects   map[string]claudeProjectConfiguration `json:"projects"`
+}
+
+type claudeProjectConfiguration struct {
+	MCPServers map[string]claudeServerEntry `json:"mcpServers"`
+}
+
+type claudeServerEntry struct {
+	URL string `json:"url"`
+}
+
+func discoverClaude(path, projectRoot string) (Set, error) {
+	if strings.TrimSpace(path) == "" {
+		return Set{}, nil
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return Set{}, nil
+	}
+	if err != nil {
+		return Set{}, fmt.Errorf("read Claude configuration %q: %w", path, err)
+	}
+	var decoded claudeConfigFile
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return Set{}, fmt.Errorf("parse Claude configuration %q: %w", path, err)
+	}
+
+	user, err := selectClaudeServers("user", decoded.MCPServers)
+	if err != nil {
+		return Set{}, err
+	}
+	local := Set{}
+	if project, found := decoded.Projects[projectRoot]; found {
+		local, err = selectClaudeServers("local", project.MCPServers)
+		if err != nil {
+			return Set{}, err
+		}
+	}
+	return mergeSets(user, local)
+}
+
+func selectClaudeServers(scope string, servers map[string]claudeServerEntry) (Set, error) {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	endpoints := make([]Endpoint, 0, len(names))
+	for _, name := range names {
+		qualified := "claude:" + scope + ":" + name
+		endpoint, selected, err := selectRemoteEndpoint(
+			"mcpServers."+name, qualified, servers[name].URL, nil,
+		)
+		if err != nil {
+			return Set{}, err
+		}
+		if selected {
+			endpoints = append(endpoints, endpoint)
+		}
+	}
+	return mergeSets(Set{Endpoints: endpoints})
+}
+
+func qualifyNames(set *Set, prefix string) {
+	for endpointIndex := range set.Endpoints {
+		for nameIndex := range set.Endpoints[endpointIndex].Names {
+			set.Endpoints[endpointIndex].Names[nameIndex] = prefix + set.Endpoints[endpointIndex].Names[nameIndex]
+		}
+	}
 }
 
 func parse(path string, data []byte) (Set, error) {
@@ -104,17 +202,21 @@ func parse(path string, data []byte) (Set, error) {
 // selectEndpoint decides whether one configured server becomes a forwarded endpoint. Not selecting
 // is silent; a malformed selection is a launch failure.
 func selectEndpoint(name string, entry serverEntry) (Endpoint, bool, error) {
-	if entry.Enabled != nil && !*entry.Enabled {
+	return selectRemoteEndpoint("mcp_servers."+name, name, entry.URL, entry.Enabled)
+}
+
+func selectRemoteEndpoint(location, displayName, rawURL string, enabled *bool) (Endpoint, bool, error) {
+	if enabled != nil && !*enabled {
 		// Forwarding a server the user switched off would widen the boundary for no benefit.
 		return Endpoint{}, false, nil
 	}
-	if strings.TrimSpace(entry.URL) == "" {
+	if strings.TrimSpace(rawURL) == "" {
 		// A command-based stdio server is started by Codex inside the container.
 		return Endpoint{}, false, nil
 	}
-	parsed, err := url.Parse(entry.URL)
+	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return Endpoint{}, false, fmt.Errorf("mcp_servers.%s has an unparsable url: %w", name, err)
+		return Endpoint{}, false, fmt.Errorf("%s has an unparsable url: %w", location, err)
 	}
 	host := strings.ToLower(parsed.Hostname())
 	if !isLoopbackHost(host) {
@@ -123,9 +225,9 @@ func selectEndpoint(name string, entry serverEntry) (Endpoint, bool, error) {
 	}
 	port, err := endpointPort(parsed)
 	if err != nil {
-		return Endpoint{}, false, fmt.Errorf("mcp_servers.%s: %w", name, err)
+		return Endpoint{}, false, fmt.Errorf("%s: %w", location, err)
 	}
-	return Endpoint{Host: host, Port: port, Names: []string{name}}, true, nil
+	return Endpoint{Host: host, Port: port, Names: []string{displayName}}, true, nil
 }
 
 // endpointPort resolves the configured port, defaulting to the URL scheme's own. A loopback URL that

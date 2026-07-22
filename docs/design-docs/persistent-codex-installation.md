@@ -11,7 +11,8 @@ Scope:
 - the Docker Desktop-compatible maintenance boundary and its current host-launcher portability limitation.
 
 Host Codex state remains owned by [Safe Environment](codex-safe.md). Session lifecycle remains owned by
-[Go Session Manager](go-session-manager.md).
+[Go Session Manager](go-session-manager.md). The sibling Claude Code volume, state, and updater are independent and
+owned by [Safe Claude Code Integration](claude-safe.md); both read-only volumes coexist in every project session.
 
 ## Purpose and Intent
 

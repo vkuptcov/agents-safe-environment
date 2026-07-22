@@ -1,4 +1,4 @@
-// Command codex-safe runs interactive Codex in the isolated project environment.
+// Command claude-safe runs interactive Claude Code in the isolated project environment.
 package main
 
 import (
@@ -16,21 +16,21 @@ import (
 
 const defaultImage = "codex-safe-mvp:local"
 
-const usage = `Usage: codex-safe update
-       codex-safe [--project PATH] [--image REF] [--no-host-mcp] [-- CODEX ARG...]
+const usage = `Usage: claude-safe update
+       claude-safe [--project PATH] [--image REF] [--no-host-mcp] [-- CLAUDE ARG...]
 
-Run interactive Codex for the current Git project inside an ephemeral Sysbox container.
-Arguments after -- are forwarded to Codex; the launcher never runs another executable.
+Run interactive Claude Code for the current Git project inside the shared ephemeral Sysbox container.
+Arguments after -- are forwarded to Claude Code; the launcher never runs another executable.
 
-The update command updates the Linux Codex installation shared by managed containers.
+The update command updates the Linux Claude Code installation shared by managed containers.
 
   --no-host-mcp  Do not forward host MCP servers into the container. By default eligible loopback
                  servers from Codex and Claude host configuration use one confined relay.
   --image        Explicitly select an image and bypass automatic .agents-safe/Dockerfile selection.`
 
-const updateUsage = `Usage: codex-safe update
+const updateUsage = `Usage: claude-safe update
 
-Update the Linux Codex installation in the Docker named volume shared by managed containers.
+Update the Linux Claude Code installation in the Docker named volume shared by managed containers.
 This command needs Docker and the default image, but does not need Git or Sysbox.`
 
 type commandDependencies struct {
@@ -38,17 +38,16 @@ type commandDependencies struct {
 	update func(context.Context, string, io.Writer, io.Writer) error
 }
 
-// config returns the codex-safe launcher configuration. It is a function so tests can drive the
-// same command policy the binary uses.
 func config() cli.Config {
 	return cli.Config{
-		Name:         "codex-safe",
+		Name:         "claude-safe",
 		DefaultImage: defaultImage,
 		Usage:        usage,
-		// The product always runs the volume-backed Codex executable. Arguments after -- are Codex
-		// arguments, never a standalone executable, so no arbitrary command reaches the container.
-		BuildCommand:            launcher.CodexCommand,
-		WarnWhenCodexHomeAbsent: true,
+		BuildCommand: launcher.ClaudeCommand,
+		SelectArguments: func(resolved cli.ResolvedConfig) []string {
+			return resolved.ClaudeArguments
+		},
+		WarnWhenClaudeHomeAbsent: true,
 	}
 }
 
@@ -65,7 +64,7 @@ func productionDependencies() commandDependencies {
 				return launcher.NewDockerLauncher(hostHome)
 			},
 		},
-		update: launcher.UpdateCodex,
+		update: launcher.UpdateClaude,
 	}
 }
 
@@ -96,16 +95,16 @@ func runUpdate(
 		}
 	}
 	if len(args) != 0 {
-		fmt.Fprintln(stderr, "codex-safe update: arguments are not supported")
+		fmt.Fprintln(stderr, "claude-safe update: arguments are not supported")
 		fmt.Fprintln(stderr, updateUsage)
 		return 2
 	}
 	if update == nil {
-		fmt.Fprintln(stderr, "codex-safe update: updater dependency is not configured")
+		fmt.Fprintln(stderr, "claude-safe update: updater dependency is not configured")
 		return 1
 	}
 	if err := update(ctx, defaultImage, stdout, stderr); err != nil {
-		fmt.Fprintf(stderr, "codex-safe update: %v\n", err)
+		fmt.Fprintf(stderr, "claude-safe update: %v\n", err)
 		return commandExitCode(err)
 	}
 	return 0

@@ -1,7 +1,7 @@
-// Package cli holds the shared launcher command scaffold. codex-safe and agents-safe differ only in
-// their name, usage text, Codex-home policy, and how post-flag arguments become the container
+// Package cli holds the shared launcher command scaffold. Product and generic launchers differ only
+// in their name, usage text, state warning policy, and how post-flag arguments become the container
 // command; everything else (flag parsing, project discovery, plan building, exit-code propagation)
-// lives here so the two binaries cannot drift.
+// lives here so the binaries cannot drift.
 package cli
 
 import (
@@ -33,13 +33,15 @@ type Dependencies struct {
 
 // ResolvedConfig is the resolver output shared by command assembly and container launch.
 type ResolvedConfig struct {
-	Plan                launchplan.Plan
-	Image               string
-	Options             launchplan.Options
-	CodexArguments      []string
-	Degradations        []launchplan.Degradation
-	DefaultCodexHomeSet bool
-	HostHome            string
+	Plan                 launchplan.Plan
+	Image                string
+	Options              launchplan.Options
+	CodexArguments       []string
+	ClaudeArguments      []string
+	Degradations         []launchplan.Degradation
+	DefaultCodexHomeSet  bool
+	DefaultClaudeHomeSet bool
+	HostHome             string
 }
 
 // Config describes one launcher binary's identity and command policy.
@@ -53,11 +55,16 @@ type Config struct {
 	// ValidateInvocation rejects config-independent command errors before project discovery. agents-safe uses it to
 	// reject a missing command; codex-safe accepts an empty invocation for interactive use.
 	ValidateInvocation func(args []string) error
-	// BuildCommand combines the resolved configured Codex arguments and post-flag invocation arguments. It runs only
-	// after project resolution because agents-safe must preserve its pre-discovery missing-command usage error.
+	// BuildCommand combines a product's configured arguments and post-flag invocation arguments. It runs only after
+	// project resolution because agents-safe must preserve its pre-discovery missing-command usage error.
 	BuildCommand func(configuredArgs, invocationArgs []string) []string
+	// SelectArguments chooses this product's configured argv from the shared resolved project config.
+	// It is nil for agents-safe, whose invocation is already the complete command.
+	SelectArguments func(ResolvedConfig) []string
 	// WarnWhenCodexHomeAbsent selects codex-safe's warning when no default Codex home exists on this host.
 	WarnWhenCodexHomeAbsent bool
+	// WarnWhenClaudeHomeAbsent selects claude-safe's warning when no complete default Claude state exists.
+	WarnWhenClaudeHomeAbsent bool
 }
 
 // Run parses args, validates config-independent usage, resolves project config, builds the command, and launches it.
@@ -68,7 +75,7 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 	projectPath := flags.String("project", ".", "Git project path")
 	image := flags.String("image", cfg.DefaultImage, "container image")
 	noHostMCP := flags.Bool("no-host-mcp", false,
-		"disable host MCP forwarding: no config.toml read, no forwarders, no relay, no mount")
+		"disable host MCP forwarding: no product config read, no forwarders, no relay, no mount")
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -108,7 +115,11 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 	printDegradationWarnings(cfg, resolved, stderr)
 	command := invocation
 	if cfg.BuildCommand != nil {
-		command = cfg.BuildCommand(resolved.CodexArguments, invocation)
+		configured := resolved.CodexArguments
+		if cfg.SelectArguments != nil {
+			configured = cfg.SelectArguments(resolved)
+		}
+		command = cfg.BuildCommand(configured, invocation)
 	}
 	if dependencies.NewLauncher == nil {
 		fmt.Fprintf(stderr, "%s: launcher dependency is not configured\n", cfg.Name)
@@ -134,6 +145,9 @@ func printDegradationWarnings(cfg Config, resolved ResolvedConfig, stderr io.Wri
 	degradations := resolved.Degradations
 	if cfg.WarnWhenCodexHomeAbsent && !resolved.DefaultCodexHomeSet {
 		degradations = launchplan.AppendCodexHomeAbsentDegradation(degradations)
+	}
+	if cfg.WarnWhenClaudeHomeAbsent && !resolved.DefaultClaudeHomeSet {
+		degradations = launchplan.AppendClaudeHomeAbsentDegradation(degradations)
 	}
 	for _, degradation := range degradations {
 		fmt.Fprintf(stderr, "%s: warning: %s\n", cfg.Name, launchplan.DegradationMessage(degradation.Role))

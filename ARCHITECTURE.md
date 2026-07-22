@@ -1,26 +1,27 @@
 # Architecture
 
-Status: Implemented MVP with an active session-manager evolution.
+Status: Implemented multi-agent environment with a shared session manager.
 
 Scope: Host-side project discovery and launch, the Sysbox container, its private Docker daemon, and the
 container-local command lifetime protocol.
 
 ## Runtime Topology
 
-`codex-safe` and `agents-safe` discover the requested Git worktree, derive a mount and identity plan, and create or
-reuse one deterministically named container. The container runs under Sysbox and never receives the host
-Docker socket.
+`codex-safe`, `claude-safe`, and `agents-safe` discover the requested Git worktree, derive the same mount and identity
+plan, and create or reuse one deterministically named container. Codex and Claude Code can therefore run concurrently
+against one worktree and private Docker daemon. The container runs under Sysbox and never receives the host Docker
+socket.
 
 ```mermaid
 flowchart LR
-    CLI["Host codex-safe / agents-safe CLI"] --> HostDocker["Host Docker daemon"]
+    CLI["Host codex-safe / claude-safe / agents-safe CLI"] --> HostDocker["Host Docker daemon"]
     HostDocker --> Container["Sysbox container"]
     Container --> Supervisor["codex-safe-session serve"]
     Supervisor --> InnerDocker["Private dockerd"]
     Supervisor --> Manager["Session manager socket"]
     CLI --> Wrapper["docker exec codex-safe-session run"]
     Wrapper --> Manager
-    Wrapper --> Command["Requested command"]
+    Wrapper --> Command["Codex, Claude Code, or requested command"]
     Command --> InnerDocker
 ```
 
@@ -29,10 +30,11 @@ home, starts the private daemon, and owns the session manager. Each unprivileged
 starts a command and keeps that registration until the child exits. The manager shuts down the container only
 after the last registered command disconnects and the idle timeout expires.
 
-Every session also mounts the daemon-local `codex-safe-codex` volume read-only. The image contains no Codex
-executable or dispatcher. `make docker-build` initializes the volume after building the local image, while
-`codex-safe update` refreshes it later without a rebuild. Both use an ordinary maintenance container with the volume
-read-write and run the official standalone installer. The host Codex home remains a separate state bind.
+Every session mounts the daemon-local `codex-safe-codex` and `codex-safe-claude` volumes read-only. The image contains
+neither product executable. `make docker-build` initializes both volumes after building the local image, while
+`codex-safe update` and `claude-safe update` refresh them independently without a rebuild. Each updater uses an
+ordinary maintenance container with only its installation volume read-write. Host Codex and Claude state remain
+separate writable binds; sharing is limited to the project/runtime resources exposed by the common creation plan.
 
 ## Core Modules
 
@@ -42,6 +44,7 @@ both the module paths and document links.
 | Module | Responsibility | Owning design doc |
 | --- | --- | --- |
 | `cmd/codex-safe/` | Host CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
+| `cmd/claude-safe/` | Claude Code host CLI and update dispatch. | [Claude Code integration](docs/design-docs/claude-safe.md) |
 | `cmd/agents-safe/` | Host CLI for arbitrary container commands. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/cli/` | Shared launcher CLI. | [Safe environment](docs/design-docs/codex-safe.md) |
 | `internal/launchcli/` | Composes host and project resolution into the CLI's resolved config. | [Launcher configuration][launcher-config] |
@@ -68,14 +71,15 @@ both the module paths and document links.
 - The selected worktree is mounted read-write at the same absolute path.
 - Local `.agents-safe/config.toml` serializes the validated host-specific mount plan and may add explicit project
   mounts for new containers.
-- Git-topology roles are required and fail before Docker access when omitted. Host Git config, Codex home, personal
-  skills, and host MCP are degradable roles: omission keeps them absent and emits an explicit startup warning.
+- Git-topology roles are required and fail before Docker access when omitted. Host Git config, Codex home, Claude
+  state, personal skills, and host MCP are degradable roles: omission keeps them absent and emits an explicit startup
+  warning.
 - A linked worktree's primary checkout is mounted read-only while the shared Git directory remains writable.
 - The host home is not mounted implicitly. Explicit local project configuration may expose narrower directories;
   supported configuration files otherwise receive only their documented mounts.
 - The host Docker socket is never mounted into the container.
-- The shared Codex executable volume is read-only in project sessions and read-write only in the isolated maintenance
-  container started after `make docker-build` or by `codex-safe update`.
+- Both shared executable volumes are read-only in project sessions and read-write only in their isolated maintenance
+  containers started after `make docker-build` or by the matching product update command.
 - The session container shares no host namespace. The optional relay sidecar in
   [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) shares the host network namespace only, runs no agent
   code, and exists only while a session forwards host MCP endpoints.
@@ -88,6 +92,8 @@ both the module paths and document links.
   [Safe Environment for Running Codex Agents](docs/design-docs/codex-safe.md).
 - Shared Codex volume, executable path, initialization, and update changes belong to
   [Persistent Container Codex Installation](docs/design-docs/persistent-codex-installation.md).
+- Claude state, executable volume, command policy, installation, and update changes belong to
+  [Safe Claude Code Integration](docs/design-docs/claude-safe.md).
 - Project initialization, typed local config, and CLI precedence belong to
   [Project Launcher Configuration](docs/design-docs/project-launcher-configuration.md).
 - Project-image discovery, automatic builds, BuildKit caching, and compatibility validation belong to

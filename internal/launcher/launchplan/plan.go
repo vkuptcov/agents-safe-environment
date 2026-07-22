@@ -110,6 +110,8 @@ type Resolution struct {
 var degradableRoleOrder = []projectenv.MountRole{
 	projectenv.RoleHostGitConfig,
 	projectenv.RoleCodexHome,
+	projectenv.RoleClaudeHome,
+	projectenv.RoleClaudeConfig,
 	projectenv.RolePersonalSkills,
 	projectenv.RoleHostMCPChannel,
 }
@@ -122,6 +124,10 @@ func DegradationMessage(role projectenv.MountRole) string {
 		return "mount role \"host_git_config\" is omitted; host Git identity and includes are unavailable"
 	case projectenv.RoleCodexHome:
 		return "mount role \"codex_home\" is omitted; host Codex state is unavailable; using ephemeral state"
+	case projectenv.RoleClaudeHome:
+		return "mount role \"claude_home\" is omitted; host Claude Code state is unavailable; using ephemeral state"
+	case projectenv.RoleClaudeConfig:
+		return "mount role \"claude_config\" is omitted; host Claude Code global configuration is unavailable"
 	case projectenv.RolePersonalSkills:
 		return "mount role \"personal_skills\" is omitted; personal skills are unavailable"
 	case projectenv.RoleHostMCPChannel:
@@ -135,18 +141,28 @@ func DegradationMessage(role projectenv.MountRole) string {
 // degradation list at its canonical position. codex-safe reports it when the host never had a Codex
 // home, a condition Resolve does not treat as a degradation because no default codex_home was omitted.
 func AppendCodexHomeAbsentDegradation(degradations []Degradation) []Degradation {
-	rank := degradableRank(projectenv.RoleCodexHome)
+	return appendAbsentDegradation(degradations, projectenv.RoleCodexHome)
+}
+
+// AppendClaudeHomeAbsentDegradation inserts a synthetic claude_home degradation when the host had
+// no complete default Claude state for claude-safe to mount.
+func AppendClaudeHomeAbsentDegradation(degradations []Degradation) []Degradation {
+	return appendAbsentDegradation(degradations, projectenv.RoleClaudeHome)
+}
+
+func appendAbsentDegradation(degradations []Degradation, role projectenv.MountRole) []Degradation {
+	rank := degradableRank(role)
 	result := make([]Degradation, 0, len(degradations)+1)
 	inserted := false
 	for _, degradation := range degradations {
 		if !inserted && degradableRank(degradation.Role) > rank {
-			result = append(result, Degradation{Role: projectenv.RoleCodexHome})
+			result = append(result, Degradation{Role: role})
 			inserted = true
 		}
 		result = append(result, degradation)
 	}
 	if !inserted {
-		result = append(result, Degradation{Role: projectenv.RoleCodexHome})
+		result = append(result, Degradation{Role: role})
 	}
 	return result
 }
@@ -182,6 +198,8 @@ var managedRolePolicies = map[projectenv.MountRole]rolePolicy{
 	projectenv.RoleCommonGitDir:    {required: true},
 	projectenv.RoleWorktree:        {required: true},
 	projectenv.RoleCodexHome:       {},
+	projectenv.RoleClaudeHome:      {},
+	projectenv.RoleClaudeConfig:    {},
 	projectenv.RolePersonalSkills:  {},
 	projectenv.RoleHostMCPChannel:  {},
 }
@@ -441,9 +459,9 @@ func validateExistingMount(mount projectenv.MountConfig) error {
 	if err != nil {
 		return fmt.Errorf("inspect mount source %q: %w", mount.Source, err)
 	}
-	if mount.Role == projectenv.RoleHostGitConfig {
+	if mount.Role == projectenv.RoleHostGitConfig || mount.Role == projectenv.RoleClaudeConfig {
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("host Git config %q is not a regular file", mount.Source)
+			return fmt.Errorf("mount role %q source %q is not a regular file", mount.Role, mount.Source)
 		}
 		return nil
 	}

@@ -1,7 +1,7 @@
 # Sysbox smoke tests
 
-This directory contains the real-host integration test for `codex-safe` and `agents-safe`. The lifecycle probes run
-arbitrary bash through the public `agents-safe` command, and the Codex-specific assertions run `codex-safe`
+This directory contains real-host integration tests for `codex-safe`, `claude-safe`, and `agents-safe`. Lifecycle
+probes run arbitrary Bash through the public `agents-safe` command, and product assertions run both agent launchers
 directly, so the suite drives the same launcher create, reuse, and exec path a user runs. The test creates a managed
 container with the `sysbox-runc` runtime, starts a private Docker daemon inside that container, and exercises a
 linked Git worktree through multiple concurrent client commands.
@@ -20,11 +20,11 @@ make test-smoke-go
 
 The target:
 
-1. builds `bin/codex-safe`, `bin/agents-safe`, and `bin/codex-safe-session`;
+1. builds `bin/codex-safe`, `bin/claude-safe`, `bin/agents-safe`, and `bin/codex-safe-session`;
 2. builds the `codex-safe-mvp:local` image;
 3. enables the opt-in smoke test with `CODEX_SAFE_RUN_SYSBOX_SMOKE=1`;
-4. runs every `TestSysbox` scenario (linked worktree, Codex product launch, `agents-safe bash`, configured mounts,
-   and project-image selection) without the Go test cache.
+4. runs every `TestSysbox` scenario (linked worktree, both product launchers, shared-session coexistence,
+   `agents-safe bash`, configured mounts, and project-image selection) without the Go test cache.
 
 The test requires:
 
@@ -68,7 +68,7 @@ observed inside the managed environment.
 
 ```text
 Host Go test
-├── launcherHarness ── starts bin/agents-safe and bin/codex-safe as real host processes
+├── launcherHarness ── starts all three public launchers as real host processes
 ├── dockerHarness ──── inspects the host daemon through the Moby client
 ├── temporary Git primary checkout + linked worktree
 └── host sentinel container
@@ -116,6 +116,10 @@ selected project before the idle lifecycle removes the container.
 
 `TestSysboxAgentsSafeWithoutCodexHome` omits the fixture `.codex` directory and verifies that the real container
 has no Codex-home bind mount, carries the `absent` compatibility label, and does not pass `CODEX_HOME` to the command.
+
+`TestSysboxClaudeAndCodexShareOneSession` holds one session open, runs both product launchers through it, verifies
+both installation volumes are read-only, writes Claude user configuration through the native host mounts, and proves
+only one managed container exists throughout.
 
 `TestSysboxProjectEnvironment` creates a fixture `.agents-safe/Dockerfile` and drives the public launcher without
 `--image`. It verifies the production cold-build path, the project-provided executable, ordinary active-session reuse
@@ -177,6 +181,7 @@ immediately and includes the command's captured stdout and stderr instead of wai
 | Nested daemon | Its ID differs from the host daemon, it uses `crun`, and it cannot see the sentinel. |
 | Nested workloads | `docker run` writes through a bind mount and the Compose service reaches the running state. |
 | Session reuse | Overlapping clients share one container hostname, one nested daemon, and one managed container. |
+| Product coexistence | Codex and Claude Code use independent state/installations while attaching to one live session. |
 | Session lifecycle | One client can exit without stopping others; final idle removal occurs after the grace period. |
 | Creation race | Two concurrent first callers converge on exactly one deterministic container. |
 | Cleanup | Nested objects never appear in host Docker; the sentinel survives; Sysbox writes retain host ownership. |
@@ -186,6 +191,7 @@ immediately and includes the command's captured stdout and stderr instead of wai
 
 - `sysbox_linked_worktree_test.go` contains the scenario and domain assertions.
 - `sysbox_agents_test.go` covers direct public-launcher behavior and configured local mounts.
+- `sysbox_claude_test.go` covers Claude state, managed installation, and coexistence with Codex in one session.
 - `sysbox_project_environment_test.go` covers automatic project-image builds and active-session lifecycle.
 - `sysbox_fixture_test.go` composes the harness, starts embedded probes, and implements marker synchronization.
 - `smoke_setup_test.go` creates the Git fixture, host identity, artifact paths, and launcher processes.

@@ -10,9 +10,9 @@ code change complete when practical.
 - Cross-package, launcher, container, or lifecycle changes: run `make test`.
 - Go tooling or lint-configuration changes: run `make lint` and `make test`.
 - Docker image changes: run `make docker-build` in addition to the relevant Go checks. This target also updates the
-  daemon-local Codex volume through the official installer.
-- Codex update-path changes: run the updater shell syntax check and an ordinary-Docker disposable-volume install/read
-  proof in addition to the image build.
+  daemon-local Codex and Claude Code volumes through their official installers.
+- Product update-path changes: run the matching updater shell syntax check and an ordinary-Docker disposable-volume
+  install/read proof in addition to the image build.
 - Documentation-only changes: run `make check-docs`; Go tests are not required unless the task asks for them.
 - Real Sysbox, mount, nested-Docker, or linked-worktree behavior: run `make test-smoke-go` on a compatible Linux host.
 
@@ -22,7 +22,7 @@ code change complete when practical.
 go test ./internal/launcher
 go test ./internal/session
 go test ./internal/container
-go test ./cmd/codex-safe ./cmd/codex-safe-session
+go test ./cmd/codex-safe ./cmd/claude-safe ./cmd/codex-safe-session
 ```
 
 ## Completion Rules

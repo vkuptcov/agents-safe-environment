@@ -1,23 +1,27 @@
-# codex-safe
+# agents-safe environment
 
-`codex-safe` runs interactive Codex for the current Git project inside an ephemeral container started through
-Sysbox. `agents-safe` runs an explicit command in that same environment. Both mount the active checkout at its original
-absolute path, start a private Docker daemon inside the container, and reuse a live worktree container instead of
-creating another nested Docker environment.
+`codex-safe` and `claude-safe` run Codex and Claude Code for the current Git project inside one ephemeral container
+started through Sysbox. `agents-safe` runs an explicit command in that same environment. All three launchers mount the
+active checkout at its original absolute path, start a private Docker daemon inside the container, and reuse a live
+worktree container instead of creating another nested Docker environment.
 
-`codex-safe` runs only Codex. Arguments after `--` are forwarded to Codex, not executed as an arbitrary program.
-`agents-safe` is the explicit command launcher: for example, `agents-safe bash` starts Bash inside the container.
+The product launchers run only their managed agent executable. Arguments after `--` are forwarded to that product,
+not executed as an arbitrary program. `agents-safe` is the explicit command launcher: for example,
+`agents-safe bash` starts Bash inside the container.
 
 ## What the environment provides
 
 - No-argument `codex-safe` starts interactive Codex for the Git project containing the current directory.
+- No-argument `claude-safe` starts interactive Claude Code in the same per-project container.
 - `agents-safe COMMAND [ARG...]` starts the requested command in the same isolated project environment.
-- `codex-safe` requires the resolved host Codex home (`CODEX_HOME`, else `~/.codex`) and may offer to create a missing
-  default `~/.codex`; `agents-safe` mounts it only when it already exists. A mounted home is read-write at
-  `$HOME/.codex`, and only commands with that mount receive `CODEX_HOME=$HOME/.codex`.
+- The launcher resolves Codex state from `CODEX_HOME`, else `~/.codex`. An existing directory is mounted read-write at
+  `$HOME/.codex`; a missing default is degradable and `codex-safe` warns before using ephemeral state, while a missing
+  explicit `CODEX_HOME` fails preflight. Only commands with the mount receive `CODEX_HOME=$HOME/.codex`.
 - Personal authored skills under `$HOME/.agents/skills` are mounted read-only when present.
 - `codex-safe` executes Codex directly from the shared read-only Linux installation; a mounted host Codex home cannot
   shadow that absolute path.
+- `claude-safe` executes Claude Code from its own shared read-only Linux installation and persists complete host state
+  through native `~/.claude` and `~/.claude.json` mounts when both exist.
 - A regular Git checkout is mounted read-write without exposing other host paths.
 - A linked worktree keeps its original absolute path; its primary checkout is read-only while the common `.git`
   directory stays writable.
@@ -28,7 +32,9 @@ creating another nested Docker environment.
 - An existing host `$HOME/.gitconfig` is available as a read-only global Git config.
 - Interactive tools use a UTF-8 locale and handle Cyrillic input and output; Bash uses a colored prompt.
 - Files created by managed commands and nested containers retain ownership that remains usable from the host.
-- Concurrent commands for one worktree execute in its already-running container and share its nested daemon.
+- Concurrent Codex, Claude Code, and generic commands for one worktree execute in its already-running container. They
+  interact through the shared worktree, Git metadata, processes, and nested Docker daemon while keeping product homes,
+  credentials, and conversations separate.
 - A project can add `.agents-safe/Dockerfile` to derive a cached toolchain image from the selected base image.
 
 See the [design document](docs/design-docs/codex-safe.md) for the full product and security model. The
@@ -37,7 +43,7 @@ scope and validation gates.
 
 ## Prerequisites
 
-`codex-safe` requires:
+Project sessions require:
 
 - a Linux host on `amd64` or `arm64`;
 - Go 1.26 or newer;
@@ -63,10 +69,10 @@ From the repository root:
 make install
 ```
 
-This installs `codex-safe` and `agents-safe` into `GOBIN`, or into the first `GOPATH/bin` when `GOBIN` is unset,
-builds the local `codex-safe-mvp:local` image, and installs the current Linux Codex release into the
-`codex-safe-codex` volume. Make sure that Go binary directory is on `PATH`; the launchers can then be run from any
-project directory.
+This installs `codex-safe`, `claude-safe`, and `agents-safe` into `GOBIN`, or into the first `GOPATH/bin` when `GOBIN`
+is unset, builds the local `codex-safe-mvp:local` image, and installs the current Linux product releases into the
+`codex-safe-codex` and `codex-safe-claude` volumes. Make sure that Go binary directory is on `PATH`; the launchers can
+then be run from any project directory.
 
 For repository-local development builds, use:
 
@@ -75,7 +81,7 @@ make build
 make docker-build
 ```
 
-The launchers are written to `bin/codex-safe` and `bin/agents-safe`. Run the local checks with:
+The launchers are written to `bin/codex-safe`, `bin/claude-safe`, and `bin/agents-safe`. Run the local checks with:
 
 ```bash
 make test
@@ -84,10 +90,11 @@ make test
 The image pins Ubuntu 24.04 by digest. It also pins the official `crun` 1.28 binary by SHA-256 for the nested daemon.
 The nested runtime preserves the absolute bind-mount contract, including project paths that contain spaces.
 
-The image contains no Codex executable or dispatcher. `make docker-build` builds the image and then uses its
-maintenance entrypoint to install the current Linux Codex release in the shared `codex-safe-codex` volume.
-`codex-safe` executes `/opt/codex-safe/codex/bin/codex` directly; the same volume directory is on `PATH` for
-interactive `agents-safe` shells in the base image. Derived-image enforcement of that `PATH` entry is tracked in the
+The image contains neither product executable. `make docker-build` builds the image and then uses separate maintenance
+entrypoints to install current Linux releases in the shared product volumes. `codex-safe` executes
+`/opt/codex-safe/codex/bin/codex`; `claude-safe` executes
+`/opt/codex-safe/claude/home/.local/bin/claude`. Both directories are on `PATH` for interactive `agents-safe` shells
+in the base image. Derived-image enforcement of those `PATH` entries is tracked in the
 [tech debt tracker](docs/reviews/tech-debt-tracker.md). Session startup never performs a network update.
 
 The environment includes Git, Docker Engine and CLI with Buildx/BuildKit, Docker Compose V2, `curl`, `sudo`, `make`,
@@ -108,7 +115,7 @@ The product interface is:
 
 ```text
 codex-safe update
-codex-safe [--project PATH] [--image REF] [-- CODEX ARG...]
+codex-safe [--project PATH] [--image REF] [--no-host-mcp] [-- CODEX ARG...]
 ```
 
 Update the shared Linux installation from any directory:
@@ -143,12 +150,53 @@ reuse. Every invocation, including the first, runs
 `docker exec codex-safe-session run -- /opt/codex-safe/codex/bin/codex [CODEX ARG...]`; no user command owns the
 container lifecycle.
 
-A relaunch that resolves a different Codex home or personal-skills source for a still-running worktree is rejected
-with a finish-active-session diagnostic: user mounts are fixed when the container is created, so the launcher
+A relaunch that resolves different product state or another creation-time mount for a still-running worktree is
+rejected with a finish-active-session diagnostic: mounts are fixed when the container is created, so the launcher
 neither reuses the stale session nor terminates the live one.
 
 When stdin and stdout are attached to a terminal, the launcher allocates a Docker TTY and forwards terminal input, so
 interactive Codex behaves as it does on the host.
+
+## Run Claude Code
+
+The Claude Code product interface is:
+
+```text
+claude-safe update
+claude-safe [--project PATH] [--image REF] [--no-host-mcp] [-- CLAUDE ARG...]
+```
+
+Update the independent shared Linux installation from any directory:
+
+```bash
+./bin/claude-safe update
+```
+
+The updater runs Anthropic's official native installer in an ordinary Docker maintenance container with only
+`codex-safe-claude` mounted read-write. Project sessions mount that volume read-only and set
+`DISABLE_AUTOUPDATER=1`; updates never run as part of session startup.
+
+Start interactive Claude Code for the current Git project:
+
+```bash
+./bin/claude-safe
+```
+
+The configured default `--permission-mode auto` delegates permission decisions to Claude Code's automatic mode.
+An invocation that explicitly supplies another permission mode takes precedence. Product arguments remain separate argv:
+
+```bash
+./bin/claude-safe --project . -- --permission-mode plan
+```
+
+With no `CLAUDE_CONFIG_DIR` override, host state is mounted only when both `~/.claude` and `~/.claude.json` already
+exist; both retain their native paths. A partial default is treated as absent. With an explicit
+`CLAUDE_CONFIG_DIR`, the canonical directory is mounted at `$HOME/.claude` and the variable is passed to every managed
+command. `claude-safe` warns when the resolved project configuration omits persistent Claude state.
+
+`codex-safe`, `claude-safe`, and `agents-safe` all resolve both product state policies and both installation volumes
+before creating a session. Either product can therefore create the container and the other can attach concurrently;
+the first launcher does not reserve the container for its own product.
 
 ## Run a command
 
@@ -205,9 +253,9 @@ Options must precede `COMMAND`. The optional `--` marks the end of launcher opti
 name starts with a hyphen. `agents-safe` sends the command and arguments directly to the container session wrapper,
 without invoking a host shell. The command can use programs installed in the image, such as Bash, Git, Make, Docker,
 and `rg`, or executables available under the mounted project. It receives the same project, user mounts,
-identity, nested Docker daemon, working directory, and lifecycle behavior as `codex-safe`.
+identity, nested Docker daemon, working directory, and lifecycle behavior as both product launchers.
 
-### Codex home, personal skills, and authentication
+### Agent state, personal skills, and authentication
 
 - The launcher resolves the Codex home from host `CODEX_HOME`, or `~/.codex` below the operating-system home, and
   mounts that canonical directory read-write at `$HOME/.codex`. A missing, relative, root, non-directory, or
@@ -218,6 +266,11 @@ identity, nested Docker daemon, working directory, and lifecycle behavior as `co
 - Codex reads and persists its configuration, sessions, logs, and skills through the mounted Codex home. File-based
   credentials in `$CODEX_HOME/auth.json` are available; credentials stored only in a host keychain or keyring are not
   mounted. An interactive `codex login` inside the container persists file-based credentials to the mounted home.
+- Claude Code reads and persists its settings, credentials, history, projects, and plugins through its mounted state.
+  Host keychain-only credentials are not mounted. An interactive login writes file-backed state through the Claude
+  mounts.
+- Every process in the shared container can read mounted product credentials and history allowed by host file modes.
+  The isolation boundary is between the managed container and the host, not between Codex and Claude Code.
 
 The selected project path must be inside a non-bare Git working tree. Linked worktrees are supported when their
 common Git directory is the `.git` directory of an existing primary checkout. External common Git directories and
@@ -247,16 +300,16 @@ the then-current project definition.
 ## Run the real-host smoke test
 
 The full Sysbox smoke scenario is an opt-in Go test. It uses the Docker Engine client for host-side container creation
-and inspection, while focused embedded workloads exercise the environment, linked worktree, nested Docker, and Codex
-integration inside the isolated container:
+and inspection, while focused embedded workloads exercise the environment, linked worktree, nested Docker, and both
+product integrations inside the isolated container:
 
 ```bash
 make test-smoke-go
 ```
 
 It is intentionally separate from `make test`: the Go test requires a real Sysbox host and a Docker image build. The
-lifecycle probes run arbitrary bash through the public `agents-safe` command, and the Codex-specific assertions run
-`codex-safe` directly, so the suite exercises the same product binaries a user runs.
+lifecycle probes run arbitrary bash through the public `agents-safe` command, while product-specific assertions run
+`codex-safe` and `claude-safe` directly, so the suite exercises the same binaries a user runs.
 
 The harness builds the binaries and image, creates a temporary primary repository and linked worktree, starts a host
 sentinel container, and performs live assertions against the Sysbox container and nested containers. It verifies
@@ -264,18 +317,20 @@ account names, global Git config, UTF-8 text, mount modes, Git writes, daemon se
 deterministic container reuse, idle removal, concurrent first callers, nested project access, file ownership, and
 cleanup. The Codex scenario also proves Codex-home state round-trip with host ownership, read-only personal skills, an
 unavailable external symlink target, volume-backed-executable shadowing rejection, and the user-mount reuse-mismatch
-diagnostic.
+diagnostic. The Claude scenario proves native state persistence, both read-only product installations, and
+same-container reuse across both product launchers.
 
 See [the smoke-test README](tests/smoke/README.md) for the architecture, synchronization protocol, complete assertion
 catalog, cleanup behavior, and extension guidelines.
 
 The smoke suite was run successfully on 2026-07-22 with Docker Engine 28.3.3, Sysbox in the registered runtime set,
-and the volume-backed Codex CLI. Other kernel, filesystem, and Sysbox combinations must pass the same test before use.
+and both volume-backed product CLIs. Other kernel, filesystem, and Sysbox combinations must pass the same test before
+use.
 
 ## Security boundary and omissions
 
-The project and linked-worktree common Git directory are writable by the agent. Code in the environment can change or
-delete them, and can read or change the mounted Codex home and its credentials. The primary checkout is read-only,
+The project and linked-worktree common Git directory are writable by either agent. Code in the environment can change
+or delete them, and can read or change mounted Codex/Claude state and credentials. The primary checkout is read-only,
 except for its separately mounted common `.git` directory. Personal skills are read-only, but scripts they contain
 execute with the agent's permissions when Codex selects them.
 

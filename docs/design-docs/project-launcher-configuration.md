@@ -5,11 +5,12 @@ Status: Implemented
 Scope:
 
 - the generated `.agents-safe/config.toml` schema;
-- project-config and CLI precedence for `codex-safe` and `agents-safe`;
+- project-config and CLI precedence for `codex-safe`, `claude-safe`, and `agents-safe`;
 - `.agents-safe/.gitignore` creation.
 
-Image builds remain owned by [Project-Specific Agent Environments](project-environments.md). Mount topology, Codex
-command policy, and container reuse remain owned by [Safe Environment](codex-safe.md).
+Image builds remain owned by [Project-Specific Agent Environments](project-environments.md). Mount topology and
+container reuse remain owned by [Safe Environment](codex-safe.md); product command/state policy is split between that
+document and [Safe Claude Code Integration](claude-safe.md).
 
 ## Purpose and Intent
 
@@ -28,7 +29,7 @@ Parameters have two lifecycle classes:
 | Class | Parameters | Running-container behavior |
 | --- | --- | --- |
 | Creation-time | image, mounts, host MCP, dependency caches | Must match; a mismatch fails without replacement. |
-| Command-time | Codex and agent argv, managed Go and uv cache routing | Applied immediately through `docker exec`. |
+| Command-time | Codex, Claude Code, and generic argv; managed Go and uv cache routing | Applied through `docker exec`. |
 
 `--project` is a bootstrap parameter: it selects the worktree and deterministic container identity before config
 resolution begins.
@@ -42,6 +43,7 @@ resolution begins.
 | Common | `no_host_mcp = false` | Forward eligible host MCP servers. |
 | Common | resolved logical mount snapshot | Complete project/Git topology and available host integrations. |
 | Codex | `arguments = ['--sandbox', 'danger-full-access']` | Use the Sysbox container as the sandbox boundary. |
+| Claude | `arguments = ['--permission-mode', 'auto']` | Delegate permission decisions to Claude Code's automatic mode. |
 | Agents | no default argv | Require a command on every `agents-safe` invocation. |
 
 ### Resolution Order
@@ -123,6 +125,20 @@ read_only = false
 comment = "Optional: persist host Codex state."
 
 [[common.mounts]]
+role = "claude_home"
+source = "/home/alex/.claude"
+target = "/home/alex/.claude"
+read_only = false
+comment = "Optional: persist host Claude Code state."
+
+[[common.mounts]]
+role = "claude_config"
+source = "/home/alex/.claude.json"
+target = "/home/alex/.claude.json"
+read_only = false
+comment = "Optional: persist host Claude Code global configuration."
+
+[[common.mounts]]
 role = "personal_skills"
 source = "/home/alex/.agents/skills"
 target = "/home/alex/.agents/skills"
@@ -141,6 +157,11 @@ arguments = [
     '--sandbox', 'danger-full-access'
 ]
 
+[claude]
+arguments = [
+    '--permission-mode', 'auto'
+]
+
 [agents]
 ```
 
@@ -154,6 +175,7 @@ arguments = [
 - A running container is reused only when all creation-time parameters match.
 - Invalid or stale paths fail before Docker creation.
 - An explicit Codex sandbox choice is never overridden by configured defaults.
+- An explicit Claude permission mode is never overridden by configured defaults.
 
 ### Tradeoff
 
@@ -192,6 +214,7 @@ trackable by default.
 type ProjectConfig struct {
 	Common CommonConfig `toml:"common"`
 	Codex  CodexConfig  `toml:"codex"`
+	Claude ClaudeConfig `toml:"claude"`
 	Agents AgentsConfig `toml:"agents"`
 }
 
@@ -202,6 +225,10 @@ type CommonConfig struct {
 }
 
 type CodexConfig struct {
+	Arguments []string `toml:"arguments"`
+}
+
+type ClaudeConfig struct {
 	Arguments []string `toml:"arguments"`
 }
 
@@ -218,9 +245,10 @@ type MountConfig struct {
 }
 ```
 
-`CommonConfig` applies to both launchers. `CodexConfig` contains default Codex argv. `AgentsConfig` is empty until
-`agents-safe` has launcher-specific defaults. `MountRole` gives role constants and downstream launch-plan APIs one
-shared domain type. `MountConfig.Comment` is serialized documentation and does not affect Docker arguments.
+`CommonConfig` applies to all launchers. `CodexConfig` and `ClaudeConfig` contain their product's default argv.
+`AgentsConfig` is empty until `agents-safe` has launcher-specific defaults. `MountRole` gives role constants and
+downstream launch-plan APIs one shared domain type. `MountConfig.Comment` is serialized documentation and does not
+affect Docker arguments.
 
 The implemented Go and uv cache contract of [Host-Backed Dependency Caches](host-backed-dependency-caches.md) extends
 `CommonConfig` and increments the creation-time fingerprint schema to version 2:
@@ -270,7 +298,7 @@ The creation-time fingerprint is the SHA-256 digest of one versioned canonical s
 
 | Field | Canonical value |
 | --- | --- |
-| `schema_version` | Integer `3`; incremented whenever encoding or implicit creation behavior changes. |
+| `schema_version` | Integer `4`; incremented whenever encoding or implicit creation behavior changes. |
 | `image_reference` | Resolved requested image reference, before resolving or building an immutable image ID. |
 | `image_override` | Explicit `--image` bypasses the project Dockerfile, even when its reference is unchanged. |
 | `mounts` | Ordered physical binds with canonical `source`, `target`, and `read_only`. |
@@ -300,6 +328,11 @@ Schema version 3 introduces the implicit read-only `codex-safe-codex` volume mou
 is not duplicated in the configured physical-bind list, so the schema bump prevents reuse of a version 2 container
 that lacks it. Codex release contents and version remain outside the fingerprint.
 
+Schema version 4 introduces Claude state roles, the implicit read-only `codex-safe-claude` volume, and the union of
+Codex/Claude host-MCP endpoints. It prevents reuse of a version 3 container that cannot accept `claude-safe`. Product
+release contents and versions remain outside the fingerprint, so updating either volume does not invalidate a live
+session.
+
 `mounts` uses the exact deterministic order passed to Docker after alias and nesting normalization. It excludes the
 materialized `host_mcp_channel` bind because that bind has a random generation-directory source;
 `host_mcp_endpoints` captures whether the channel is needed and what it forwards. Endpoint server names are excluded:
@@ -311,7 +344,7 @@ The canonical structure is encoded from ordered structs and slices, never maps o
 The following values are deliberately excluded:
 
 - logical mount roles, comments, redundant aliases, and original TOML ordering;
-- configured and invocation command argv, including Codex sandbox arguments;
+- configured and invocation command argv, including Codex sandbox and Claude permission arguments;
 - the invocation working directory, which every `docker exec` supplies independently;
 - built image IDs, Dockerfile contents, and mutable-tag resolution results;
 - host-MCP server names, random channel-generation paths, and sidecar container/image identities;
@@ -325,9 +358,9 @@ On mismatch, the launcher fails with the running and requested fingerprints and 
 session. It never silently uses stale creation-time settings, stops another command, or replaces the container. After
 the active container exits and is removed, the next invocation creates one from the resolved config.
 
-Command-time parameters are the configured and invocation argv for `codex-safe` or `agents-safe`. They are not part of
-the creation-time fingerprint and are applied to every command through `docker exec`, including commands entering a
-reused container.
+Command-time parameters are the configured and invocation argv for `codex-safe`, `claude-safe`, or `agents-safe`.
+They are not part of the creation-time fingerprint and are applied to every command through `docker exec`, including
+commands entering a reused container.
 
 Every future config field must declare one of these classes. A creation-time field must participate in the
 fingerprint; a command-time field must not.
@@ -350,6 +383,11 @@ After file layering, only explicitly supplied launcher flags override the config
 sandbox policy, the configured default sandbox pair is suppressed. Other arguments remain separate argv elements;
 the launcher does not invoke a shell.
 
+`claude.arguments` is default argv in native Claude Code form. When invocation arguments explicitly select a
+permission mode, the configured `--permission-mode auto` default is suppressed. Other configured and
+invocation arguments remain in order as separate argv elements. The complete state and command contract is owned by
+[Safe Claude Code Integration](claude-safe.md).
+
 ### 6. Mount Serialization
 
 `common.mounts` serializes logical mount roles whose topology and required modes are owned by
@@ -359,7 +397,7 @@ mounts without weakening their requested access mode. `role` makes validation in
 explains why access exists. Supported roles are:
 
 - `host_git_config`, `primary_checkout`, `common_git_dir`, `worktree`;
-- `codex_home`, `personal_skills`, `host_mcp_channel`;
+- `codex_home`, `claude_home`, `claude_config`, `personal_skills`, `host_mcp_channel`;
 - `additional` for an explicit user-added mount.
 
 Default roles have one fixed absence policy. `MountConfig.Comment` begins with `Required:` or `Optional:` so the
@@ -373,6 +411,8 @@ logical access modes; normalization may satisfy several logical roles with one p
 | `common_git_dir` | Always. | `rw` | Stop. | Git refs, indexes, locks, and worktree metadata must remain writable. |
 | `host_git_config` | Host file exists. | `ro` | Warn and continue. | Host identity/includes/defaults disappear. |
 | `codex_home` | Host directory exists. | `rw` | Warn and continue. | Otherwise use ephemeral state. |
+| `claude_home` | Complete default state or explicit config directory exists. | `rw` | Warn and continue. | Otherwise use ephemeral Claude state. |
+| `claude_config` | Default `~/.claude.json` exists with `~/.claude`. | `rw` | Warn and continue. | Preserve native global configuration. |
 | `personal_skills` | Skills directory exists. | `ro` | Warn and continue. | Otherwise omit personal skills. |
 | `host_mcp_channel` | Host MCP enabled. | `rw` | Warn and continue. | Project works without forwarded host services. |
 | `additional` | Never generated. | configured `ro` or `rw` | Ignore. | User-requested access only. |
@@ -401,15 +441,17 @@ inspection, build, or create operation:
 ```text
 <binary>: warning: mount role "host_git_config" is omitted; host Git identity and includes are unavailable
 <binary>: warning: mount role "codex_home" is omitted; host Codex state is unavailable; using ephemeral state
+<binary>: warning: mount role "claude_home" is omitted; host Claude Code state is unavailable; using ephemeral state
+<binary>: warning: mount role "claude_config" is omitted; host Claude Code global configuration is unavailable
 <binary>: warning: mount role "personal_skills" is omitted; personal skills are unavailable
 <binary>: warning: mount role "host_mcp_channel" is omitted; host MCP forwarding is disabled
 ```
 
-Warnings use this role order and print at most once per invocation. If config removes a `codex_home` role present in
-the current default snapshot, both binaries emit its warning because the container loses persistent Codex state. If
-the host Codex home never existed and the default snapshot therefore omitted the role, only `codex-safe` emits the
-Codex-specific warning; `agents-safe` starts without one. Other optional host state absent from the default snapshot
-does not produce a deletion warning.
+Warnings use this role order and print at most once per invocation. If config removes a product-state role present in
+the current default snapshot, all launchers emit its warning because the shared container loses that creation-time
+mount. If the host product state never existed and the default snapshot therefore omitted the role, only its product
+launcher emits the product-specific ephemeral-state warning. Other optional host state absent from the default
+snapshot does not produce a deletion warning.
 
 A present mount whose source is stale or invalid is not treated as an omission. It fails closed so a typo or host-path
 change cannot silently broaden or redirect access. Optionality authorizes deletion of the entry, not invalid content.
@@ -437,9 +479,9 @@ creation-time fingerprint mismatch while the previous container is running.
 
 ### 7. Validation and Failure Behavior
 
-The config must be a regular, non-symlink TOML file. Unknown keys, invalid types, an empty image, unsafe Codex argv,
+The config must be a regular, non-symlink TOML file. Unknown keys, invalid types, an empty image, unsafe product argv,
 missing required mount roles, and invalid present mounts fail before Docker launch. Missing degradable roles emit
-warnings and remain absent. Both binaries validate the complete file, including the other launcher's section.
+warnings and remain absent. All launchers validate the complete file, including the other products' sections.
 
 The file is loaded on every invocation. Creation-time changes require a matching container or a cold create;
 command-time changes apply to the current command.
@@ -450,7 +492,7 @@ affect a later launch, so every writable source in the file must be treated as a
 ## Boundaries and Non-Goals
 
 - Internal Docker runtime, timeout, naming, relay, and lifecycle constants are not user configuration.
-- `--project`, positional agent commands, and one-invocation Codex arguments are not serialized.
+- `--project`, positional agent commands, and one-invocation product arguments are not serialized.
 - Config changes do not mutate a running container.
 - The config is host-specific and must not contain credentials.
 
@@ -470,12 +512,13 @@ affect a later launch, so every writable source in the file must be treated as a
   worktree normalizes them to the three expected physical mounts in safe parent-before-child order.
 - An invalid or stale mount snapshot fails before Docker creation.
 - Creation-time fingerprints are stable, exclude comments and command argv, and cover every immutable config field.
-- Schema version 2 fingerprints include canonical cache entries, exclude cache contents, and never match a version 1
-  fingerprint.
+- Schema version 4 fingerprints include canonical cache entries, both implicit product volumes, and the merged
+  host-MCP endpoint set; product argv and executable versions remain excluded.
 - Managed command routing points each configured tool to its mounted target and overrides conflicting image defaults.
 - A running-container fingerprint mismatch fails without reuse, stop, or replacement.
 - Config image and explicit CLI-image intent retain distinct project-Dockerfile behavior.
 - Explicit invocation sandbox arguments suppress the configured default sandbox pair.
+- Explicit invocation permission arguments suppress Claude's configured automatic-mode default.
 - Host-MCP mount presence follows `no_host_mcp` and endpoint eligibility.
 - Real Sysbox smoke compares the normalized physical plan with session-container `docker inspect` output and traces
   every physical bind back to its serialized logical role or roles.
@@ -487,7 +530,7 @@ host with Sysbox.
 
 The authoritative ownership map is in [Architecture](../../ARCHITECTURE.md#core-modules). This design changes:
 
-- `cmd/agents-safe/` and `cmd/codex-safe/`: launcher-specific typed defaults;
+- `cmd/agents-safe/`, `cmd/codex-safe/`, and `cmd/claude-safe/`: launcher-specific typed defaults;
 - `internal/cli/`: config and explicit-CLI precedence;
 - `internal/launcher/projectenv/`: initialization, TOML loading, and project-config validation;
 - `internal/launcher/launchplan/`: required mount-role validation;

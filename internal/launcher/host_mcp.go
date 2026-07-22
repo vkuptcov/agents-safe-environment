@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -117,19 +118,24 @@ func sidecarName(projectKey string, channel hostmcp.Channel) string {
 
 // planHostMCP resolves the forwarded endpoint set before the creation fingerprint is computed.
 //
-// Discovery reads the Codex home this launch already resolved, so --no-host-mcp and a launch with no
-// Codex home both reduce to an empty set with no separate resolution path. An empty set allocates
-// nothing: no directory, no environment variable, no mount, no relay, and no banner line.
+// Discovery reads the Codex and Claude host state this launch already resolved. --no-host-mcp or an
+// omitted channel role skips both sources. An empty endpoint union allocates nothing: no directory,
+// environment variable, mount, relay, or banner line.
 func (attempt *launchAttempt) planHostMCP() error {
 	if attempt.noHostMCP || !attempt.plan.HostMCPChannel {
-		// Disabled forwarding and an omitted logical channel role both perform no Codex config read.
+		// Disabled forwarding and an omitted logical channel role perform no product config read.
 		return nil
 	}
-	codexHome := ""
+	sources := hostmcp.Sources{ProjectRoot: attempt.plan.ProjectRoot}
 	if mount, found := attempt.plan.MountForRole(projectenv.RoleCodexHome); found {
-		codexHome = mount.Source
+		sources.CodexHome = mount.Source
 	}
-	set, err := hostmcp.Discover(codexHome)
+	if mount, found := attempt.plan.MountForRole(projectenv.RoleClaudeConfig); found {
+		sources.ClaudeConfigFile = mount.Source
+	} else if mount, found := attempt.plan.MountForRole(projectenv.RoleClaudeHome); found {
+		sources.ClaudeConfigFile = filepath.Join(mount.Source, ".claude.json")
+	}
+	set, err := hostmcp.DiscoverAll(sources)
 	if err != nil {
 		return err
 	}

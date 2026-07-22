@@ -11,19 +11,22 @@ import (
 
 // HostEnvironment is the Docker-free host state needed to serialize project defaults and build launch requests.
 type HostEnvironment struct {
-	HomeDir        string
-	GitConfig      string
-	CodexHome      string
-	PersonalSkills string
+	HomeDir          string
+	GitConfig        string
+	CodexHome        string
+	ClaudeConfigDir  string
+	ClaudeConfigFile string
+	PersonalSkills   string
 }
 
 // ResolvedProjectConfig is the complete configuration and physical mount contract for one invocation.
 type ResolvedProjectConfig struct {
-	Config              projectenv.ProjectConfig
-	Defaults            projectenv.ProjectConfig
-	Resolution          launchplan.Resolution
-	Options             launchplan.Options
-	DefaultCodexHomeSet bool
+	Config               projectenv.ProjectConfig
+	Defaults             projectenv.ProjectConfig
+	Resolution           launchplan.Resolution
+	Options              launchplan.Options
+	DefaultCodexHomeSet  bool
+	DefaultClaudeHomeSet bool
 }
 
 // ResolveProjectConfig applies the documented defaults -> TOML -> explicit-flags order for one discovered project.
@@ -52,6 +55,7 @@ func ResolveProjectConfig(
 		return ResolvedProjectConfig{}, err
 	}
 	_, defaultCodexHomeSet := findRole(defaults.Common.Mounts, projectenv.RoleCodexHome)
+	_, defaultClaudeHomeSet := findRole(defaults.Common.Mounts, projectenv.RoleClaudeHome)
 	return ResolvedProjectConfig{
 		Config:     config,
 		Defaults:   defaults,
@@ -60,7 +64,8 @@ func ResolveProjectConfig(
 			ImageOverride: overrides.ImageOverride,
 			NoHostMCP:     config.Common.NoHostMCP,
 		},
-		DefaultCodexHomeSet: defaultCodexHomeSet,
+		DefaultCodexHomeSet:  defaultCodexHomeSet,
+		DefaultClaudeHomeSet: defaultClaudeHomeSet,
 	}, nil
 }
 
@@ -86,7 +91,7 @@ func DefaultProjectConfig(
 		return projectenv.ProjectConfig{}, fmt.Errorf("default image is empty")
 	}
 
-	mounts := make([]projectenv.MountConfig, 0, 7)
+	mounts := make([]projectenv.MountConfig, 0, 9)
 	if host.GitConfig != "" {
 		mounts = append(mounts, projectenv.MountConfig{
 			Role:     projectenv.RoleHostGitConfig,
@@ -125,6 +130,22 @@ func DefaultProjectConfig(
 			Comment: "Optional: persist host Codex state.",
 		})
 	}
+	if host.ClaudeConfigDir != "" {
+		mounts = append(mounts, projectenv.MountConfig{
+			Role:    projectenv.RoleClaudeHome,
+			Source:  host.ClaudeConfigDir,
+			Target:  containerClaudeConfigDir(host.HomeDir),
+			Comment: "Optional: persist host Claude Code state.",
+		})
+	}
+	if host.ClaudeConfigFile != "" {
+		mounts = append(mounts, projectenv.MountConfig{
+			Role:    projectenv.RoleClaudeConfig,
+			Source:  host.ClaudeConfigFile,
+			Target:  filepath.Join(host.HomeDir, ".claude.json"),
+			Comment: "Optional: persist host Claude Code global configuration.",
+		})
+	}
 	if host.PersonalSkills != "" {
 		mounts = append(mounts, projectenv.MountConfig{
 			Role:     projectenv.RolePersonalSkills,
@@ -144,6 +165,7 @@ func DefaultProjectConfig(
 	config := projectenv.ProjectConfig{
 		Common: projectenv.CommonConfig{Image: image, Mounts: mounts},
 		Codex:  projectenv.CodexConfig{Arguments: append([]string(nil), codexDefaultSandboxArgs...)},
+		Claude: projectenv.ClaudeConfig{Arguments: append([]string(nil), claudeDefaultPermissionArgs...)},
 	}
 	if err := projectenv.Validate(config); err != nil {
 		return projectenv.ProjectConfig{}, fmt.Errorf("validate generated project configuration: %w", err)
@@ -166,6 +188,8 @@ func validateHostEnvironment(host HostEnvironment) error {
 	}{
 		{"host Git config", host.GitConfig},
 		{"host Codex home", host.CodexHome},
+		{"host Claude config directory", host.ClaudeConfigDir},
+		{"host Claude global config", host.ClaudeConfigFile},
 		{"personal skills", host.PersonalSkills},
 	} {
 		if value.path == "" {

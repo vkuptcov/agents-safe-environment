@@ -74,21 +74,28 @@ COPY container/bashrc /etc/codex-safe/bashrc
 COPY --from=crun --chmod=0755 /crun /usr/local/bin/crun
 COPY --from=session-builder --chmod=0755 /out/codex-safe-session /usr/local/bin/codex-safe-session
 COPY --chmod=0755 container/codex-safe-update /usr/local/bin/codex-safe-update
+COPY --chmod=0755 container/claude-safe-update /usr/local/bin/claude-safe-update
 
 # Fail the image build immediately if any copied binary is unusable on the target platform, and
 # verify the updater wrapper before the post-build volume installation runs.
 RUN /usr/local/bin/crun --version \
     && /usr/local/bin/codex-safe-session --help \
     && test -x /usr/local/bin/codex-safe-update \
-    && sh -n /usr/local/bin/codex-safe-update
+    && test -x /usr/local/bin/claude-safe-update \
+    && sh -n /usr/local/bin/codex-safe-update \
+    && bash -n /usr/local/bin/claude-safe-update
 
-# Both Codex and nested containers use only the daemon socket created inside the outer
+# Both agent products and nested containers use only the daemon socket created inside the outer
 # container. This path is not a bind mount of /var/run/docker.sock from the host.
 ENV DOCKER_HOST=unix:///var/run/docker.sock
 
-# `codex-safe` invokes the volume binary by absolute path. This PATH entry also makes the same
-# installation available as `codex` in interactive `agents-safe` shells.
-ENV PATH="/opt/codex-safe/codex/bin:${PATH}"
+# Product launchers invoke their volume binaries by absolute path. This PATH also makes both
+# installations available in interactive `agents-safe` shells.
+ENV PATH="/opt/codex-safe/codex/bin:/opt/codex-safe/claude/home/.local/bin:${PATH}"
+
+# Claude Code's installation volume is read-only in project sessions. Updates are an explicit
+# host-side maintenance operation, so the in-session background updater must not attempt to write it.
+ENV DISABLE_AUTOUPDATER=1
 
 # Project environments and repository validation build images through the private Docker daemon.
 # Select BuildKit so Docker receives the architecture arguments this Dockerfile's multi-architecture

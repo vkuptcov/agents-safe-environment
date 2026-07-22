@@ -13,6 +13,8 @@ boundary. The durable runtime contract lives in [Architecture](../ARCHITECTURE.m
   home or filesystem root as a broad shortcut.
 - Do not mount the host Docker socket into the outer container.
 - Treat Git includes and credential helpers as separate host paths; mounting `.gitconfig` does not authorize them.
+- Treat mounted Codex and Claude Code state as credentials exposed to every process in the shared project container.
+  Product homes are separate persistence stores, not isolation boundaries between the two agents.
 
 ## Privilege Boundary
 

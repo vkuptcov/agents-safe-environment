@@ -15,13 +15,15 @@ import (
 )
 
 type projectLayout struct {
-	root      string
-	primary   string
-	worktree  string
-	nested    string
-	hostHome  string
-	hostGit   string
-	codexHome string
+	root         string
+	primary      string
+	worktree     string
+	nested       string
+	hostHome     string
+	hostGit      string
+	codexHome    string
+	claudeHome   string
+	claudeConfig string
 }
 
 func newProjectLayout(t *testing.T, createCodexHome bool) projectLayout {
@@ -36,6 +38,8 @@ func newProjectLayout(t *testing.T, createCodexHome bool) projectLayout {
 	layout.nested = filepath.Join(layout.worktree, "nested directory")
 	layout.hostGit = filepath.Join(layout.hostHome, ".gitconfig")
 	layout.codexHome = filepath.Join(layout.hostHome, ".codex")
+	layout.claudeHome = filepath.Join(layout.hostHome, ".claude")
+	layout.claudeConfig = filepath.Join(layout.hostHome, ".claude.json")
 
 	initGitProject(t, layout.primary)
 	runInDir(t, layout.primary, "git", "worktree", "add", "-b", "smoke/feature", layout.worktree)
@@ -44,6 +48,9 @@ func newProjectLayout(t *testing.T, createCodexHome bool) projectLayout {
 	if createCodexHome {
 		require.NoError(t, os.MkdirAll(layout.codexHome, 0o755), "temporary Codex home must be created")
 	}
+	require.NoError(t, os.MkdirAll(layout.claudeHome, 0o755), "temporary Claude home must be created")
+	require.NoError(t, os.WriteFile(layout.claudeConfig, []byte("{}\n"), 0o600),
+		"temporary Claude global config must be created")
 	return layout
 }
 
@@ -112,6 +119,7 @@ func newSmokeArtifacts(project projectLayout) smokeArtifacts {
 type launcherHarness struct {
 	t             *testing.T
 	productBinary string
+	claudeBinary  string
 	agentsBinary  string
 	hostHome      string
 }
@@ -125,16 +133,24 @@ func newLauncherHarness(t *testing.T, hostHome string) *launcherHarness {
 		t.Skip("bin/agents-safe is missing; run make build first")
 	}
 	product := filepath.Join(workingDirectory, "..", "..", "bin", "codex-safe")
-	return &launcherHarness{t: t, productBinary: product, agentsBinary: agents, hostHome: hostHome}
+	claude := filepath.Join(workingDirectory, "..", "..", "bin", "claude-safe")
+	return &launcherHarness{
+		t:             t,
+		productBinary: product,
+		claudeBinary:  claude,
+		agentsBinary:  agents,
+		hostHome:      hostHome,
+	}
 }
 
-// launcherEnv builds the launcher process environment. It removes any ambient HOME and CODEX_HOME
-// so Codex-home resolution is deterministic, sets HOME to the synthetic host home, then applies the
-// caller's overrides (for example an explicit CODEX_HOME for the reuse-mismatch scenario).
+// launcherEnv builds the launcher process environment. It removes ambient home and agent-state
+// overrides so fixture resolution is deterministic, sets HOME to the synthetic host home, then
+// applies the caller's overrides (for example an explicit CODEX_HOME for a mismatch scenario).
 func (launcher *launcherHarness) launcherEnv(extra []string) []string {
 	environment := make([]string, 0, len(os.Environ())+1+len(extra))
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "HOME=") || strings.HasPrefix(entry, "CODEX_HOME=") {
+		if strings.HasPrefix(entry, "HOME=") || strings.HasPrefix(entry, "CODEX_HOME=") ||
+			strings.HasPrefix(entry, "CLAUDE_CONFIG_DIR=") {
 			continue
 		}
 		environment = append(environment, entry)

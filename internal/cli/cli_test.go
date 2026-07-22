@@ -167,6 +167,29 @@ func TestRunOrdersSyntheticCodexHomeWarningWithDegradations(t *testing.T) {
 	}
 }
 
+func TestRunOrdersSyntheticClaudeHomeWarningWithDegradations(t *testing.T) {
+	t.Parallel()
+	stderr := new(bytes.Buffer)
+	config := testConfig()
+	config.WarnWhenClaudeHomeAbsent = true
+	deps := dependenciesFor(&clitest.RecordingLauncher{})
+	deps.ResolveConfig = func(gitproject.Project, string, launchplan.Overrides) (cli.ResolvedConfig, error) {
+		resolved := testResolvedConfig()
+		resolved.DefaultClaudeHomeSet = false
+		resolved.Degradations = []launchplan.Degradation{{Role: "personal_skills"}}
+		return resolved, nil
+	}
+	if exit := cli.Run(context.Background(), config, []string{"cmd"}, new(bytes.Buffer), stderr, deps); exit != 0 {
+		t.Fatalf("Run() = %d", exit)
+	}
+	got := stderr.String()
+	claude := strings.Index(got, "host Claude Code state")
+	personal := strings.Index(got, "personal skills")
+	if claude < 0 || personal < 0 || claude > personal {
+		t.Fatalf("warnings = %q, want claude_home before personal_skills", got)
+	}
+}
+
 func TestRunConstructsLauncherOnlyAfterResolution(t *testing.T) {
 	t.Parallel()
 	constructed := false
@@ -243,12 +266,13 @@ func testConfig() cli.Config {
 
 func testResolvedConfig() cli.ResolvedConfig {
 	return cli.ResolvedConfig{
-		Plan:                launchplan.Plan{ProjectRoot: "/project", WorkingDir: "/project"},
-		Image:               "resolved:image",
-		Options:             launchplan.Options{NoHostMCP: true},
-		CodexArguments:      []string{"configured"},
-		DefaultCodexHomeSet: true,
-		HostHome:            "/home/test",
+		Plan:                 launchplan.Plan{ProjectRoot: "/project", WorkingDir: "/project"},
+		Image:                "resolved:image",
+		Options:              launchplan.Options{NoHostMCP: true},
+		CodexArguments:       []string{"configured"},
+		DefaultCodexHomeSet:  true,
+		DefaultClaudeHomeSet: true,
+		HostHome:             "/home/test",
 	}
 }
 

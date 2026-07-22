@@ -45,6 +45,8 @@ func (docker *DockerLauncher) buildCreateRequest(
 		// These unhashed values are retained for operator diagnostics. Creation-time reuse compares
 		// only launchConfigLabel after the ownership and protocol checks.
 		{Key: codexHomeLabel, Value: mountRoleLabel(plan, projectenv.RoleCodexHome)},
+		{Key: claudeHomeLabel, Value: mountRoleLabel(plan, projectenv.RoleClaudeHome)},
+		{Key: claudeConfigLabel, Value: mountRoleLabel(plan, projectenv.RoleClaudeConfig)},
 		{Key: personalSkillsLabel, Value: mountRoleLabel(plan, projectenv.RolePersonalSkills)},
 		{Key: hostMCPLabel, Value: forwarding.set.Label()},
 		{Key: goBuildCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheGoBuild)},
@@ -86,11 +88,18 @@ func (docker *DockerLauncher) buildCreateRequest(
 		Labels:      labels,
 		Environment: environment,
 		Mounts:      mounts,
-		Volumes: []dockercli.VolumeMount{{
-			Source:   CodexInstallationVolume,
-			Target:   CodexInstallationRoot,
-			ReadOnly: true,
-		}},
+		Volumes: []dockercli.VolumeMount{
+			{
+				Source:   CodexInstallationVolume,
+				Target:   CodexInstallationRoot,
+				ReadOnly: true,
+			},
+			{
+				Source:   ClaudeInstallationVolume,
+				Target:   ClaudeInstallationRoot,
+				ReadOnly: true,
+			},
+		},
 	}, nil
 }
 
@@ -109,6 +118,16 @@ func (docker *DockerLauncher) buildExecRequest(
 			Key:   "CODEX_HOME",
 			Value: mount.Target,
 		})
+	}
+	if mount, found := plan.MountForRole(projectenv.RoleClaudeHome); found {
+		// An explicit CLAUDE_CONFIG_DIR is represented by a directory role without the separate
+		// default ~/.claude.json role. Default state keeps Claude's native split paths unchanged.
+		if _, defaultConfigFound := plan.MountForRole(projectenv.RoleClaudeConfig); !defaultConfigFound {
+			environment = append(environment, dockercli.KeyValue{
+				Key:   "CLAUDE_CONFIG_DIR",
+				Value: mount.Target,
+			})
+		}
 	}
 	for _, cache := range plan.DependencyCaches {
 		key, err := cache.EnvironmentKey()
@@ -168,4 +187,10 @@ func mountRoleLabel(plan launchplan.Plan, role projectenv.MountRole) string {
 // CODEX_HOME value the wrapped command sees. One definition keeps the two from drifting.
 func containerCodexHome(hostHome string) string {
 	return filepath.Join(hostHome, ".codex")
+}
+
+// containerClaudeConfigDir is the container-local target for either the default ~/.claude state
+// directory or an explicit host CLAUDE_CONFIG_DIR.
+func containerClaudeConfigDir(hostHome string) string {
+	return filepath.Join(hostHome, ".claude")
 }

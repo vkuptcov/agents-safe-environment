@@ -36,6 +36,17 @@ func requireMount(t *testing.T, inspection container.InspectResponse, source, de
 	t.Fatalf("required mount %q -> %q was not found", source, destination)
 }
 
+func requireVolumeMount(t *testing.T, inspection container.InspectResponse, name, destination string, writable bool) {
+	t.Helper()
+	for _, mount := range inspection.Mounts {
+		if mount.Name == name && mount.Destination == destination {
+			require.Equal(t, writable, mount.RW, "volume %q -> %q must have the expected read-write mode", name, destination)
+			return
+		}
+	}
+	t.Fatalf("required volume %q -> %q was not found", name, destination)
+}
+
 func parseReport(t *testing.T, path string) map[string]string {
 	t.Helper()
 	values := make(map[string]string)
