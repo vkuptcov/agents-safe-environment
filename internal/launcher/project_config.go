@@ -170,11 +170,6 @@ func DefaultProjectConfig(
 		Common: projectenv.CommonConfig{
 			Image:  image,
 			Mounts: mounts,
-			TmpfsMounts: []projectenv.TmpfsMountConfig{{
-				Target:  filepath.Join(project.WorktreeRoot, ".venv"),
-				Mode:    projectenv.DefaultTmpfsMode,
-				Comment: "Mask the conventional project Python virtual environment.",
-			}},
 		},
 		Codex:  projectenv.CodexConfig{Arguments: append([]string(nil), codexDefaultSandboxArgs...)},
 		Claude: projectenv.ClaudeConfig{Arguments: append([]string(nil), claudeDefaultPermissionArgs...)},

@@ -89,13 +89,8 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 	if config.Common.UseHostPythonVenv {
 		t.Error("UseHostPythonVenv = true, want safe default false")
 	}
-	wantTmpfs := []projectenv.TmpfsMountConfig{{
-		Target:  filepath.Join(worktree, ".venv"),
-		Mode:    projectenv.DefaultTmpfsMode,
-		Comment: "Mask the conventional project Python virtual environment.",
-	}}
-	if !reflect.DeepEqual(config.Common.TmpfsMounts, wantTmpfs) {
-		t.Errorf("TmpfsMounts = %#v, want %#v", config.Common.TmpfsMounts, wantTmpfs)
+	if len(config.Common.TmpfsMounts) != 0 {
+		t.Errorf("TmpfsMounts = %#v, want no default entry; discovery masks existing venvs at launch", config.Common.TmpfsMounts)
 	}
 }
 

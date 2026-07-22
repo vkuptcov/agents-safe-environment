@@ -225,20 +225,20 @@ base runtime image stays uv- and Python-free. Initialization never creates cache
 existing config. Maven, Gradle, Docker-image, and BuildKit caches are deferred; see
 [Host-Backed Dependency Caches](docs/design-docs/host-backed-dependency-caches.md).
 
-The generated config sets `use_host_python_venv = false` and records the conventional root environment explicitly:
+The generated config sets `use_host_python_venv = false`. On every launch, the launcher finds each existing project
+directory containing a regular `pyvenv.cfg` and masks it with a session-local tmpfs, keeping image-specific Python
+changes away from those host environments. Nothing is created for a virtual environment that does not exist. To mask
+an additional directory explicitly, add a `[[common.tmpfs_mounts]]` entry:
 
 ```toml
 [[common.tmpfs_mounts]]
 target = "/absolute/path/to/project/.venv"
 mode = "1777"
-comment = "Mask the conventional project Python virtual environment."
+comment = "Mask a project Python virtual environment."
 ```
 
-On every launch, the launcher starts with this list, finds any additional project directories containing a regular
-`pyvenv.cfg`, and adds a session-local tmpfs for each target. This keeps image-specific Python changes away from host
-environments and also reserves the root `.venv` target before it exists. Set `use_host_python_venv = true` in the local
-config, or pass `--use-host-python-venv` for one invocation, to skip the configured and discovered venv tmpfs mounts
-and expose host environments through the worktree bind.
+Set `use_host_python_venv = true` in the local config, or pass `--use-host-python-venv` for one invocation, to skip
+both discovered and configured venv tmpfs mounts and expose host environments through the worktree bind.
 
 Edit the Dockerfile sample, then rename it to `.agents-safe/Dockerfile` to activate automatic project-image builds.
 Append an `additional` entry to the generated mount list when the project container needs another absolute host

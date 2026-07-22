@@ -35,7 +35,8 @@ environment. The existing uv cache bind intentionally remains shared and is not 
 - Discover existing environments by regular `pyvenv.cfg` markers on every launch; do not follow symlinks or scan Git
   metadata.
 - Keep tmpfs mounts distinct from host bind mounts and expose their base list as `common.tmpfs_mounts`; they have no
-  source or logical host-access role.
+  source or logical host-access role. The generated config preconfigures no venv target; masking is driven by
+  launch-time discovery, and `common.tmpfs_mounts` is an optional explicit addition.
 - Make `use_host_python_venv` a creation-time scalar with safe default `false` and an explicit CLI override.
 - Bump the creation-fingerprint schema because the new mount is required for safe session reuse.
 
@@ -83,8 +84,10 @@ test proves host content is unchanged.
 
 - 2026-07-22: The initial explicit-list design was superseded by owner direction: launch-time marker discovery with
   a `use_host_python_venv` opt-in now owns the contract; the revised implementation was revalidated below.
-- 2026-07-22: `common.tmpfs_mounts` now records the conventional root `.venv`; discovery augments that base at launch
-  time, while `use_host_python_venv = true` disables the complete venv tmpfs plan.
+- 2026-07-22: `common.tmpfs_mounts` starts empty and is an optional explicit base; discovery masks existing
+  `pyvenv.cfg` directories at launch, while `use_host_python_venv = true` disables the complete venv tmpfs plan.
+- 2026-07-22: Owner direction — the generated config no longer preconfigures a root `.venv` tmpfs. A missing `.venv`
+  is never created in the container; only existing virtual environments are masked.
 - 2026-07-22: Focused launcher tests, `make test`, `make lint`, and `make check-docs` pass for the resolved config,
   discovery, fingerprint, and Docker argv changes.
 - 2026-07-22: `make test-smoke-go` could not reach the Sysbox tests in this execution environment. The required cold

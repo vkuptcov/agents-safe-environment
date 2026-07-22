@@ -42,7 +42,6 @@ resolution begins.
 | Common | `image = "agents-safe-mvp:local"` | Base or direct session image. |
 | Common | `no_host_mcp = false` | Forward eligible host MCP servers. |
 | Common | `use_host_python_venv = false` | Mask discovered project-local Python virtual environments. |
-| Common | root `.venv` tmpfs | Reserve and mask the conventional project virtual environment. |
 | Common | resolved logical mount snapshot | Complete project/Git topology and available host integrations. |
 | Codex | `arguments = ['--sandbox', 'danger-full-access']` | Use the Sysbox container as the sandbox boundary. |
 | Claude | `arguments = ['--permission-mode', 'auto']` | Delegate permission decisions to Claude Code's automatic mode. |
@@ -154,11 +153,6 @@ source = "runtime://host-mcp-channel"
 target = "/run/agents-safe-host-mcp"
 read_only = false
 comment = "Optional: forward eligible host MCP endpoints."
-
-[[common.tmpfs_mounts]]
-target = "/home/alex/sources/agents-safe-environment-init-command-support/.venv"
-mode = "1777"
-comment = "Mask the conventional project Python virtual environment."
 
 [codex]
 arguments = [
@@ -283,16 +277,17 @@ path-preserving targets, managed container routing, and validation policy remain
 document owns its typed schema, overlay behavior, and participation in container reuse. `go_build`, `go_modules`, and
 `uv` are implemented; the field is part of the version 2 fingerprint. Maven and Gradle are deferred.
 
-`tmpfs_mounts` is the explicit base of the Python-environment isolation plan. The generated snapshot contains the
-absolute worktree-root `.venv`, mode `1777`, even when the directory does not yet exist. Targets must be canonical
-absolute paths strictly inside the selected worktree; modes are three- or four-digit octal strings. Duplicate and
-overlapping targets fail before Docker access. Comments are serialized documentation and do not affect creation.
+`tmpfs_mounts` is an optional explicit base for the Python-environment isolation plan and is empty by default; the
+generated config preconfigures no venv target. Targets must be canonical absolute paths strictly inside the selected
+worktree; modes are three- or four-digit octal strings. Duplicate and overlapping targets fail before Docker access.
+Comments are serialized documentation and do not affect creation.
 
 `use_host_python_venv` is a creation-time policy and defaults to `false`. After TOML and explicit CLI overrides are
-applied, the safe default scans the selected worktree for directories containing a regular `pyvenv.cfg`, appends new
-targets to `tmpfs_mounts` with mode `1777`, and removes exact duplicates. It does not follow symlinks, skips Git
-metadata, stops descending after finding an environment, and fails closed on unreadable or non-regular markers.
-Every resolved target receives a session-local `tmpfs` after the worktree bind.
+applied, the safe default scans the selected worktree for existing directories containing a regular `pyvenv.cfg`,
+appends new targets to the configured base with mode `1777`, and removes exact duplicates. Nothing is masked for a
+virtual environment that does not exist. Discovery does not follow symlinks, skips Git metadata, stops descending
+after finding an environment, and fails closed on unreadable or non-regular markers. Every resolved target receives a
+session-local `tmpfs` after the worktree bind.
 
 `use_host_python_venv = true` skips both configured tmpfs targets and discovery, so the image sees project virtual
 environments exactly as the host does. `--use-host-python-venv` and `--use-host-python-venv=false` explicitly override
@@ -306,7 +301,7 @@ The decoder starts from a complete default `ProjectConfig` and overlays the TOML
 - present scalar: replace the typed default;
 - omitted `common.mounts`: retain the resolved default mount snapshot;
 - present `common.mounts`: replace the entire list; mounts are never merged by index, role, source, or target.
-- omitted `common.tmpfs_mounts`: retain the generated root `.venv` entry;
+- omitted `common.tmpfs_mounts`: retain the empty default base;
 - present `common.tmpfs_mounts`: replace that complete configured base before launch-time marker discovery.
 
 The config is authoritative when present. The launcher does not silently reinsert a deleted entry or replace a stale
