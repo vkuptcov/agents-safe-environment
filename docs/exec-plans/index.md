@@ -4,10 +4,9 @@ Use [README.md](README.md) for lifecycle rules, required sections, and the reusa
 
 ## Active
 
-- None.
-
 ## Review
 
+- [claude-safe Support](review/2026-07-22-claude-safe-support-exec-plan.md)
 - [Persistent Container Codex Installation](review/2026-07-21-persistent-codex-installation-exec-plan.md)
 - [uv Host-Backed Dependency Cache](review/2026-07-21-uv-host-backed-dependency-cache-exec-plan.md)
 - [Go Cache Implementation Review Fixes](review/2026-07-20-go-cache-review-fixes-exec-plan.md)

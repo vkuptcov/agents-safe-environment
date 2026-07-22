@@ -13,7 +13,7 @@ import (
 
 const (
 	launchConfigLabel         = "codex-safe.launch-config"
-	launchConfigSchemaVersion = 3
+	launchConfigSchemaVersion = 4
 )
 
 // launchFingerprintInput is deliberately an ordered struct: maps and TOML bytes would make an

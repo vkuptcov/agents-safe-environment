@@ -1,11 +1,14 @@
 GO := go
 DOCKER := docker
 CODEX_BINARY := bin/codex-safe
+CLAUDE_BINARY := bin/claude-safe
 AGENTS_BINARY := bin/agents-safe
 SESSION_BINARY := bin/codex-safe-session
 IMAGE := codex-safe-mvp:local
 CODEX_VOLUME := codex-safe-codex
 CODEX_INSTALL_ROOT := /opt/codex-safe/codex
+CLAUDE_VOLUME := codex-safe-claude
+CLAUDE_INSTALL_ROOT := /opt/codex-safe/claude
 SMOKE_DIR := tests/smoke
 GOLANGCI_LINT_MODFILE := tools/go.mod
 TOOLS_BIN_DIR := bin
@@ -17,17 +20,21 @@ GOLANGCI_LINT_BINARY := $(TOOLS_BIN_DIR)/golangci-lint
 build:
 	mkdir -p $(dir $(CODEX_BINARY))
 	$(GO) build -o $(CODEX_BINARY) ./cmd/codex-safe
+	$(GO) build -o $(CLAUDE_BINARY) ./cmd/claude-safe
 	$(GO) build -o $(AGENTS_BINARY) ./cmd/agents-safe
 	$(GO) build -o $(SESSION_BINARY) ./cmd/codex-safe-session
 
 install: docker-build
-	$(GO) install ./cmd/codex-safe ./cmd/agents-safe
+	$(GO) install ./cmd/codex-safe ./cmd/claude-safe ./cmd/agents-safe
 
 docker-build:
 	$(DOCKER) build -t $(IMAGE) -f container/Dockerfile .
 	$(DOCKER) run --rm \
 		--mount type=volume,source=$(CODEX_VOLUME),target=$(CODEX_INSTALL_ROOT) \
 		--entrypoint /usr/local/bin/codex-safe-update $(IMAGE)
+	$(DOCKER) run --rm \
+		--mount type=volume,source=$(CLAUDE_VOLUME),target=$(CLAUDE_INSTALL_ROOT) \
+		--entrypoint /usr/local/bin/claude-safe-update $(IMAGE)
 
 install-tools: $(GOLANGCI_LINT_BINARY)
 
@@ -48,6 +55,7 @@ test:
 	$(GO) -C $(SMOKE_DIR) vet ./...
 	bash -n container/bashrc
 	sh -n container/codex-safe-update
+	bash -n container/claude-safe-update
 
 test-smoke-go: build docker-build
 	CODEX_SAFE_RUN_SYSBOX_SMOKE=1 $(GO) -C $(SMOKE_DIR) test . -run TestSysbox -count=1 -v

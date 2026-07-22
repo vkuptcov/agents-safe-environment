@@ -48,9 +48,9 @@ artifacts. Do not add packages merely for local convenience without documenting 
 
 ### Approved Runtime Packages
 
-- `curl` — approved by the owner on 2026-07-21 for `codex-safe update`. The isolated maintenance container uses it to
-  download OpenAI's official standalone installer and the installer uses it for verified release assets. It is not
-  used during normal session startup.
+- `curl` — approved by the owner on 2026-07-21 for product update commands. Isolated maintenance containers use it to
+  download the official OpenAI and Anthropic installers and their release assets. It is not used during normal
+  session startup.
 
 - `docker-buildx` — approved by the owner on 2026-07-17 for the project-environment image-build contract and
   repository Docker validation inside a managed session. Ubuntu 24.04 packages it as the Docker Buildx CLI plugin;
@@ -66,6 +66,12 @@ artifacts. Do not add packages merely for local convenience without documenting 
   `codex-safe-codex` volume. `make docker-build` invokes it after building the local image, and an explicit
   `codex-safe update` invokes it later without rebuilding. Both intentionally resolve the current official Linux
   release and rely on the installer's release checksum verification. No update runs automatically at session startup.
+
+- Anthropic's native installer at `https://claude.ai/install.sh` owns routine Claude Code updates in the
+  `codex-safe-claude` volume. `make docker-build` invokes it after the Codex updater, and an explicit
+  `claude-safe update` invokes it later without rebuilding. The installer selects the current official Linux release
+  and verifies its published manifest checksum. Project sessions disable background self-update and mount the volume
+  read-only.
 
 ### Approved Smoke-Only Images
 

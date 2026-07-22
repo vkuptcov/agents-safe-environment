@@ -29,11 +29,16 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 	codexHome := filepath.Join(home, ".codex")
+	claudeHome := filepath.Join(home, ".claude")
+	claudeConfig := filepath.Join(home, ".claude.json")
 	skills := filepath.Join(home, ".agents", "skills")
-	for _, path := range []string{codexHome, skills} {
+	for _, path := range []string{codexHome, claudeHome, skills} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(claudeConfig, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	project := gitproject.Project{
 		RequestedDir: worktree,
@@ -43,10 +48,12 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 		Linked:       true,
 	}
 	config, err := DefaultProjectConfig(project, HostEnvironment{
-		HomeDir:        home,
-		GitConfig:      gitConfig,
-		CodexHome:      codexHome,
-		PersonalSkills: skills,
+		HomeDir:          home,
+		GitConfig:        gitConfig,
+		CodexHome:        codexHome,
+		ClaudeConfigDir:  claudeHome,
+		ClaudeConfigFile: claudeConfig,
+		PersonalSkills:   skills,
 	}, "test:image")
 	if err != nil {
 		t.Fatal(err)
@@ -64,11 +71,20 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 	if mount := roles[projectenv.RoleCodexHome]; mount.Target != filepath.Join(home, ".codex") {
 		t.Errorf("Codex mount = %#v, want target below home", mount)
 	}
+	if mount := roles[projectenv.RoleClaudeHome]; mount.Source != claudeHome || mount.Target != filepath.Join(home, ".claude") {
+		t.Errorf("Claude state mount = %#v", mount)
+	}
+	if mount := roles[projectenv.RoleClaudeConfig]; mount.Source != claudeConfig || mount.Target != filepath.Join(home, ".claude.json") {
+		t.Errorf("Claude global config mount = %#v", mount)
+	}
 	if mount := roles[projectenv.RoleHostMCPChannel]; mount.Source != projectenv.HostMCPChannelSource {
 		t.Errorf("host MCP mount = %#v, want logical source", mount)
 	}
 	if want := []string{"--sandbox", "danger-full-access"}; !reflect.DeepEqual(config.Codex.Arguments, want) {
 		t.Errorf("arguments = %#v, want %#v", config.Codex.Arguments, want)
+	}
+	if want := []string{"--dangerously-skip-permissions"}; !reflect.DeepEqual(config.Claude.Arguments, want) {
+		t.Errorf("Claude arguments = %#v, want %#v", config.Claude.Arguments, want)
 	}
 }
 
@@ -76,11 +92,16 @@ func TestResolveHostEnvironmentUsesOneCanonicalOptionalSnapshot(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	codexHome := filepath.Join(home, ".codex")
+	claudeHome := filepath.Join(home, ".claude")
+	claudeConfig := filepath.Join(home, ".claude.json")
 	skills := filepath.Join(home, ".agents", "skills")
-	for _, path := range []string{codexHome, skills} {
+	for _, path := range []string{codexHome, claudeHome, skills} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(claudeConfig, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	gitConfig := filepath.Join(home, ".gitconfig")
 	if err := os.WriteFile(gitConfig, []byte("[user]\n"), 0o600); err != nil {
@@ -100,8 +121,48 @@ func TestResolveHostEnvironmentUsesOneCanonicalOptionalSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if environment.HomeDir != home || environment.GitConfig != gitConfig || environment.CodexHome != codexHome ||
+		environment.ClaudeConfigDir != claudeHome || environment.ClaudeConfigFile != claudeConfig ||
 		environment.PersonalSkills != skills {
 		t.Fatalf("HostEnvironment = %#v, want paths below %q", environment, home)
+	}
+}
+
+func TestResolveHostEnvironmentUsesExplicitClaudeConfigDirectory(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	explicit := filepath.Join(home, "claude-work")
+	if err := os.Mkdir(explicit, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	environment, err := resolveHostEnvironment(HostEnvironmentInputs{
+		UserHomeDir:       func() (string, error) { return home, nil },
+		LookupEnv:         testLookupEnv(map[string]string{"CLAUDE_CONFIG_DIR": explicit}),
+		DiscoverGitConfig: func(string) (string, error) { return "", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if environment.ClaudeConfigDir != explicit || environment.ClaudeConfigFile != "" {
+		t.Fatalf("Claude state = %q, %q", environment.ClaudeConfigDir, environment.ClaudeConfigFile)
+	}
+}
+
+func TestResolveHostEnvironmentTreatsPartialDefaultClaudeStateAsAbsent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	environment, err := resolveHostEnvironment(HostEnvironmentInputs{
+		UserHomeDir:       func() (string, error) { return home, nil },
+		LookupEnv:         testLookupEnv(nil),
+		DiscoverGitConfig: func(string) (string, error) { return "", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if environment.ClaudeConfigDir != "" || environment.ClaudeConfigFile != "" {
+		t.Fatalf("partial Claude state must be absent: %#v", environment)
 	}
 }
 

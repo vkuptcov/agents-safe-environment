@@ -1,10 +1,10 @@
-# Go Session Manager for Shared codex-safe Containers
+# Go Session Manager for Shared Agent Containers
 
-Status: Proposed
+Status: Implemented
 
 Scope:
 
-- the lifetime of one Sysbox container shared by concurrent `codex-safe` commands;
+- the lifetime of one Sysbox container shared by concurrent `codex-safe`, `claude-safe`, and `agents-safe` commands;
 - container-local registration of foreground commands;
 - startup, shutdown, and create-versus-stop races;
 - session reuse compatibility for creation-time user mounts;
@@ -26,27 +26,27 @@ foreground command is running, then stop and retain the existing `--rm` cleanup 
 Before:
 
 ```text
-Terminal A: codex-safe -- bash
-Terminal B: codex-safe -- make test
+Terminal A: claude-safe
+Terminal B: codex-safe
 Terminal A: exit
 
-The container exits because Bash from Terminal A is its main process.
-Terminal B loses the environment while make test is still running.
+The container exits because Claude Code from Terminal A is its main process.
+Terminal B loses the shared environment while Codex is still running.
 ```
 
 After:
 
 ```text
 session manager
-├── active command A → bash
-└── active command B → make test
+├── active command A → Claude Code
+└── active command B → Codex
 
 Terminal A: exit          command A finishes, command B remains
-Terminal B: test finishes command B finishes, active count becomes zero
+Terminal B: Codex exits   command B finishes, active count becomes zero
 ```
 
 An interactive Bash session is an active command for as long as Bash is running. Exiting that Bash does not stop the
-container while `make test`, Codex, another shell, or any other managed foreground command remains active.
+container while Claude Code, Codex, `make test`, another shell, or any other managed foreground command remains active.
 
 ### Chosen Shape
 
@@ -68,7 +68,7 @@ runtime directory, socket mount, lock file, heartbeat, or persistent session reg
 ```mermaid
 flowchart LR
     subgraph Host["Host"]
-        User["User terminal"] --> Launcher["codex-safe"]
+        User["User terminal"] --> Launcher["codex-safe / claude-safe / agents-safe"]
         Launcher -->|"inspect or create deterministic name"| Engine["Host Docker Engine"]
     end
 
@@ -76,7 +76,7 @@ flowchart LR
         Init["tini (PID 1)"] --> Manager["codex-safe-session serve<br/>Go entrypoint"]
         Manager --> Inner["nested dockerd"]
         Wrapper["codex-safe-session run"] -->|"register through local socket"| Manager
-        Wrapper --> Command["bash, Codex, or make test"]
+        Wrapper --> Command["Claude Code, Codex, Bash, or make test"]
         Command -->|"Docker CLI"| Inner
     end
 
@@ -89,7 +89,7 @@ flowchart LR
 - No user command has special ownership of the container.
 - The container remains running while at least one managed foreground command is running.
 - Exiting one of several concurrent commands does not interrupt the remaining commands.
-- Interactive Bash, Codex, `less`, tests, and other foreground commands all use the same lifetime rule.
+- Interactive Bash, Codex, Claude Code, `less`, tests, and other foreground commands use the same lifetime rule.
 - The final command exit starts the idle timeout, followed by nested-daemon shutdown and container removal.
 - Two simultaneous first launches for one project create at most one container.
 - TTY behavior, argv boundaries, working directories, and command exit codes remain unchanged.
@@ -133,6 +133,9 @@ launcher can validate the container before reuse and operators can inspect sessi
 - `codex-safe.launch-config`: SHA-256 fingerprint of all creation-time parameters;
 - `codex-safe.codex-home`: canonical host source mounted as the container's Codex home, or the literal `absent` for
   an `agents-safe` container created without one; diagnostic only;
+- `codex-safe.claude-home`: canonical host source mounted as Claude's state directory, or `absent`; diagnostic only;
+- `codex-safe.claude-config`: canonical default global `.claude.json` source, or `absent` when the state uses an
+  explicit `CLAUDE_CONFIG_DIR` or is unavailable; diagnostic only;
 - `codex-safe.personal-skills`: canonical host source mounted for personal skills, or the literal `absent` when the
   optional directory does not exist; diagnostic only;
 - `codex-safe.host-mcp`: sorted `host:port` list of forwarded host MCP endpoints, or the literal `absent` when none
@@ -141,7 +144,7 @@ launcher can validate the container before reuse and operators can inspect sessi
   was forwarded. It locates the channel and is never compared for reuse.
 
 The project path and UID determine the container name. After ownership and protocol validation,
-`codex-safe.launch-config` is the sole creation-time reuse predicate; the Codex-home, personal-skills, and host-MCP
+`codex-safe.launch-config` is the sole creation-time reuse predicate; the product-state, personal-skills, and host-MCP
 labels are not compared independently.
 
 The deterministic name is the creation lock. Docker permits only one container with a given name, so concurrent
@@ -167,6 +170,8 @@ docker run --detach --rm \
     --label codex-safe.host-uid=1000 \
     --label codex-safe.manager-protocol=1 \
     --label codex-safe.codex-home=/home/alex/.codex \
+    --label codex-safe.claude-home=/home/alex/.claude \
+    --label codex-safe.claude-config=/home/alex/.claude.json \
     --label codex-safe.personal-skills=/home/alex/.agents/skills \
     codex-safe-mvp:local
 ```
@@ -181,6 +186,8 @@ docker inspect codex-safe-aba8b4ca4ff345d5d0443c0c \
 ```json
 {
   "codex-safe.codex-home": "/home/alex/.codex",
+  "codex-safe.claude-home": "/home/alex/.claude",
+  "codex-safe.claude-config": "/home/alex/.claude.json",
   "codex-safe.host-uid": "1000",
   "codex-safe.managed": "true",
   "codex-safe.manager-protocol": "1",
@@ -209,9 +216,9 @@ The launcher follows this algorithm:
 2. Inspect that exact name.
 3. If it does not exist, create it with `docker run --detach --rm`.
 4. If an ownership, project, UID, or manager-protocol label differs, fail with a name-conflict diagnostic.
-5. If it is running and either user-mount label differs, report that the active session uses different Codex-home or
-   personal-skills mounts and ask the user to finish that session before retrying.
-6. If it is running and all labels match, run the wrapper in it.
+5. If it is running and the creation fingerprint differs, report that the active session uses a different immutable
+   launch configuration and ask the user to finish that session before retrying.
+6. If it is running and the fingerprint matches, run the wrapper in it.
 7. If it is not running, or its manager rejects registration during shutdown, wait a bounded time for the name to be
    released and retry once.
 8. If a concurrent create loses the name race, inspect and validate the winner using the same rules.
@@ -420,7 +427,7 @@ from the socket.
 - A wrapper connection is counted at most once and released exactly once.
 - No manager-protocol message contains or executes command data.
 - Docker's deterministic-name constraint prevents duplicate container creation.
-- A running container is reused only when its Codex-home and personal-skills labels match the requested mount sources.
+- A running container is reused only when its versioned creation fingerprint matches the complete requested contract.
 - Once manager shutdown commits, the old manager never accepts another command.
 - Final-command shutdown retains `docker run --rm` cleanup.
 - Manager failure never triggers host execution, a privileged container, or use of the host Docker socket.
@@ -433,7 +440,7 @@ sessions, terminal reattachment, background service health, or arbitrary process
 The following are deliberately outside this contract:
 
 - keeping a container alive only because it has detached background or nested containers;
-- resuming a Bash or Codex terminal after its original exec attachment is lost;
+- resuming a Bash, Codex, or Claude Code terminal after its original exec attachment is lost;
 - retaining an idle container indefinitely for later manual attachment;
 - restarting stopped or failed containers;
 - coordinating sessions across hosts or remote Docker daemons;
@@ -482,12 +489,13 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 
 - Derive the same Docker name for the same canonical root and UID.
 - Derive different names for different worktrees or UIDs.
-- Verify direct inspection of the deterministic name and the exact identity and user-mount labels.
+- Verify direct inspection of the deterministic name, exact identity labels, product-state labels, and fingerprint.
 - Verify detached `docker run --rm` uses that name.
 - Verify cold creation and running-session adoption run root `wait-ready` before the user-owned wrapper.
 - Verify first and subsequent commands receive the same wrapper prefix.
 - Handle matching name conflicts by reuse and ownership or protocol mismatches by a name-conflict diagnostic.
-- Reject a running container with different Codex-home or personal-skills labels using the active-session diagnostic.
+- Reject a running container with any different creation-time product state or mount using the active-session
+  diagnostic.
 - Prove discovery does not require listing containers by label.
 - Preserve TTY selection, working directory, user identity, and argv boundaries.
 
@@ -497,6 +505,8 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 - Exit the final command and prove manager, dockerd, and container disappear after the idle timeout.
 - Run two first callers concurrently and prove exactly one container and nested daemon exist.
 - Launch the same worktree with different user-mount sources and prove the live container is not reused or terminated.
+- Hold one session, run both product launchers in it, and prove they share one container while retaining independent
+  state mounts.
 - Start a command during the idle timeout and prove reuse or one clean replacement after committed shutdown.
 - Disconnect a host Docker CLI while its command continues and prove the command keeps the session active.
 - Crash the wrapper, manager, and dockerd independently and verify bounded cleanup and diagnostics.
@@ -504,7 +514,7 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 
 ## Where the Code Lives
 
-Proposed ownership:
+Implemented ownership:
 
 - `cmd/codex-safe-session/`: one image binary with `serve` and `run` modes, plus the relay mode owned by
   [`host-mcp-forwarding.md`](host-mcp-forwarding.md);

@@ -45,6 +45,12 @@ func resolveHostEnvironment(inputs HostEnvironmentInputs) (HostEnvironment, erro
 	if codexHome != "" {
 		environment.CodexHome = codexHome
 	}
+	claudeConfigDir, claudeConfigFile, err := resolveOptionalClaudeState(environment.HomeDir, inputs.LookupEnv)
+	if err != nil {
+		return HostEnvironment{}, err
+	}
+	environment.ClaudeConfigDir = claudeConfigDir
+	environment.ClaudeConfigFile = claudeConfigFile
 	personalSkills, err := resolveOptionalPersonalSkills(environment.HomeDir)
 	if err != nil {
 		return HostEnvironment{}, err
@@ -53,6 +59,40 @@ func resolveHostEnvironment(inputs HostEnvironmentInputs) (HostEnvironment, erro
 		environment.PersonalSkills = personalSkills
 	}
 	return environment, nil
+}
+
+// resolveOptionalClaudeState returns either one explicit CLAUDE_CONFIG_DIR or the complete pair of
+// default ~/.claude and ~/.claude.json paths. A partial default is treated as absent so claude-safe
+// does not persist only half of Claude's state under a different layout inside the container.
+func resolveOptionalClaudeState(home string, lookupEnv func(string) (string, bool)) (string, string, error) {
+	if requested, found := lookupEnv("CLAUDE_CONFIG_DIR"); found && strings.TrimSpace(requested) != "" {
+		source := strings.TrimSpace(requested)
+		path, present, err := canonicalOptionalDirectory("Claude config directory", source)
+		if err != nil {
+			return "", "", err
+		}
+		if !present {
+			return "", "", fmt.Errorf("Claude config directory %q does not exist", source)
+		}
+		return path, "", nil
+	}
+
+	directory, directoryPresent, err := canonicalOptionalDirectory(
+		"Claude config directory", filepath.Join(home, ".claude"),
+	)
+	if err != nil {
+		return "", "", err
+	}
+	config, configPresent, err := canonicalOptionalRegularFile(
+		"Claude global config", filepath.Join(home, ".claude.json"),
+	)
+	if err != nil {
+		return "", "", err
+	}
+	if !directoryPresent || !configPresent {
+		return "", "", nil
+	}
+	return directory, config, nil
 }
 
 func resolveOptionalCodexHome(home string, lookupEnv func(string) (string, bool)) (string, error) {
@@ -113,6 +153,39 @@ func canonicalOptionalDirectory(label, path string) (string, bool, error) {
 	}
 	if !info.IsDir() {
 		return "", false, fmt.Errorf("%s %q is not a directory", label, canonical)
+	}
+	if err := launchplan.ValidateMountPath(label, canonical); err != nil {
+		return "", false, err
+	}
+	return canonical, true, nil
+}
+
+func canonicalOptionalRegularFile(label, path string) (string, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("inspect %s %q: %w", label, path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return "", false, fmt.Errorf("%s %q is a broken symlink", label, path)
+		} else if err != nil {
+			return "", false, fmt.Errorf("inspect %s %q: %w", label, path, err)
+		}
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", false, fmt.Errorf("canonicalize %s %q: %w", label, path, err)
+	}
+	canonical = filepath.Clean(canonical)
+	info, err = os.Stat(canonical)
+	if err != nil {
+		return "", false, fmt.Errorf("inspect %s %q: %w", label, canonical, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", false, fmt.Errorf("%s %q is not a regular file", label, canonical)
 	}
 	if err := launchplan.ValidateMountPath(label, canonical); err != nil {
 		return "", false, err

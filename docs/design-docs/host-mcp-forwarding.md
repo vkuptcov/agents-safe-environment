@@ -1,10 +1,10 @@
-# Host MCP Access from codex-safe Containers
+# Host MCP Access from Shared Agent Containers
 
 Status: Implemented
 
 Scope:
 
-- discovery of Codex MCP servers that run on the host and listen on a loopback address;
+- discovery of Codex and Claude Code MCP servers that run on the host and listen on a loopback address;
 - the container-local listeners that reproduce those host addresses and ports inside the session container;
 - the per-session host relay that reaches host loopback services, and its lifetime and single-instance rules;
 - the Unix-socket channel between the two, its mount, and the access control it relies on;
@@ -15,14 +15,14 @@ Scope:
 
 ### Problem
 
-Codex assembles its MCP server list from several layers: the `mcp_servers` table in `config.toml` in the resolved
-Codex home, a selected profile, a trusted project-level `.codex` configuration, and `-c` overrides on the command
-line. This design covers the first layer only, and says so here rather than in a late non-goal, because that scope
-limit is visible to users. Where this document says "configured", it means the base `mcp_servers` table.
+Codex assembles MCP configuration from several layers. This design reads only the base `mcp_servers` table in the
+resolved Codex `config.toml`; profiles, trusted project-level configuration, and command-line overrides remain outside
+preflight. Claude Code stores user and local scopes in the resolved global `.claude.json`; this design reads the
+top-level `mcpServers` map and `projects[<canonical-worktree>].mcpServers`. Repository-controlled `.mcp.json`, plugins,
+and managed settings remain outside preflight.
 
-The Codex home is already mounted read-write into the container by [`codex-safe.md`](codex-safe.md), so every layer
-reaches the container unchanged. Servers reached over a public URL keep working there because outbound network access
-is allowed.
+The product state is already mounted read-write into the container, so the selected configuration reaches it
+unchanged. Servers reached over a public URL keep working there because outbound network access is allowed.
 
 A local MCP server does not. It is a process on the host that listens on a loopback address, and its URL travels into
 the container unchanged. Inside the container, `127.0.0.1` is the container's own loopback, so nothing answers. Codex
@@ -78,13 +78,13 @@ an unintended hole — but it is a real product limit, not a footnote. Closing i
 
 ### Chosen Shape
 
-The launcher reads the resolved Codex home's base `mcp_servers` table, keeps every enabled entry whose `url` names a
-loopback host, and turns that set into a channel with two forwarders and no host TCP port:
+The launcher forms one canonical union from the trusted Codex and Claude sources, keeps remote entries whose `url`
+names a loopback host, and turns that set into a channel with two forwarders and no host TCP port:
 
 ```mermaid
 flowchart LR
     subgraph Container["Sysbox container"]
-        Codex["codex"] -->|"127.0.0.1:64342"| Fwd["Container forwarder<br/>codex-safe-session serve"]
+        Agents["Codex or Claude Code"] -->|"127.0.0.1:64342"| Fwd["Container forwarder<br/>codex-safe-session serve"]
     end
     subgraph Host["Host"]
         Relay["Relay sidecar<br/>one container per session<br/>--network=host"] -->|"127.0.0.1:64342"| Server["IDE"]
@@ -138,13 +138,13 @@ had something exact to falsify; the verdict and its tested environment are in [O
 - The host `config.toml` is never rewritten, and a public MCP URL keeps working with no forwarder involved.
 - No host TCP port is bound, and no unrelated host user or outer session can reach the channel.
 - MCP keeps working after the launcher that created the session exits while another command still runs.
-- `codex-safe` and `agents-safe` behave identically here, and neither depends on the other being installed.
+- `codex-safe`, `claude-safe`, and `agents-safe` resolve the same endpoint union for one shared session.
 - The forwarded endpoint set is printed before launch, so a boundary widening is never silent.
 - `--no-host-mcp` disables discovery, both forwarders, the relay, and the mount.
 - A container is reused only when its forwarded endpoint set matches the current resolution.
 - A configured set that cannot be represented by distinct container listeners fails preflight with a named collision.
 - A stopped session's relay never disturbs the channel of the session that replaces it.
-- A missing, unreadable, or malformed `config.toml` never silently drops a configured endpoint.
+- An unreadable or malformed trusted product config never silently drops a configured endpoint.
 
 ### Tradeoff
 
@@ -167,21 +167,24 @@ authority.
 
 ### 1. Endpoint Discovery
 
-The launcher resolves the forwarded endpoint set from the Codex home it already resolved for the launch. Discovery
-runs during preflight, before a container is created or reused.
+The launcher resolves the forwarded endpoint set from the Codex and Claude host state already selected for the common
+launch plan. Discovery runs during preflight, before a container is created or reused.
 
 Discovery rules:
 
-- Source: `config.toml` directly below the resolved Codex home, and only its `mcp_servers` table.
+- Codex source: `config.toml` directly below the resolved Codex home, and only its `mcp_servers` table.
+- Claude sources: top-level `mcpServers` and the exact canonical project's `mcpServers` below `projects` in the
+  resolved global `.claude.json`.
 - Selection: an entry qualifies only when it has a `url` key whose host part is a loopback host and it is not
   explicitly disabled.
 - Loopback test: an IP literal in `127.0.0.0/8`, the IP literal `::1`, or the name `localhost`. Any other host is left
   alone, because a public or LAN URL already works through normal outbound access.
-- Enablement: `enabled` is decoded as a tri-state that defaults to true. `enabled = false` excludes the entry, because
-  forwarding a server the user switched off would widen the boundary for no benefit.
+- Enablement: Codex `enabled` is decoded as a tri-state that defaults to true. `enabled = false` excludes the entry,
+  because forwarding a server the user switched off would widen the boundary for no benefit.
 - Endpoint identity: the pair of the configured host, exactly as written and lowercased, and the port. A missing port
   is the URL scheme's default (`http` is 80, `https` is 443).
-- Deduplication: two servers naming the same host and port produce one endpoint. Both names appear in the banner.
+- Deduplication: two servers from either product naming the same host and port produce one endpoint. Every
+  source-qualified name appears in the banner (`codex:`, `claude:user:`, or `claude:local:`).
 - Listener expansion: each endpoint expands to the concrete container addresses its host requires. A loopback IP
   literal expands to itself, whichever address in `127.0.0.0/8` or `::1` it names. Only the name `localhost` expands
   to both `127.0.0.1` and `::1`.
@@ -219,22 +222,21 @@ Not selected, and not an error:
 
 Failure behavior is fail-closed, matching the launcher's existing preflight style:
 
-- An unreadable `config.toml` fails the launch. Silently forwarding nothing would present a broken MCP server as a
-  Codex problem.
-- A `config.toml` that does not parse as TOML fails the launch with the parser's position.
+- An unreadable trusted product config fails the launch. Silently forwarding nothing would present a relay failure as
+  an agent problem.
+- A Codex file that does not parse as TOML or a Claude file that does not parse as JSON fails the launch.
 - A `url` that does not parse, or that names a loopback host with an invalid port, fails the launch.
 - Two endpoints contending for one container listener address fail the launch, as described above.
-- An absent `config.toml` is not an error. The endpoint set is empty and no forwarder, mount, or relay exists.
-- An `agents-safe` launch that resolved no Codex home has an empty endpoint set for the same reason.
+- An absent individual product config is not an error. If neither source yields an eligible endpoint, no forwarder,
+  mount, or relay exists.
 
 An empty endpoint set is the zero-cost path: no environment variable, no mount, no relay, no listener, and no banner
 line. A user with no local MCP servers sees the launcher behave exactly as it does today.
 
-Discovery reads the base `mcp_servers` table only, as [Problem](#problem) states. It does not resolve profiles,
-trusted project-level `.codex` configuration, or `-c mcp_servers.<name>.url=...` overrides forwarded to Codex. This is
-a fail-closed gap in the safe direction: an endpoint that discovery misses is simply not forwarded, so Codex reports
-it unavailable exactly as it does today. No unresolved configuration path can cause an *unintended* forward, because
-only what discovery selected is ever given a listener.
+Discovery reads only the product sources named above. It does not resolve Codex profiles/project/CLI overrides or
+Claude repository `.mcp.json`, plugins, and managed settings. This is a fail-closed gap: an endpoint discovery misses
+is unavailable, while no unresolved configuration path can cause an unintended forward because only selected
+endpoints receive listeners.
 
 ### 2. The Channel
 
@@ -567,15 +569,15 @@ the ordering:
 ```mermaid
 sequenceDiagram
     actor User
-    participant Launcher as "codex-safe or agents-safe on host"
+    participant Launcher as "codex-safe, claude-safe, or agents-safe on host"
     participant HostDocker as "Host Docker Engine"
     participant Relay as "Relay sidecar"
     participant Serve as "codex-safe-session serve"
-    participant Codex
+    participant Agent as "Codex or Claude Code"
 
     User->>Launcher: Run a launcher in a Git working tree
-    Launcher->>Launcher: Resolve Codex home, then read the base mcp_servers table
-    Launcher->>Launcher: Select enabled loopback endpoints, then reject listener collisions
+    Launcher->>Launcher: Resolve product state, then read trusted Codex and Claude MCP scopes
+    Launcher->>Launcher: Union loopback endpoints, then reject listener collisions
     alt Endpoint set is empty
         Launcher->>HostDocker: Create or reuse with no host-MCP configuration
     else Endpoint set is non-empty
@@ -604,10 +606,10 @@ sequenceDiagram
         Launcher->>User: Print the forwarded endpoints
     end
     Launcher->>HostDocker: docker exec codex-safe-session run -- command
-    Codex->>Serve: Connect to 127.0.0.1:64342
+    Agent->>Serve: Connect to 127.0.0.1:64342
     Serve->>Relay: Dial the endpoint socket
-    Relay-->>Codex: Relay the MCP session to the host server
-    User->>Codex: Exit
+    Relay-->>Agent: Relay the MCP session to the host server
+    User->>Agent: Exit
     opt Session stopped after the idle timeout
         Serve-->>Relay: Lease closes
         Relay->>Relay: Remove its own generation directory, then exit
@@ -635,18 +637,18 @@ The inspected session image ID is also read rather than compared with the later 
 session reuse remains authoritative, but any replacement sidecar must match the already-running session rather than a
 mutable tag or a new `--image` value.
 
-Editing `config.toml` while a session runs therefore does not change that session. The container's listeners, the
-mount, and the relay's endpoints are all creation-time state. The next launch resolves the new set and reports a
+Editing either trusted product config while a session runs therefore does not change that session. The container's
+listeners, mount, and relay endpoints are all creation-time state. The next launch resolves the new set and reports a
 fingerprint mismatch until the active session ends.
 
 ### 6. Command Interface and Visibility
 
-Discovery is automatic because the value of this feature is that a shared `config.toml` behaves identically on both
-sides of the sandbox. Requiring a flag for every launch would reintroduce the problem it solves.
+Discovery is automatic so trusted host product configuration behaves identically on both sides of the sandbox.
+Requiring a flag for every launch would reintroduce the problem it solves.
 
 One option controls it:
 
-- `--no-host-mcp`: skip discovery entirely. No `config.toml` read, no forwarders, no mount, no relay, and the
+- `--no-host-mcp`: skip discovery entirely. No product config read, no forwarders, no mount, no relay, and the
   diagnostic host-MCP label records `absent`.
 
 The flag selects creation-time state, so it cannot narrow a session that is already forwarding: the mount exists and
@@ -670,8 +672,8 @@ be misdiagnosed as a Codex bug.
 
 Launch-time failures, all of which stop the launch:
 
-- `config.toml` is unreadable or does not parse.
-- An `mcp_servers` URL does not parse, or names a loopback host with an invalid port.
+- A trusted product config is unreadable or does not parse as its native TOML/JSON format.
+- A selected product MCP URL does not parse, or names a loopback host with an invalid port.
 - Two endpoints contend for one container listener address.
 - `XDG_RUNTIME_DIR` is unset, is not owned by the invoking user, or yields a socket path over 108 bytes.
 - The generation directory cannot be created with mode `0700`.
@@ -729,7 +731,7 @@ launch order, since the endpoint set must be known before the container is creat
 
 These are the rules that must not regress. Mechanics are in the contract sections above.
 
-- The host `config.toml` and every other Codex-home file are read, never rewritten, by this feature.
+- The selected Codex `config.toml` and Claude `.claude.json` are read, never rewritten, by this feature.
 - No host TCP port is bound by any part of this feature.
 - The channel is unreachable to other host users and to unrelated outer sessions.
 - The forwarded endpoint set is fixed at container creation and can never be extended by `docker exec`.
@@ -785,7 +787,7 @@ The design intentionally does not promise:
 - forwarding a Unix-socket MCP server;
 - reach from the container to arbitrary host ports that no MCP server configuration names;
 - serving two endpoints that need the same container listener address;
-- picking up a `config.toml` change during a live session;
+- picking up a trusted product-config change during a live session;
 - Docker Desktop, macOS, or Windows, which resolve host loopback differently.
 
 Named future scope: discovery of MCP servers from a selected profile, a trusted project-level `.codex` configuration,
@@ -835,6 +837,9 @@ own lifecycle. The per-session sidecar gets all of that from the session it is l
 ### Discovery tests
 
 - Select a loopback `url` and ignore a public `url` from the same `config.toml`.
+- Select Claude user and exact-project local loopback URLs from `.claude.json`, ignore other projects, and qualify
+  their names separately from Codex entries.
+- Deduplicate one address named by both products and reject cross-product listener collisions deterministically.
 - Keep `localhost`, `127.0.0.1`, and `::1` as three distinct endpoints, and prove `localhost` is never rewritten.
 - Select `127.0.0.53` as loopback and apply the scheme's default port when the URL omits it.
 - Exclude an `enabled = false` entry, and include one that omits `enabled`.
@@ -844,9 +849,9 @@ own lifecycle. The per-session sidecar gets all of that from the session it is l
 - Reject `localhost` against explicit `127.0.0.1` on one port, and `localhost` against explicit `::1` on one port,
   naming both servers and the contested address.
 - Allow `localhost` and an explicit literal on *different* ports, which do not contend.
-- Treat an absent `config.toml`, and an `agents-safe` launch with no Codex home, as an empty set.
-- Fail the launch on an unreadable `config.toml`, a TOML parse error, an unparsable URL, and an invalid loopback port.
-- Prove `--no-host-mcp` performs no `config.toml` read and yields an empty set.
+- Treat absent individual product configs and an all-absent source set as empty.
+- Fail on unreadable/malformed TOML or JSON, an unparsable URL, and an invalid loopback port.
+- Prove `--no-host-mcp` performs no product-config read and yields an empty set.
 - Prove a server defined only in a profile, project config, or `-c` override is not discovered and not forwarded.
 
 ### Launcher contract tests
@@ -864,7 +869,7 @@ own lifecycle. The per-session sidecar gets all of that from the session it is l
 - Verify an empty set adds no environment variable, no mount, no relay, and no banner output.
 - Fail preflight on unset `XDG_RUNTIME_DIR`, a runtime directory owned by another user, and a socket path over 108
   bytes.
-- Prove endpoint discovery runs before container creation and after Codex-home resolution.
+- Prove endpoint discovery runs before container creation and after both product-state sources resolve.
 - Prove the generation directory is created `0700` before create, and the sockets `0600`.
 - Resolve a mutable image reference once and prove both initial containers are created from the resulting immutable ID.
 - Prove a reference absent from local Docker storage is pulled and then resolved, rather than failing preflight.
@@ -928,7 +933,7 @@ own lifecycle. The per-session sidecar gets all of that from the session it is l
 - Prove a host port that no MCP configuration names stays unreachable from the container.
 - Prove an unrelated outer session's container, which lacks the mount, cannot reach the channel.
 - Kill the launcher while a command keeps running, and prove the command still reaches the host MCP server.
-- Prove `agents-safe bash` forwards an endpoint with no `codex-safe` binary on `PATH`.
+- Prove `agents-safe bash` and both product launchers use the same forwarding contract.
 - Stop and restart the sentinel during a session, and prove reconnection needs no container restart.
 - Bind a privileged loopback port on the host, configure it as `https://localhost`, and prove the container listener
   binds 443.
@@ -965,10 +970,10 @@ The gate now inspects two containers, and the distinction between them is the po
 
 ## Where the Code Lives
 
-Proposed ownership:
+Implemented ownership:
 
-- `internal/launcher/hostmcp/`: `config.toml` discovery, loopback selection, endpoint identity, listener expansion and
-  collision rejection, the generation directory, and the sidecar's create request and readiness probe.
+- `internal/launcher/hostmcp/`: Codex TOML and Claude JSON discovery, loopback selection, endpoint identity, listener
+  expansion and collision rejection, the generation directory, and the sidecar's create request/readiness probe.
 - `internal/launcher/`: create-time environment, the socket mount, both host-MCP labels, channel adoption on reuse,
   recovery against the running session's image ID, the banner, and `--no-host-mcp`.
 - `internal/launcher/dockercli/`: image pull and immutable image-ID resolution, the inspected container image ID
@@ -981,9 +986,9 @@ Proposed ownership:
   command, so the sidecar can select `relay` without bypassing `tini`; the sidecar still adds no package.
 - `tests/smoke/`: reachability, isolation, launcher-death, lease, generation, and cleanup proofs on a real Sysbox host.
 
-Neither `cmd/codex-safe/` nor `cmd/agents-safe/` gains a relay mode. Because the sidecar runs the image's
-`codex-safe-session` binary through the explicit sidecar command, both launchers start it through the shared typed
-Docker client and neither depends on the other being installed.
+No host launcher gains a relay mode. The sidecar runs the image's `codex-safe-session` binary through the explicit
+sidecar command, so every launcher starts it through the shared typed Docker client and does not depend on another
+product launcher being installed.
 
 ## Open Questions
 

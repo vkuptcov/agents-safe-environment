@@ -18,6 +18,8 @@ const (
 	hostUIDLabel         = "codex-safe.host-uid"
 	managerProtocolLabel = "codex-safe.manager-protocol"
 	codexHomeLabel       = "codex-safe.codex-home"
+	claudeHomeLabel      = "codex-safe.claude-home"
+	claudeConfigLabel    = "codex-safe.claude-config"
 	personalSkillsLabel  = "codex-safe.personal-skills"
 	goBuildCacheLabel    = "codex-safe.go-build-cache"
 	goModulesCacheLabel  = "codex-safe.go-modules-cache"

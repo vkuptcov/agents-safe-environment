@@ -29,8 +29,8 @@ Options must appear before COMMAND; COMMAND is executed directly without a shell
 The init command creates local .agents-safe templates without modifying the root .gitignore.
 Use agents-safe -- init to execute a container command named init.
 
-  --no-host-mcp  Do not forward host MCP servers into the container. By default a loopback
-                 MCP server in the base config.toml is reached through a confined relay.
+  --no-host-mcp  Do not forward host MCP servers into the container. By default eligible loopback
+                 servers from Codex and Claude host configuration use one confined relay.
   --image        Explicitly select an image and bypass automatic .agents-safe/Dockerfile selection.`
 
 const initUsage = `Usage: agents-safe init [--project PATH] [--host-caches=auto|none|go_build,go_modules,uv]

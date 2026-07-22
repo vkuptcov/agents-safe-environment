@@ -22,6 +22,8 @@ const (
 	RoleCommonGitDir    MountRole = "common_git_dir"
 	RoleWorktree        MountRole = "worktree"
 	RoleCodexHome       MountRole = "codex_home"
+	RoleClaudeHome      MountRole = "claude_home"
+	RoleClaudeConfig    MountRole = "claude_config"
 	RolePersonalSkills  MountRole = "personal_skills"
 	RoleHostMCPChannel  MountRole = "host_mcp_channel"
 	RoleAdditional      MountRole = "additional"
@@ -34,10 +36,11 @@ const (
 type ProjectConfig struct {
 	Common CommonConfig `toml:"common"`
 	Codex  CodexConfig  `toml:"codex"`
+	Claude ClaudeConfig `toml:"claude"`
 	Agents AgentsConfig `toml:"agents"`
 }
 
-// CommonConfig contains settings that affect both public launchers.
+// CommonConfig contains settings that affect every public launcher.
 type CommonConfig struct {
 	Image            string                  `toml:"image"`
 	NoHostMCP        bool                    `toml:"no_host_mcp"`
@@ -74,6 +77,11 @@ type CodexConfig struct {
 	Arguments []string `toml:"arguments"`
 }
 
+// ClaudeConfig contains command-time defaults for claude-safe.
+type ClaudeConfig struct {
+	Arguments []string `toml:"arguments"`
+}
+
 // AgentsConfig reserves a typed section for future agents-safe defaults.
 type AgentsConfig struct{}
 
@@ -89,6 +97,7 @@ type MountConfig struct {
 type configOverlay struct {
 	Common *commonOverlay `toml:"common"`
 	Codex  *codexOverlay  `toml:"codex"`
+	Claude *claudeOverlay `toml:"claude"`
 	Agents *agentsOverlay `toml:"agents"`
 }
 
@@ -100,6 +109,10 @@ type commonOverlay struct {
 }
 
 type codexOverlay struct {
+	Arguments *[]string `toml:"arguments"`
+}
+
+type claudeOverlay struct {
 	Arguments *[]string `toml:"arguments"`
 }
 
@@ -170,6 +183,11 @@ func Validate(config ProjectConfig) error {
 			return fmt.Errorf("codex.arguments[%d] is not a safe argv element", index)
 		}
 	}
+	for index, arg := range config.Claude.Arguments {
+		if arg == "" || strings.TrimSpace(arg) != arg || strings.ContainsAny(arg, "\x00\n\r") {
+			return fmt.Errorf("claude.arguments[%d] is not a safe argv element", index)
+		}
+	}
 	for index, mount := range config.Common.Mounts {
 		if err := validateMount(index, mount); err != nil {
 			return err
@@ -210,12 +228,16 @@ func applyOverlay(config *ProjectConfig, overlay configOverlay) {
 	if overlay.Codex != nil && overlay.Codex.Arguments != nil {
 		config.Codex.Arguments = append([]string(nil), (*overlay.Codex.Arguments)...)
 	}
+	if overlay.Claude != nil && overlay.Claude.Arguments != nil {
+		config.Claude.Arguments = append([]string(nil), (*overlay.Claude.Arguments)...)
+	}
 }
 
 func cloneConfig(config ProjectConfig) ProjectConfig {
 	config.Common.Mounts = append([]MountConfig(nil), config.Common.Mounts...)
 	config.Common.DependencyCaches = append([]DependencyCacheConfig(nil), config.Common.DependencyCaches...)
 	config.Codex.Arguments = append([]string(nil), config.Codex.Arguments...)
+	config.Claude.Arguments = append([]string(nil), config.Claude.Arguments...)
 	return config
 }
 
@@ -244,7 +266,8 @@ func validateMount(index int, mount MountConfig) error {
 
 func supportedRole(role MountRole) bool {
 	switch role {
-	case RoleHostGitConfig, RolePrimaryCheckout, RoleCommonGitDir, RoleWorktree, RoleCodexHome,
+	case RoleHostGitConfig, RolePrimaryCheckout, RoleCommonGitDir, RoleWorktree, RoleCodexHome, RoleClaudeHome,
+		RoleClaudeConfig,
 		RolePersonalSkills, RoleHostMCPChannel, RoleAdditional:
 		return true
 	default:

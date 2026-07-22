@@ -6,10 +6,13 @@ Use [README.md](README.md) for design-doc format and maintenance rules.
 
 - [Safe Environment for Running Codex Agents](codex-safe.md): host launcher, Codex CLI and state integration,
   Sysbox boundary, mounts, identity, nested Docker, and lifecycle contract.
-- [Go Session Manager for Shared codex-safe Containers](go-session-manager.md): container-local registration,
+- [Safe Claude Code Integration](claude-safe.md): Claude product launcher, host state, managed installation and updates,
+  and coexistence with Codex in one project container.
+- [Go Session Manager for Shared Agent Containers](go-session-manager.md): container-local registration,
   supervision, command execution, and idle shutdown.
-- [Host MCP Access from codex-safe Containers](host-mcp-forwarding.md): discovery of loopback MCP servers, the
-  Unix-socket channel and its two forwarding hops, the per-session host relay, and the widened network boundary.
+- [Host MCP Access from Shared Agent Containers](host-mcp-forwarding.md): Codex-plus-Claude discovery of loopback MCP
+  servers, the Unix-socket channel and its two forwarding hops, the per-session host relay, and the widened network
+  boundary.
 - [Project-Specific Agent Environments](project-environments.md): project-owned derived images, automatic builds,
   BuildKit-owned caching, compatibility validation, and active-session reuse.
 - [Project Launcher Configuration](project-launcher-configuration.md): typed project defaults, TOML serialization,

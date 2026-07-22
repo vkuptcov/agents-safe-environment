@@ -1,6 +1,7 @@
 package hostmcp_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -292,4 +293,78 @@ trust_level = "trusted"
 `))
 	require.NoError(t, err, "unknown keys and unrelated tables must be ignored")
 	require.Equal(t, []string{"127.0.0.1:64342"}, addresses(set), "the endpoint resolves alongside unknown keys")
+}
+
+func TestDiscoverAllMergesClaudeUserAndLocalEndpoints(t *testing.T) {
+	projectRoot := "/sources/project"
+	claudeConfig := writeClaudeConfig(t, map[string]any{
+		"mcpServers": map[string]any{
+			"user":   map[string]any{"type": "http", "url": "http://127.0.0.1:8080/mcp"},
+			"public": map[string]any{"type": "http", "url": "https://example.com/mcp"},
+			"stdio":  map[string]any{"type": "stdio", "command": "server"},
+		},
+		"projects": map[string]any{
+			projectRoot: map[string]any{"mcpServers": map[string]any{
+				"local": map[string]any{"type": "sse", "url": "http://localhost:9090/sse"},
+			}},
+		},
+	})
+	set, err := hostmcp.DiscoverAll(hostmcp.Sources{ClaudeConfigFile: claudeConfig, ProjectRoot: projectRoot})
+	require.NoError(t, err)
+	require.Equal(t, []string{"127.0.0.1:8080", "localhost:9090"}, addresses(set))
+	require.Equal(t, []string{
+		"claude:user:user -> 127.0.0.1:8080",
+		"claude:local:local -> localhost:9090",
+	}, set.BannerLines())
+}
+
+func TestDiscoverAllDeduplicatesCrossProductEndpoint(t *testing.T) {
+	codex := codexHome(t, `
+[mcp_servers.idea]
+url = "http://127.0.0.1:8080/mcp"
+`)
+	claudeConfig := writeClaudeConfig(t, map[string]any{
+		"mcpServers": map[string]any{
+			"editor": map[string]any{"type": "http", "url": "http://127.0.0.1:8080/other-path"},
+		},
+	})
+	set, err := hostmcp.DiscoverAll(hostmcp.Sources{CodexHome: codex, ClaudeConfigFile: claudeConfig})
+	require.NoError(t, err)
+	require.Equal(t, []string{"127.0.0.1:8080"}, addresses(set))
+	require.Equal(t, []string{"claude:user:editor, codex:idea -> 127.0.0.1:8080"}, set.BannerLines())
+}
+
+func TestDiscoverAllFailsOnMalformedClaudeConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".claude.json")
+	require.NoError(t, os.WriteFile(path, []byte("{"), 0o600))
+	_, err := hostmcp.DiscoverAll(hostmcp.Sources{ClaudeConfigFile: path})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parse Claude configuration")
+}
+
+func TestDiscoverAllRejectsCrossProductListenerCollision(t *testing.T) {
+	codex := codexHome(t, `
+[mcp_servers.byName]
+url = "http://localhost:8080/mcp"
+`)
+	claudeConfig := writeClaudeConfig(t, map[string]any{
+		"mcpServers": map[string]any{
+			"byAddress": map[string]any{"type": "http", "url": "http://127.0.0.1:8080/mcp"},
+		},
+	})
+	_, err := hostmcp.DiscoverAll(hostmcp.Sources{CodexHome: codex, ClaudeConfigFile: claudeConfig})
+	require.Error(t, err)
+	var collision *hostmcp.CollisionError
+	require.ErrorAs(t, err, &collision)
+	require.Contains(t, err.Error(), "codex:byName")
+	require.Contains(t, err.Error(), "claude:user:byAddress")
+}
+
+func writeClaudeConfig(t *testing.T, config map[string]any) string {
+	t.Helper()
+	data, err := json.Marshal(config)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), ".claude.json")
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	return path
 }

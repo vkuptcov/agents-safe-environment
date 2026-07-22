@@ -20,6 +20,9 @@ no_host_mcp = false
 
 [codex]
 arguments = ["exec", "--model", "gpt-5"]
+
+[claude]
+arguments = ["--model", "opus"]
 `)
 
 	config, err := Load(root, defaults)
@@ -37,6 +40,9 @@ arguments = ["exec", "--model", "gpt-5"]
 	}
 	if want := []string{"exec", "--model", "gpt-5"}; !reflect.DeepEqual(config.Codex.Arguments, want) {
 		t.Errorf("arguments = %#v, want %#v", config.Codex.Arguments, want)
+	}
+	if want := []string{"--model", "opus"}; !reflect.DeepEqual(config.Claude.Arguments, want) {
+		t.Errorf("Claude arguments = %#v, want %#v", config.Claude.Arguments, want)
 	}
 }
 
@@ -59,6 +65,10 @@ mounts = []
 	config.Codex.Arguments[0] = "changed"
 	if defaults.Codex.Arguments[0] == "changed" {
 		t.Fatal("Load() mutated default arguments")
+	}
+	config.Claude.Arguments[0] = "changed"
+	if defaults.Claude.Arguments[0] == "changed" {
+		t.Fatal("Load() mutated default Claude arguments")
 	}
 }
 
@@ -116,6 +126,14 @@ unknown = true
 			name: "unsafe argument",
 			content: `
 [codex]
+arguments = ["line\nbreak"]
+`,
+			want: "safe argv element",
+		},
+		{
+			name: "unsafe Claude argument",
+			content: `
+[claude]
 arguments = ["line\nbreak"]
 `,
 			want: "safe argv element",
@@ -180,7 +198,8 @@ func typedDefaults(t *testing.T) ProjectConfig {
 				Target: source,
 			}},
 		},
-		Codex: CodexConfig{Arguments: []string{"--sandbox", "danger-full-access"}},
+		Codex:  CodexConfig{Arguments: []string{"--sandbox", "danger-full-access"}},
+		Claude: ClaudeConfig{Arguments: []string{"--dangerously-skip-permissions"}},
 	}
 }
 

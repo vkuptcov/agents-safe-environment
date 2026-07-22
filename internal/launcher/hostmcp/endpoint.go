@@ -1,8 +1,8 @@
 // Package hostmcp resolves the host MCP endpoints a launch forwards into its session container.
 //
-// It owns the reading of the resolved Codex home's base `mcp_servers` table, loopback selection,
-// endpoint identity, listener expansion, and collision rejection. It never rewrites the user's
-// configuration and never resolves profiles, project-level configuration, or `-c` overrides.
+// It owns reading trusted Codex and Claude host configuration, loopback selection, endpoint
+// identity, listener expansion, and collision rejection. It never rewrites the user's configuration
+// and never grants host-loopback access from repository-controlled configuration.
 package hostmcp
 
 import (
@@ -105,6 +105,36 @@ func sortEndpoints(endpoints []Endpoint) {
 		}
 		return first.Port - second.Port
 	})
+}
+
+// mergeSets forms one canonical endpoint set from independently parsed product configurations.
+// Identical destinations share one relay endpoint and retain every source-qualified server name.
+func mergeSets(sets ...Set) (Set, error) {
+	byAddress := make(map[string]*Endpoint)
+	order := make([]*Endpoint, 0)
+	for _, set := range sets {
+		for _, candidate := range set.Endpoints {
+			if existing, found := byAddress[candidate.Address()]; found {
+				existing.Names = append(existing.Names, candidate.Names...)
+				continue
+			}
+			cloned := candidate
+			cloned.Names = append([]string(nil), candidate.Names...)
+			byAddress[cloned.Address()] = &cloned
+			order = append(order, &cloned)
+		}
+	}
+	endpoints := make([]Endpoint, 0, len(order))
+	for _, endpoint := range order {
+		slices.Sort(endpoint.Names)
+		endpoint.Names = slices.Compact(endpoint.Names)
+		endpoints = append(endpoints, *endpoint)
+	}
+	sortEndpoints(endpoints)
+	if err := rejectCollisions(endpoints); err != nil {
+		return Set{}, err
+	}
+	return Set{Endpoints: endpoints}, nil
 }
 
 // CollisionError reports two endpoints that need one container listener address. They are

@@ -1,0 +1,15 @@
+#!/bin/bash
+
+set -euo pipefail
+umask 022
+
+installation_root="/opt/codex-safe/claude"
+installer="$(mktemp)"
+trap 'rm -f "$installer"' EXIT INT TERM
+
+export HOME="$installation_root/home"
+unset DISABLE_AUTOUPDATER
+
+mkdir -p "$HOME"
+curl -fsSL https://claude.ai/install.sh -o "$installer"
+bash "$installer" latest
