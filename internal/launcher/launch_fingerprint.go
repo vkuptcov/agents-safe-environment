@@ -12,8 +12,11 @@ import (
 )
 
 const (
-	launchConfigLabel         = "agents-safe.launch-config"
-	launchConfigSchemaVersion = 5
+	launchConfigLabel = "agents-safe.launch-config"
+	// Version 6 makes virtual-environment tmpfs masks executable. The exec bit is derived from the
+	// mount plan rather than configured, so it is not a fingerprint payload field; the bump exists to
+	// recreate sessions still holding noexec masks instead of silently reusing them.
+	launchConfigSchemaVersion = 6
 )
 
 // launchFingerprintInput is deliberately an ordered struct: maps and TOML bytes would make an

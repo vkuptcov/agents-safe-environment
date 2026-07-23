@@ -252,6 +252,14 @@ environments keep the default root-owned scratch mode. Ownership is applied only
 fingerprint input, so a session created before this contract keeps its identity and its root-owned masks until it is
 recreated. The same contract applies to regular and linked worktrees.
 
+Every session tmpfs is `nosuid,nodev`. Virtual-environment masks are additionally mounted `exec`, on both the Docker
+and the bootstrap mount, while generic `common.tmpfs_mounts` scratch targets stay `noexec`. A virtual environment
+exists to be executed: the dynamic loader maps native extension modules with `PROT_EXEC`, so a `noexec` mask leaves
+package contents intact on disk but makes every compiled import fail. Because Docker's own `--tmpfs` defaults are
+`rw,nosuid,nodev,noexec`, the launcher spells the option list out rather than relying on them. Executability is derived
+from the mount plan rather than configured, so it is not a fingerprint payload field; the creation-schema version was
+raised instead, which recreates sessions still holding non-executable masks.
+
 `common.use_host_python_venv = true` or the explicit `--use-host-python-venv` flag skips proactive, discovered, and
 configured venv tmpfs mounts, exposing those directories through the normal worktree bind. The resolved policy and
 complete tmpfs target/mode list are creation-time fingerprint inputs. Reusable Python downloads belong in the

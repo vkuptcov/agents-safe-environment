@@ -137,12 +137,18 @@ func volumeMountArg(mount VolumeMount) string {
 	return specification
 }
 
+// tmpfsMountArg spells out the confinement options instead of relying on Docker's `--tmpfs`
+// defaults, which mark every such mount `noexec`. A virtual-environment mask must map its native
+// extension modules executable, so it opts out of that one flag while keeping the rest.
 func tmpfsMountArg(mount TmpfsMount) string {
-	specification := mount.Target
-	if mount.Mode != "" {
-		specification += ":mode=" + mount.Mode
+	options := []string{"rw", "nosuid", "nodev", "noexec"}
+	if mount.Exec {
+		options[len(options)-1] = "exec"
 	}
-	return specification
+	if mount.Mode != "" {
+		options = append(options, "mode="+mount.Mode)
+	}
+	return mount.Target + ":" + strings.Join(options, ",")
 }
 
 func validateContainerID(containerID string) error {

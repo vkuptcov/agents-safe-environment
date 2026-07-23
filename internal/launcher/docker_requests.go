@@ -139,7 +139,8 @@ func encodeBootstrapTmpfsMounts(mounts []launchplan.TmpfsMount) (string, error) 
 func dockerTmpfsMounts(resolved []launchplan.TmpfsMount) []dockercli.TmpfsMount {
 	mounts := make([]dockercli.TmpfsMount, 0, len(resolved))
 	for _, mount := range resolved {
-		mounts = append(mounts, dockercli.TmpfsMount{Target: mount.Target, Mode: mount.Mode})
+		// Owned marks the virtual-environment masks, which are exactly the mounts that must run code.
+		mounts = append(mounts, dockercli.TmpfsMount{Target: mount.Target, Mode: mount.Mode, Exec: mount.Owned})
 	}
 	return mounts
 }

@@ -26,6 +26,10 @@ type VolumeMount struct {
 type TmpfsMount struct {
 	Target string
 	Mode   string
+	// Exec allows executable mappings on this mount. It marks Python virtual-environment masks,
+	// whose native extension modules the dynamic loader must map with PROT_EXEC, and never generic
+	// scratch tmpfs.
+	Exec bool
 }
 
 // CreateRequest contains the Docker-specific inputs for one container run.

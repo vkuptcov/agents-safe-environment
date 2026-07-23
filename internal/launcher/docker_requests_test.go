@@ -103,6 +103,30 @@ func TestCreateRequestMasksDiscoveredPythonVirtualEnvironments(t *testing.T) {
 	}
 }
 
+// Owned marks the virtual-environment masks. Those are the mounts whose native extension modules the
+// dynamic loader must map executable; generic scratch targets keep the default restriction.
+func TestCreateRequestMakesOnlyVirtualEnvironmentMasksExecutable(t *testing.T) {
+	t.Parallel()
+	plan := testPlan()
+	plan.TmpfsMounts = []launchplan.TmpfsMount{
+		{Target: filepath.Join(plan.ProjectRoot, ".venv"), Mode: projectenv.DefaultTmpfsMode, Owned: true},
+		{Target: filepath.Join(plan.ProjectRoot, "scratch"), Mode: projectenv.DefaultTmpfsMode},
+	}
+	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []dockercli.TmpfsMount{
+		{Target: filepath.Join(plan.ProjectRoot, ".venv"), Mode: projectenv.DefaultTmpfsMode, Exec: true},
+		{Target: filepath.Join(plan.ProjectRoot, "scratch"), Mode: projectenv.DefaultTmpfsMode},
+	}
+	if !reflect.DeepEqual(request.Tmpfs, want) {
+		t.Fatalf("tmpfs = %#v, want %#v", request.Tmpfs, want)
+	}
+}
+
 func TestCreateRequestOmitsTmpfsWhenHostVirtualEnvironmentsAreUsed(t *testing.T) {
 	t.Parallel()
 	plan := testPlan()

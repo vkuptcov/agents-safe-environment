@@ -21,7 +21,7 @@ func TestMountContainerTmpfsMountsAndVerifiesEffectiveFilesystem(t *testing.T) {
 		t.Fatalf("mountContainerTmpfs() error = %v", err)
 	}
 	want := []string{
-		commandKey("mount", "--types", "tmpfs", "--options", "mode=1777,"+tmpfsMountOptions, "tmpfs", target),
+		commandKey("mount", "--types", "tmpfs", "--options", "mode=1777,"+scratchTmpfsOptions, "tmpfs", target),
 		commandKey("stat", "--file-system", "--format=%T", target),
 	}
 	if strings.Join(runner.calls, "\n") != strings.Join(want, "\n") {
@@ -44,6 +44,17 @@ func TestMountContainerTmpfsHandsOwnedMaskToHostUser(t *testing.T) {
 		runner,
 	); err != nil {
 		t.Fatalf("mountContainerTmpfs() error = %v", err)
+	}
+	// A virtual environment exists to be executed: a noexec mask leaves every native extension module
+	// intact on disk but unloadable, so the owned mount must opt out of that one flag.
+	wantMount := commandKey(
+		"mount", "--types", "tmpfs", "--options", "mode=1777,"+ownedTmpfsOptions, "tmpfs", target,
+	)
+	if runner.calls[0] != wantMount {
+		t.Fatalf("owned tmpfs mount command = %q, want %q", runner.calls[0], wantMount)
+	}
+	if strings.Contains(ownedTmpfsOptions, "noexec") {
+		t.Fatalf("owned tmpfs options must not be noexec: %q", ownedTmpfsOptions)
 	}
 	info, err := os.Stat(target)
 	if err != nil {
