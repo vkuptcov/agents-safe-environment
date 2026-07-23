@@ -59,10 +59,11 @@ type TmpfsMount struct {
 	// CreateTarget records that cold-container creation must materialize an empty host mountpoint.
 	// It is transient launch work, not part of the container or fingerprint contract.
 	CreateTarget bool
-	// Owned records that privileged bootstrap must chown this mount to the host user and give it a
-	// user-appropriate mode. It marks Python virtual-environment masks, which the user populates and
-	// expects to own, and never generic scratch tmpfs. Like CreateTarget it is excluded from the
-	// creation fingerprint, so a running session keeps the same identity across this change.
+	// Owned marks Python virtual-environment masks, which the user populates and expects to own, and
+	// never generic scratch tmpfs. Privileged bootstrap chowns such a mount to the host user and gives
+	// it a user-appropriate mode, and both mount paths make it executable so the dynamic loader can map
+	// native extension modules. Like CreateTarget it is excluded from the creation fingerprint, so a
+	// running session keeps the same identity across this change.
 	Owned bool
 }
 

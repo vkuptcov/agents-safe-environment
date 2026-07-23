@@ -141,10 +141,11 @@ func volumeMountArg(mount VolumeMount) string {
 // defaults, which mark every such mount `noexec`. A virtual-environment mask must map its native
 // extension modules executable, so it opts out of that one flag while keeping the rest.
 func tmpfsMountArg(mount TmpfsMount) string {
-	options := []string{"rw", "nosuid", "nodev", "noexec"}
+	execution := "noexec"
 	if mount.Exec {
-		options[len(options)-1] = "exec"
+		execution = "exec"
 	}
+	options := []string{"rw", "nosuid", "nodev", execution}
 	if mount.Mode != "" {
 		options = append(options, "mode="+mount.Mode)
 	}

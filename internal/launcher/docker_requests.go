@@ -23,8 +23,9 @@ const (
 type bootstrapTmpfsMount struct {
 	Target string `json:"target"`
 	Mode   string `json:"mode"`
-	// Owned asks privileged bootstrap to chown the mount to the host user. It rides the bootstrap wire
-	// but not the creation fingerprint, so it never changes session-reuse identity.
+	// Owned asks privileged bootstrap to chown the mount to the host user and remount it executable.
+	// It rides the bootstrap wire but not the creation fingerprint, so it never changes session-reuse
+	// identity.
 	Owned bool `json:"owned,omitempty"`
 }
 
