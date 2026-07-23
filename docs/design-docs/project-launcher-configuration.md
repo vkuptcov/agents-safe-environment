@@ -30,6 +30,7 @@ Parameters have two lifecycle classes:
 | --- | --- | --- |
 | Creation-time | image, mounts, host MCP, dependency caches | Must match; a mismatch fails without replacement. |
 | Command-time | Codex, Claude Code, and generic argv; managed Go and uv cache routing | Applied through `docker exec`. |
+| Adoption-time | invocation-only `--force-exec` | May accept the active container's existing creation contract. |
 
 `--project` is a bootstrap parameter: it selects the worktree and deterministic container identity before config
 resolution begins.
@@ -60,6 +61,7 @@ flowchart TD
     Normalize["6. Normalize logical roles<br/>to physical mounts"]
     Running{"7. Container running?"}
     Compatible{"Creation-time<br/>parameters match?"}
+    Force{"--force-exec?"}
     Reject["Fail closed<br/>finish the active session first"]
     Create["Create container with<br/>creation-time parameters"]
     Command["8. Apply command-time parameters<br/>through docker exec"]
@@ -71,11 +73,17 @@ flowchart TD
     Running -->|no| Create --> Command
     Running -->|yes| Compatible
     Compatible -->|yes| Command
-    Compatible -->|no| Reject
+    Compatible -->|no| Force
+    Force -->|yes| Command
+    Force -->|no| Reject
 ```
 
 `--project` is the only bootstrap option: it must be resolved before the project config can be found. At the CLI
 layer, an omitted flag changes nothing; only a flag explicitly present in argv overrides the file.
+
+`--force-exec` is not a project-config override. It is an invocation-only adoption decision made after resolution and
+fingerprinting: the current plan is still computed for diagnostics, but the owned, protocol-compatible active
+container's creation-time resources remain in effect.
 
 Host paths are resolved once per invocation. The canonical home used to build mount targets is carried through the
 resolved CLI configuration into lazy launcher construction, so container environment and exec requests use the same
@@ -174,7 +182,8 @@ arguments = [
   physical mount set.
 - Project values persist until the user edits the file; explicit CLI values affect one invocation.
 - Removing a required mount fails before Docker access; removing a degradable mount starts with an explicit warning.
-- A running container is reused only when all creation-time parameters match.
+- A running container is reused only when all creation-time parameters match, unless that invocation explicitly uses
+  `--force-exec`.
 - Invalid or stale paths fail before Docker creation.
 - An explicit Codex sandbox choice is never overridden by configured defaults.
 - An explicit Claude permission mode is never overridden by configured defaults.
@@ -402,13 +411,18 @@ The following values are deliberately excluded:
 - separate project-identity, host-UID, ownership, and manager-protocol fields, which are validated independently
   before the fingerprint; project paths still appear naturally in the normalized mount entries.
 
-A running container is reusable only when its ownership, protocol, and creation-time fingerprint match the current
-request.
+A running container is normally reusable only when its ownership, protocol, and creation-time fingerprint match the
+current request.
 
 On mismatch, the launcher fails with the active container's deterministic name and full ID, the running and requested
-fingerprints, and asks the user to finish the active session. It never silently uses stale creation-time settings,
-stops another command, or replaces the container. After the active container exits and is removed, the next invocation
-creates one from the resolved config.
+fingerprints, asks the user to finish the active session, and names `--force-exec` as the explicit escape hatch. It
+never silently uses stale creation-time settings, stops another command, or replaces the container. After the active
+container exits and is removed, the next invocation creates one from the resolved config.
+
+When `--force-exec` is present, only creation-fingerprint equality is bypassed. Ownership and manager-protocol checks
+remain mandatory. The launcher warns with both fingerprints, executes against the active container's existing
+creation-time state, and does not reconcile host-MCP forwarding or any other immutable resource from the current
+plan. The flag is not serialized and is excluded from the fingerprint.
 
 Command-time parameters are the configured and invocation argv for `codex-safe`, `claude-safe`, or `agents-safe`.
 They are not part of the creation-time fingerprint and are applied to every command through `docker exec`, including

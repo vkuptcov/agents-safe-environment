@@ -78,6 +78,8 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		"disable host MCP forwarding: no product config read, no forwarders, no relay, no mount")
 	useHostPythonVenv := flags.Bool("use-host-python-venv", false,
 		"use project-local host Python virtual environments instead of masking them")
+	forceExec := flags.Bool("force-exec", false,
+		"execute in an owned running container even when its creation fingerprint differs")
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -116,6 +118,9 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "%s: %v\n", cfg.Name, err)
 		return 1
 	}
+	// force-exec is invocation-only adoption policy. It is deliberately applied after project
+	// resolution so it cannot become persistent config or participate in the creation fingerprint.
+	resolved.Options.ForceExec = *forceExec
 	printDegradationWarnings(cfg, resolved, stderr)
 	command := invocation
 	if cfg.BuildCommand != nil {

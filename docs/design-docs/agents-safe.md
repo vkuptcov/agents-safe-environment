@@ -134,6 +134,8 @@ agents-safe [launcher options] [--] command [argument ...]
   [Project-Specific Agent Environments](project-environments.md).
 - The typed `.agents-safe/config.toml` is resolved as specified by
   [Project Launcher Configuration](project-launcher-configuration.md); mount changes apply only to a new container.
+- `--force-exec` is an invocation-only emergency override that accepts the running container's creation-time
+  resources when its fingerprint differs; it never bypasses ownership or manager-protocol validation.
 - Interactive mode attaches stdin, stdout, stderr, and the terminal to the container process.
 - After successful environment setup, the Codex exit code becomes the `codex-safe` exit code.
 
@@ -162,6 +164,7 @@ Minimum launcher options:
 - `--help`: show launcher help and exit;
 - `--project <path>`: select a project instead of the current directory;
 - `--image <reference>`: override the image for diagnostics or experiments;
+- `--force-exec`: execute in an owned, protocol-compatible active container despite a fingerprint mismatch;
 - `--cpus <count>`: optionally cap the container-session CPU; unset means no limit;
 - `--memory <size>`: optionally cap the container-session memory; unset means no limit;
 - `--pids-limit <count>`: optionally cap the container-session PID count; unset means no limit.
@@ -544,9 +547,16 @@ to use distinct Docker daemons and writable layers.
 
 Creation-time parameters are fixed when the container is created and cannot be changed by `docker exec`. A fingerprint
 mismatch prevents reuse. The launcher reports the running and requested fingerprints and asks the user to finish the
-active session before retrying; it does not silently use stale configuration, terminate another command, or replace
-the container. Ownership or protocol label mismatches remain name conflicts. Command-time parameters are excluded
-from the fingerprint and apply to each new `docker exec`.
+active session before retrying, and names `--force-exec` as the explicit alternative. Without that flag it does not
+silently use stale configuration, terminate another command, or replace the container.
+
+With `--force-exec`, a fingerprint mismatch emits a warning containing both fingerprints and permits `docker exec`
+only after the normal deterministic-name ownership and manager-protocol checks succeed. The active container's
+creation-time contract remains authoritative: the launcher does not change its image, mounts, cache routing, tmpfs
+filesystems, environment, or host-MCP forwarding, and it skips host-MCP sidecar reconciliation from the newly resolved
+plan. The flag is invocation-only, absent from project config and the fingerprint, and has no effect when the
+fingerprints already match. Ownership or protocol label mismatches remain name conflicts. Command-time parameters
+are excluded from the fingerprint and apply to each new `docker exec`.
 
 A change between absent and present product state changes the normalized physical mount plan and therefore the
 creation-time fingerprint. It uses the same generic fingerprint-mismatch rejection as every other creation-time
@@ -771,6 +781,8 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Verify the deterministic name is derived from canonical worktree path and host UID, inspected directly, and reused
   through a wrapped `docker exec`.
 - Reject reuse when any creation-time parameter changes; prove command-time argument changes reuse the container.
+- Prove `--force-exec` permits only fingerprint-mismatched reuse, preserves ownership/protocol rejection, and performs
+  no creation-time host-MCP reconciliation.
 - Verify simultaneous first callers create one container and both commands register with its manager.
 - Verify the final managed command removes the container only after the idle timeout.
 - After each normal scenario, prove the Sysbox container and nested containers stopped and were removed.

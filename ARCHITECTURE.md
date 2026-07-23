@@ -77,6 +77,9 @@ both the module paths and document links.
 - A linked worktree's primary checkout is mounted read-only while the shared Git directory remains writable.
 - A root Python-project marker proactively reserves `.venv`, and existing project-local Python virtual environments
   are masked by session-local tmpfs mounts unless `use_host_python_venv` is explicitly enabled.
+- Active-session reuse fails closed on a creation-fingerprint mismatch. The invocation-only `--force-exec` escape
+  hatch bypasses only that predicate for an already owned, protocol-compatible running container and uses its
+  creation-time resources unchanged.
 - The host home is not mounted implicitly. Explicit local project configuration may expose narrower directories;
   supported configuration files otherwise receive only their documented mounts.
 - The host Docker socket is never mounted into the container.

@@ -123,7 +123,8 @@ func (err *launchConfigMismatchError) Error() string {
 	return fmt.Sprintf(
 		"managed session container %q (ID %q) for worktree %q has creation fingerprint %q, "+
 			"but this launch resolved %q; "+
-			"finish the active session before retrying, then relaunch",
+			"finish the active session before retrying, then relaunch, or pass --force-exec "+
+			"to execute in the existing container with its current creation-time configuration",
 		err.containerName, err.containerID, err.projectRoot, err.running, err.requested,
 	)
 }

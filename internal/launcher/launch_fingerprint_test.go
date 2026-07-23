@@ -108,7 +108,8 @@ func TestDockerLaunchRejectsFingerprintMismatchBeforePreflight(t *testing.T) {
 		output: inspectionJSON(t, containerID, true, "running", labels),
 	}}}
 	err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{})
-	if err == nil || !strings.Contains(err.Error(), "creation fingerprint") || !strings.Contains(err.Error(), "finish the active session") {
+	if err == nil || !strings.Contains(err.Error(), "creation fingerprint") ||
+		!strings.Contains(err.Error(), "finish the active session") || !strings.Contains(err.Error(), "--force-exec") {
 		t.Fatalf("Launch() error = %v, want fingerprint mismatch", err)
 	}
 	if !strings.Contains(err.Error(), containerName) || !strings.Contains(err.Error(), containerID) {
@@ -123,6 +124,36 @@ func TestDockerLaunchRejectsFingerprintMismatchBeforePreflight(t *testing.T) {
 	}
 	if len(runner.combinedCalls) != 1 || len(runner.runCalls) != 0 {
 		t.Fatalf("mismatch reached Docker lifecycle: combined %#v run %#v", runner.combinedCalls, runner.runCalls)
+	}
+}
+
+func TestDockerLaunchForceExecReusesFingerprintMismatch(t *testing.T) {
+	plan := simplePlan()
+	containerID := strings.Repeat("b", 64)
+	labels := matchingLabels(t, plan, 1000)
+	runningFingerprint := strings.Repeat("f", 64)
+	labels[launchConfigLabel] = runningFingerprint
+	runner := &fakeCommandRunner{outputs: []commandResult{{
+		output: inspectionJSON(t, containerID, true, "running", labels),
+	}}}
+	docker := testDocker(runner)
+	stderr := new(strings.Builder)
+	docker.Stderr = stderr
+
+	if err := docker.Launch(
+		context.Background(), plan, "image", []string{"true"}, launchplan.Options{ForceExec: true},
+	); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	assertSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"true"})
+	warning := stderr.String()
+	if !strings.Contains(warning, "--force-exec") ||
+		!strings.Contains(warning, runningFingerprint) ||
+		!strings.Contains(warning, "existing creation-time configuration remains in effect") {
+		t.Fatalf("warning = %q, want forced mismatch details", warning)
+	}
+	if got := strings.Count(warning, "creation fingerprint mismatch"); got != 1 {
+		t.Fatalf("warning count = %d, want one; warning = %q", got, warning)
 	}
 }
 

@@ -174,16 +174,30 @@ func TestDockerLaunchWaitsForReadinessAfterConcurrentCreateConflict(t *testing.T
 	assertSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"true"})
 }
 
-func TestDockerLaunchRejectsMismatchedDeterministicNameOccupant(t *testing.T) {
-	plan := simplePlan()
-	labels := matchingLabels(t, plan, 1000)
-	labels[projectPathLabel] = "/other-project"
-	runner := &fakeCommandRunner{outputs: []commandResult{{
-		output: inspectionJSON(t, strings.Repeat("c", 64), true, "running", labels),
-	}}}
-	err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{})
-	if err == nil || !strings.Contains(err.Error(), "refusing deterministic-name reuse") {
-		t.Fatalf("Launch() error = %v, want ownership rejection", err)
+func TestDockerLaunchForceExecDoesNotBypassOwnershipOrProtocol(t *testing.T) {
+	tests := map[string]func(map[string]string){
+		"project ownership": func(labels map[string]string) {
+			labels[projectPathLabel] = "/other-project"
+		},
+		"manager protocol": func(labels map[string]string) {
+			labels[managerProtocolLabel] = "incompatible"
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			plan := simplePlan()
+			labels := matchingLabels(t, plan, 1000)
+			mutate(labels)
+			runner := &fakeCommandRunner{outputs: []commandResult{{
+				output: inspectionJSON(t, strings.Repeat("c", 64), true, "running", labels),
+			}}}
+			err := testDocker(runner).Launch(
+				context.Background(), plan, "image", []string{"true"}, launchplan.Options{ForceExec: true},
+			)
+			if err == nil || !strings.Contains(err.Error(), "refusing deterministic-name reuse") {
+				t.Fatalf("Launch() error = %v, want ownership/protocol rejection", err)
+			}
+		})
 	}
 }
 

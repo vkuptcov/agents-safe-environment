@@ -216,14 +216,31 @@ func (attempt *launchAttempt) validateOwnership(inspection dockercli.ContainerIn
 
 // validateRunningFingerprint is the sole creation-time reuse predicate after ownership and protocol checks.
 func (attempt *launchAttempt) validateRunningFingerprint(inspection dockercli.ContainerInspection) error {
-	if running := inspection.Config.Labels[launchConfigLabel]; running != attempt.launchFingerprint {
-		return &launchConfigMismatchError{
-			containerName: attempt.containerName,
-			containerID:   inspection.ID,
-			projectRoot:   attempt.plan.ProjectRoot,
-			running:       running,
-			requested:     attempt.launchFingerprint,
-		}
+	running := inspection.Config.Labels[launchConfigLabel]
+	attempt.fingerprintMismatchForced = false
+	if running == attempt.launchFingerprint {
+		return nil
+	}
+	mismatch := &launchConfigMismatchError{
+		containerName: attempt.containerName,
+		containerID:   inspection.ID,
+		projectRoot:   attempt.plan.ProjectRoot,
+		running:       running,
+		requested:     attempt.launchFingerprint,
+	}
+	if !attempt.forceExec {
+		return mismatch
+	}
+	attempt.fingerprintMismatchForced = true
+	if !attempt.forceExecWarningPrinted {
+		fmt.Fprintf(
+			attempt.docker.Stderr,
+			"warning: --force-exec: executing in managed session container %q (ID %q) despite "+
+				"creation fingerprint mismatch (running %q, requested %q); "+
+				"the container's existing creation-time configuration remains in effect\n",
+			attempt.containerName, inspection.ID, running, attempt.launchFingerprint,
+		)
+		attempt.forceExecWarningPrinted = true
 	}
 	return nil
 }

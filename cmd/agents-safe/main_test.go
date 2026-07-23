@@ -31,14 +31,14 @@ func TestRunForwardsAgentsCommand(t *testing.T) {
 	t.Parallel()
 	recording := &clitest.RecordingLauncher{}
 	deps := testCommandDependencies(recording)
-	if exit := run(context.Background(), []string{"--image", "test:image", "echo", "safe"},
+	if exit := run(context.Background(), []string{"--image", "test:image", "--force-exec", "echo", "safe"},
 		new(bytes.Buffer), new(bytes.Buffer), deps); exit != 0 {
 		t.Fatalf("run() = %d", exit)
 	}
 	if !reflect.DeepEqual(recording.Command, []string{"echo", "safe"}) {
 		t.Fatalf("command = %#v", recording.Command)
 	}
-	if recording.Image != "configured:image" || !recording.Options.ImageOverride {
+	if recording.Image != "configured:image" || !recording.Options.ImageOverride || !recording.Options.ForceExec {
 		t.Fatalf("launch image/options = %q, %#v", recording.Image, recording.Options)
 	}
 }

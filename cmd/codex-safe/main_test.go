@@ -19,13 +19,16 @@ func TestConfigBuildsConfiguredCodexCommand(t *testing.T) {
 	t.Parallel()
 	recording := &clitest.RecordingLauncher{}
 	deps := codexDependencies(recording)
-	if exit := cli.Run(context.Background(), config(), []string{"--", "exec", "--sandbox", "read-only"},
+	if exit := cli.Run(context.Background(), config(), []string{"--force-exec", "--", "exec", "--sandbox", "read-only"},
 		new(bytes.Buffer), new(bytes.Buffer), deps); exit != 0 {
 		t.Fatalf("Run() = %d", exit)
 	}
 	want := []string{launcher.CodexBinaryPath, "--model", "gpt-5", "exec", "--sandbox", "read-only"}
 	if !reflect.DeepEqual(recording.Command, want) {
 		t.Fatalf("command = %#v, want %#v", recording.Command, want)
+	}
+	if !recording.Options.ForceExec {
+		t.Fatalf("options = %#v, want ForceExec", recording.Options)
 	}
 }
 

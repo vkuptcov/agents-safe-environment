@@ -16,6 +16,9 @@ import (
 // the package both the CLI scaffold and the launcher already import, so neither has to depend on the
 // other to name them.
 type Options struct {
+	// ForceExec permits docker exec into an owned, protocol-compatible running container even when
+	// its immutable creation fingerprint differs. The existing container remains unchanged.
+	ForceExec bool
 	// ImageOverride records explicit --image intent. Its value is independent of the selected image:
 	// supplying the default reference still deliberately bypasses project-environment discovery.
 	ImageOverride bool

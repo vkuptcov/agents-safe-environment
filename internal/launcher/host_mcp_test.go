@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,25 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
+
+func TestReuseHostMCPSkipsReconciliationForForcedFingerprintMismatch(t *testing.T) {
+	t.Parallel()
+	candidate := t.TempDir()
+	attempt := &launchAttempt{
+		docker:                    testDocker(&fakeCommandRunner{}),
+		hostMCP:                   hostMCPPlan{set: oneEndpointSet(t), channel: hostmcp.Channel{Generation: candidate}, candidate: true},
+		fingerprintMismatchForced: true,
+	}
+	if err := attempt.reuseHostMCP(context.Background(), dockercli.ContainerInspection{}); err != nil {
+		t.Fatalf("reuseHostMCP() error = %v, want forced as-is reuse", err)
+	}
+	if attempt.hostMCP.candidate {
+		t.Fatal("reuseHostMCP() retained an unused candidate")
+	}
+	if _, err := os.Stat(candidate); !os.IsNotExist(err) {
+		t.Fatalf("candidate stat error = %v, want removed", err)
+	}
+}
 
 func testChannel(t *testing.T) hostmcp.Channel {
 	t.Helper()

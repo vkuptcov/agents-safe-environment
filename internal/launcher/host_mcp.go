@@ -298,6 +298,16 @@ func (attempt *launchAttempt) reuseHostMCPAfterWait(ctx context.Context) error {
 // reuseHostMCP validates a running session's forwarding against this launch's resolution, adopts its
 // channel, and recreates a sidecar that has died.
 func (attempt *launchAttempt) reuseHostMCP(ctx context.Context, inspection dockercli.ContainerInspection) error {
+	if attempt.fingerprintMismatchForced {
+		// --force-exec adopts the running creation contract as-is. The current launch may have
+		// resolved a different endpoint set, channel shape, or no forwarding at all, and cannot
+		// safely reconcile those immutable choices through docker exec.
+		if err := attempt.hostMCP.removeCandidate(); err != nil {
+			return err
+		}
+		attempt.hostMCP.candidate = false
+		return nil
+	}
 	if attempt.hostMCP.set.Empty() {
 		return nil
 	}

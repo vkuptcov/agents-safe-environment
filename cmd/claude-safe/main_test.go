@@ -18,13 +18,16 @@ import (
 func TestConfigBuildsConfiguredClaudeCommand(t *testing.T) {
 	t.Parallel()
 	recording := &clitest.RecordingLauncher{}
-	if exit := cli.Run(context.Background(), config(), []string{"--", "--permission-mode", "plan"},
+	if exit := cli.Run(context.Background(), config(), []string{"--force-exec", "--", "--permission-mode", "plan"},
 		new(bytes.Buffer), new(bytes.Buffer), claudeDependencies(recording)); exit != 0 {
 		t.Fatalf("Run() = %d", exit)
 	}
 	want := []string{launcher.ClaudeBinaryPath, "--model", "opus", "--permission-mode", "plan"}
 	if !reflect.DeepEqual(recording.Command, want) {
 		t.Fatalf("command = %#v, want %#v", recording.Command, want)
+	}
+	if !recording.Options.ForceExec {
+		t.Fatalf("options = %#v, want ForceExec", recording.Options)
 	}
 }
 
