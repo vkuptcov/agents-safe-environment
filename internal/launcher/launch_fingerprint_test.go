@@ -53,6 +53,15 @@ func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
 		hostmcp.Set{Endpoints: []hostmcp.Endpoint{{Host: "localhost", Port: 8080, Names: []string{"renamed"}}}}); got != base {
 		t.Fatalf("non-creation fields changed fingerprint = %q, want %q", got, base)
 	}
+
+	materialized := planWithTmpfsMount(plan)
+	beforeCreate := materialized
+	beforeCreate.TmpfsMounts = append([]launchplan.TmpfsMount(nil), materialized.TmpfsMounts...)
+	beforeCreate.TmpfsMounts[0].CreateTarget = true
+	if got, want := mustCreationFingerprint(t, beforeCreate, "image:one", false, false, false, endpoints),
+		mustCreationFingerprint(t, materialized, "image:one", false, false, false, endpoints); got != want {
+		t.Fatalf("one-time target materialization changed fingerprint = %q, want %q", got, want)
+	}
 }
 
 func TestCreationFingerprintIncludesSchemaVersionFive(t *testing.T) {

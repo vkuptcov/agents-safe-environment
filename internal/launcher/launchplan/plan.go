@@ -53,6 +53,9 @@ type BindMount struct {
 type TmpfsMount struct {
 	Target string
 	Mode   string
+	// CreateTarget records that cold-container creation must materialize an empty host mountpoint.
+	// It is transient launch work, not part of the container or fingerprint contract.
+	CreateTarget bool
 }
 
 // Plan is the validated filesystem contract passed from Git-project discovery to the launcher.
@@ -75,8 +78,8 @@ type Plan struct {
 	// DependencyCaches keeps cache identity distinct from generic mount normalization. Source is the
 	// symlink-resolved host bind source; Target is the configured tool-visible container path.
 	DependencyCaches []DependencyCache
-	// TmpfsMounts are the complete ordered container-local filesystems selected by project configuration and
-	// Python virtual-environment discovery.
+	// TmpfsMounts are the complete ordered container-local filesystems selected by project configuration,
+	// root Python-project detection, and Python virtual-environment discovery.
 	TmpfsMounts []TmpfsMount
 }
 
@@ -348,11 +351,23 @@ func resolveTmpfsMounts(
 		return nil, nil
 	}
 
-	result := make([]TmpfsMount, 0, len(configured))
-	seen := make(map[string]struct{}, len(configured))
+	result := make([]TmpfsMount, 0, len(configured)+1)
+	seen := make(map[string]int, len(configured)+1)
 	for _, mount := range configured {
 		result = append(result, TmpfsMount{Target: mount.Target, Mode: mount.Mode})
-		seen[mount.Target] = struct{}{}
+		seen[mount.Target] = len(result) - 1
+	}
+	reservation, found, err := rootPythonVenvReservation(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		if index, exists := seen[reservation.Target]; exists {
+			result[index].CreateTarget = reservation.CreateTarget
+		} else {
+			result = append(result, reservation)
+			seen[reservation.Target] = len(result) - 1
+		}
 	}
 	discovered, err := DiscoverPythonVirtualEnvironments(projectRoot)
 	if err != nil {
@@ -363,7 +378,7 @@ func resolveTmpfsMounts(
 			continue
 		}
 		result = append(result, TmpfsMount{Target: target, Mode: projectenv.DefaultTmpfsMode})
-		seen[target] = struct{}{}
+		seen[target] = len(result) - 1
 	}
 	for first := range result {
 		if strings.Contains(result[first].Target, ":") {

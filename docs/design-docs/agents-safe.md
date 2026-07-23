@@ -223,20 +223,32 @@ directory stays read-write because commits, refs, the linked-worktree index, and
 
 By default no virtual-environment target is preconfigured. On every launch, each existing directory under the active
 worktree that contains a regular `pyvenv.cfg` is masked by a writable session-local `tmpfs` mounted after the worktree
-bind; nothing is created for an environment that does not exist. Discovery does not follow symlinks, skips `.git`, and
-stops descending once it finds an environment. `common.tmpfs_mounts` optionally adds further explicit targets to that
-discovered set, and duplicate targets are removed. The image cannot read or modify those host environments, and tmpfs
-content disappears with the managed container. Docker receives these masks through its dedicated `--tmpfs` option;
-the launcher also passes the same validated target/mode list to privileged container bootstrap. Sysbox 0.7 can attach
-the broader idmapped worktree bind after Docker's tmpfs and cover it, so bootstrap reapplies every tmpfs inside the
-final mount namespace and verifies its effective filesystem type before session readiness. A missing target, mount
+bind. Discovery does not follow symlinks, skips `.git`, and stops descending once it finds an environment.
+
+A regular Python-project marker at the worktree root also reserves the conventional root `.venv` before it exists.
+The fixed marker set is `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `Pipfile`, `uv.lock`,
+`poetry.lock`, `pdm.lock`, `tox.ini`, `pytest.ini`, and `.python-version`. Marker symlinks and directories do not
+trigger reservation. Nested project markers do not proactively create nested targets; regular `pyvenv.cfg` discovery
+still masks nested environments after they exist.
+
+If the reserved `.venv` is absent, the host launcher creates one empty mountpoint only after it has ruled out
+active-container reuse and immediately before cold container creation. An existing symlink or non-directory target
+fails closed. The host directory remains empty after session removal; environment contents live on tmpfs and disappear
+with the managed container. One-time mountpoint materialization is not a fingerprint input because the requested tmpfs
+target and mode are identical before and after it.
+
+`common.tmpfs_mounts` optionally adds further explicit targets to the selected set, and duplicate targets are removed.
+The image cannot read or modify host environments. Docker receives these masks through its dedicated `--tmpfs`
+option; the launcher also passes the same validated target/mode list to privileged container bootstrap. Sysbox 0.7 can
+attach the broader idmapped worktree bind after Docker's tmpfs and cover it, so bootstrap reapplies every tmpfs inside
+the final mount namespace and verifies its effective filesystem type before session readiness. A missing target, mount
 failure, or non-tmpfs result fails startup without running an agent. The same contract applies to regular and linked
 worktrees.
 
-`common.use_host_python_venv = true` or the explicit `--use-host-python-venv` flag skips both discovered and configured
-venv tmpfs mounts, exposing those directories through the normal worktree bind. The resolved policy and complete
-tmpfs target/mode list are creation-time fingerprint inputs. Reusable Python downloads belong in the separately
-configured [host-backed uv cache](host-backed-dependency-caches.md), not in a virtual environment.
+`common.use_host_python_venv = true` or the explicit `--use-host-python-venv` flag skips proactive, discovered, and
+configured venv tmpfs mounts, exposing those directories through the normal worktree bind. The resolved policy and
+complete tmpfs target/mode list are creation-time fingerprint inputs. Reusable Python downloads belong in the
+separately configured [host-backed uv cache](host-backed-dependency-caches.md), not in a virtual environment.
 
 #### Path overlaps
 

@@ -72,7 +72,8 @@ func TestSysboxRegularCheckoutNormalizesProjectRoles(t *testing.T) {
 	fixture.docker.waitForContainerRemoval()
 }
 
-// TestSysboxProjectVenvIsIsolated proves discovered Python environments cannot read or modify their host directories.
+// TestSysboxProjectVenvIsIsolated proves a root Python marker reserves .venv before it exists and discovered nested
+// environments cannot read or modify their host directories.
 func TestSysboxProjectVenvIsIsolated(t *testing.T) {
 	if os.Getenv(goSmokeEnv) != "1" {
 		t.Skipf("set %s=1 to run the real Sysbox project virtual-environment test", goSmokeEnv)
@@ -84,21 +85,24 @@ func TestSysboxProjectVenvIsIsolated(t *testing.T) {
 	hostServiceSentinel := filepath.Join(hostServiceVenv, "host-sentinel")
 	containerSentinel := filepath.Join(hostVenv, "container-sentinel")
 	containerServiceSentinel := filepath.Join(hostServiceVenv, "container-sentinel")
+	pythonMarker := filepath.Join(fixture.project.worktree, "pyproject.toml")
 	report := filepath.Join(fixture.project.worktree, "project-venv.report")
 	ready := filepath.Join(fixture.project.worktree, "project-venv.ready")
 	release := filepath.Join(fixture.project.worktree, "project-venv.release")
-	for _, path := range []string{hostVenv, hostServiceVenv} {
-		require.NoError(t, os.MkdirAll(path, 0o755), "host virtual environment directory must exist")
-		require.NoError(t, os.WriteFile(filepath.Join(path, "pyvenv.cfg"), []byte("home = /usr/bin\n"), 0o600),
-			"host virtual environment marker must exist")
-	}
-	require.NoError(t, os.WriteFile(hostSentinel, []byte("host\n"), 0o600), "host virtual environment sentinel must exist")
+	require.NoError(t, os.WriteFile(pythonMarker, []byte("[project]\nname = \"smoke\"\nversion = \"0\"\n"), 0o600),
+		"root Python project marker must exist")
+	require.NoError(t, os.MkdirAll(hostServiceVenv, 0o755), "nested host virtual environment directory must exist")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(hostServiceVenv, "pyvenv.cfg"), []byte("home = /usr/bin\n"), 0o600,
+	), "nested host virtual environment marker must exist")
 	require.NoError(t, os.WriteFile(hostServiceSentinel, []byte("host-service\n"), 0o600),
 		"nested host virtual environment sentinel must exist")
+	_, err := os.Lstat(hostVenv)
+	require.True(t, os.IsNotExist(err), "root .venv must not exist before launch")
 
 	command := fixture.launcher.startAgents(
 		fixture.project.worktree,
-		"bash", "-c", `test ! -e .venv/host-sentinel
+		"bash", "-c", `test -d .venv
 test ! -e service/.venv-dev/host-sentinel
 printf 'container\n' > .venv/container-sentinel
 printf 'container-service\n' > service/.venv-dev/container-sentinel
@@ -113,19 +117,22 @@ while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	require.Equal(t, "yes", observed["isolated"])
 	require.Equal(t, "tmpfs", observed["root_fstype"], "root venv mask must be the effective filesystem")
 	require.Equal(t, "tmpfs", observed["service_fstype"], "nested venv mask must be the effective filesystem")
-	require.Equal(t, "host\n", readFile(t, hostSentinel), "container must not replace host .venv content")
+	hostInfo, err := os.Lstat(hostVenv)
+	require.NoError(t, err, "cold create must leave the root .venv mountpoint on the host")
+	require.True(t, hostInfo.IsDir(), "root .venv mountpoint must be a directory")
 	require.Equal(t, "host-service\n", readFile(t, hostServiceSentinel),
 		"container must not replace nested host virtual-environment content")
-	_, err := os.Stat(containerSentinel)
+	_, err = os.Stat(containerSentinel)
 	require.True(t, os.IsNotExist(err), "container .venv writes must not reach the host")
 	_, err = os.Stat(containerServiceSentinel)
 	require.True(t, os.IsNotExist(err), "container nested virtual-environment writes must not reach the host")
 
 	fixture.release(release, command, "project virtual-environment command")
 	fixture.docker.waitForContainerRemoval()
-	require.Equal(t, "host\n", readFile(t, hostSentinel), "host .venv must remain unchanged after session removal")
 	require.Equal(t, "host-service\n", readFile(t, hostServiceSentinel),
 		"nested host virtual environment must remain unchanged after session removal")
+	_, err = os.Stat(hostSentinel)
+	require.True(t, os.IsNotExist(err), "proactive host .venv mountpoint must remain empty")
 	_, err = os.Stat(containerSentinel)
 	require.True(t, os.IsNotExist(err), "container .venv must disappear with the session")
 	_, err = os.Stat(containerServiceSentinel)

@@ -6,4 +6,5 @@ managed dependency-cache routing used by host container orchestration.
 ## Non-test files
 
 - `plan.go` — defines, builds, normalizes, and validates the launch filesystem contract, including canonical Go and
-  uv cache order and their managed environment keys.
+  uv cache order, managed environment keys, and tmpfs target selection.
+- `python_venv.go` — reserves root `.venv` for recognized Python projects and discovers existing marked environments.

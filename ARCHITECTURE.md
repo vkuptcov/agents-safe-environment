@@ -75,8 +75,8 @@ both the module paths and document links.
   state, personal skills, and host MCP are degradable roles: omission keeps them absent and emits an explicit startup
   warning.
 - A linked worktree's primary checkout is mounted read-only while the shared Git directory remains writable.
-- The configured root `.venv` target and existing project-local Python virtual environments are masked by
-  session-local tmpfs mounts unless `use_host_python_venv` is explicitly enabled.
+- A root Python-project marker proactively reserves `.venv`, and existing project-local Python virtual environments
+  are masked by session-local tmpfs mounts unless `use_host_python_venv` is explicitly enabled.
 - The host home is not mounted implicitly. Explicit local project configuration may expose narrower directories;
   supported configuration files otherwise receive only their documented mounts.
 - The host Docker socket is never mounted into the container.

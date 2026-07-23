@@ -60,6 +60,69 @@ func TestDockerLaunchCreatesDetachedContainerThenExecutesResolvedPlan(t *testing
 	assertColdSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"echo", "safe"})
 }
 
+func TestDockerLaunchMaterializesProactiveTmpfsTargetOnlyForColdCreate(t *testing.T) {
+	containerID := strings.Repeat("6", 64)
+	root := t.TempDir()
+	target := filepath.Join(root, ".venv")
+	plan := projectOnlyPlan(root)
+	plan.TmpfsMounts = []launchplan.TmpfsMount{{
+		Target: target, Mode: projectenv.DefaultTmpfsMode, CreateTarget: true,
+	}}
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+		{output: []byte(containerID + "\n")},
+	}}
+
+	if err := testDocker(runner).Launch(
+		context.Background(), plan, "image", []string{"true"}, launchplan.Options{},
+	); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	info, err := os.Lstat(target)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("proactive tmpfs target = %#v, %v, want host directory", info, err)
+	}
+}
+
+func TestDockerLaunchDoesNotMaterializeProactiveTmpfsTargetWhenReusing(t *testing.T) {
+	containerID := strings.Repeat("5", 64)
+	root := t.TempDir()
+	target := filepath.Join(root, ".venv")
+	plan := projectOnlyPlan(root)
+	plan.TmpfsMounts = []launchplan.TmpfsMount{{
+		Target: target, Mode: projectenv.DefaultTmpfsMode, CreateTarget: true,
+	}}
+	runner := &fakeCommandRunner{outputs: []commandResult{{
+		output: inspectionJSON(t, containerID, true, "running", matchingLabels(t, plan, 1000)),
+	}}}
+
+	if err := testDocker(runner).Launch(
+		context.Background(), plan, "image", []string{"true"}, launchplan.Options{},
+	); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatalf("reuse materialized proactive tmpfs target %q: %v", target, err)
+	}
+}
+
+func TestMaterializeTmpfsTargetsRejectsSymlinkRace(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	target := filepath.Join(root, ".venv")
+	if err := os.Symlink(t.TempDir(), target); err != nil {
+		t.Fatal(err)
+	}
+	err := materializeTmpfsTargets([]launchplan.TmpfsMount{{
+		Target: target, Mode: projectenv.DefaultTmpfsMode, CreateTarget: true,
+	}})
+	if err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("materializeTmpfsTargets() error = %v, want symlink rejection", err)
+	}
+}
+
 func TestDockerLaunchReusesExactRunningContainer(t *testing.T) {
 	containerID := strings.Repeat("b", 64)
 	plan := simplePlan()

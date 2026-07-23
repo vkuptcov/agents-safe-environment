@@ -76,6 +76,8 @@ func creationFingerprint(
 	}
 	tmpfsMounts := make([]fingerprintTmpfsMount, 0, len(plan.TmpfsMounts))
 	for _, mount := range plan.TmpfsMounts {
+		// CreateTarget is deliberately excluded: it records one-time host materialization. Once the
+		// empty directory exists, the requested container mount remains exactly the same.
 		tmpfsMounts = append(tmpfsMounts, fingerprintTmpfsMount{Target: mount.Target, Mode: mount.Mode})
 	}
 

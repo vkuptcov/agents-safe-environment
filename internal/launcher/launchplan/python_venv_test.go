@@ -61,3 +61,79 @@ func TestDiscoverPythonVirtualEnvironmentsRejectsUnsafeMarkers(t *testing.T) {
 		}
 	})
 }
+
+func TestRootPythonVenvReservationRecognizesRegularProjectMarkers(t *testing.T) {
+	t.Parallel()
+	for _, marker := range rootPythonProjectMarkers {
+		t.Run(marker, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, marker), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got, found, err := rootPythonVenvReservation(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := TmpfsMount{
+				Target: filepath.Join(root, ".venv"), Mode: "1777", CreateTarget: true,
+			}
+			if !found || !reflect.DeepEqual(got, want) {
+				t.Fatalf("rootPythonVenvReservation() = %#v, %t, want %#v, true", got, found, want)
+			}
+		})
+	}
+}
+
+func TestRootPythonVenvReservationIgnoresNonRegularProjectMarkers(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	external := filepath.Join(t.TempDir(), "pyproject.toml")
+	if err := os.WriteFile(external, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(root, "pyproject.toml")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, found, err := rootPythonVenvReservation(root); err != nil || found {
+		t.Fatalf("rootPythonVenvReservation() = %#v, %t, %v, want no reservation", got, found, err)
+	}
+}
+
+func TestRootPythonVenvReservationUsesExistingDirectoryWithoutMaterialization(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pyproject.toml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, ".venv")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, found, err := rootPythonVenvReservation(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := TmpfsMount{Target: target, Mode: "1777"}
+	if !found || !reflect.DeepEqual(got, want) {
+		t.Fatalf("rootPythonVenvReservation() = %#v, %t, want %#v, true", got, found, want)
+	}
+}
+
+func TestRootPythonVenvReservationRejectsUnsafeTarget(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pyproject.toml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, ".venv")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := rootPythonVenvReservation(root); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("rootPythonVenvReservation() error = %v, want unsafe-target rejection", err)
+	}
+}

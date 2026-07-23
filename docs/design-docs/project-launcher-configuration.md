@@ -281,19 +281,29 @@ document owns its typed schema, overlay behavior, and participation in container
 generated config preconfigures no venv target. Targets must be canonical absolute paths strictly inside the selected
 worktree and cannot contain Docker's `--tmpfs` option delimiter (`:`); modes are three- or four-digit octal strings.
 Duplicate and overlapping targets fail before Docker access. Each configured target must exist as a directory when
-privileged container bootstrap reapplies the mask; otherwise startup fails closed. Comments are serialized
-documentation and do not affect creation.
+privileged container bootstrap reapplies the mask; otherwise startup fails closed. The proactive root `.venv`
+reservation below is the only target the launcher may materialize. Comments are serialized documentation and do not
+affect creation.
 
 `use_host_python_venv` is a creation-time policy and defaults to `false`. After TOML and explicit CLI overrides are
-applied, the safe default scans the selected worktree for existing directories containing a regular `pyvenv.cfg`,
-appends new targets to the configured base with mode `1777`, and removes exact duplicates. Nothing is masked for a
-virtual environment that does not exist. Discovery does not follow symlinks, skips Git metadata, stops descending
-after finding an environment, and fails closed on unreadable or non-regular markers. Every resolved target receives a
-session-local `tmpfs` after the worktree bind.
+applied, the safe default first checks regular root Python-project markers. A match reserves `<worktree>/.venv` with
+mode `1777`, even before `pyvenv.cfg` exists. The stable marker set is `pyproject.toml`, `setup.py`, `setup.cfg`,
+`requirements.txt`, `Pipfile`, `uv.lock`, `poetry.lock`, `pdm.lock`, `tox.ini`, `pytest.ini`, and `.python-version`;
+symlinks, directories, and nested markers do not trigger proactive reservation.
 
-`use_host_python_venv = true` skips both configured tmpfs targets and discovery, so the image sees project virtual
-environments exactly as the host does. `--use-host-python-venv` and `--use-host-python-venv=false` explicitly override
-the file for one invocation. Reusable Python downloads remain a separate uv-cache concern.
+The launcher then scans the selected worktree for existing directories containing a regular `pyvenv.cfg`, appends new
+targets with mode `1777`, and removes exact duplicates. Discovery does not follow symlinks, skips Git metadata, stops
+descending after finding an environment, and fails closed on unreadable or non-regular markers. Every resolved target
+receives a session-local `tmpfs` after the worktree bind.
+
+If the proactive root target is absent, resolution records one-time materialization intent without changing the host.
+Only a cold-create path creates the empty host directory, after active-session reuse has been ruled out. The transient
+intent is not sent to the container and is not fingerprinted; the target and mode already describe the immutable
+session contract. A later launcher sees the directory, resolves the same target/mode pair, and reuses the session.
+
+`use_host_python_venv = true` skips configured targets, proactive reservation, and discovery, so the image sees project
+virtual environments exactly as the host does. `--use-host-python-venv` and `--use-host-python-venv=false` explicitly
+override the file for one invocation. Reusable Python downloads remain a separate uv-cache concern.
 
 ### 3. File Layering
 
@@ -364,13 +374,15 @@ Codex/Claude host-MCP endpoints. It prevents reuse of a version 3 container that
 release contents and versions remain outside the fingerprint, so updating either volume does not invalidate a live
 session.
 
-Schema version 5 introduces `use_host_python_venv`, the configured `tmpfs_mounts` base, and launch-time
-virtual-environment discovery. It prevents reuse of a version 4 session that can still access host environments or
-lacks the resolved tmpfs targets.
+Schema version 5 covers `use_host_python_venv`, the configured `tmpfs_mounts` base, proactive root `.venv`
+reservation, and launch-time virtual-environment discovery. It prevents reuse of a version 4 session that can still
+access host environments or lacks the resolved tmpfs targets. Adding proactive reservation does not require a new
+schema number: an affected Python project gains a canonical tmpfs target and therefore a different digest, while an
+unaffected project's creation contract is unchanged.
 
 | Field | Canonical value |
 | --- | --- |
-| `tmpfs_mounts` | Ordered target/mode pairs from the configured base plus regular `pyvenv.cfg` discovery. |
+| `tmpfs_mounts` | Ordered target/mode pairs from config, proactive root reservation, and `pyvenv.cfg` discovery. |
 
 `mounts` uses the exact deterministic order passed to Docker after alias and nesting normalization. It excludes the
 materialized `host_mcp_channel` bind because that bind has a random generation-directory source;
