@@ -162,7 +162,7 @@ func (fixture *smokeFixture) assertVolumeCodexNotShadowed(sentinel codexSentinel
 }
 
 // assertReuseMismatchDiagnostic relaunches the same worktree with a different Codex home and proves
-// the creation fingerprint rejects it without reusing or terminating the live container.
+// the default path rejects it while --force-exec enters the unchanged live container.
 func (fixture *smokeFixture) assertReuseMismatchDiagnostic(sentinel codexSentinel, hold *launcherProcess) {
 	fixture.t.Helper()
 	require.True(fixture.t, hold.running(), "the held session must still be running before the mismatch launch")
@@ -179,11 +179,34 @@ func (fixture *smokeFixture) assertReuseMismatchDiagnostic(sentinel codexSentine
 	require.NotZero(fixture.t, mismatch.exitCode(), "a creation-time mismatch must fail the launch")
 	require.Contains(fixture.t, mismatch.stderr.String(), "finish the active session",
 		"the launcher must report the finish-active-session diagnostic\n%s", mismatch.diagnostics())
+	require.Contains(fixture.t, mismatch.stderr.String(), "--force-exec",
+		"the mismatch diagnostic must name the explicit override\n%s", mismatch.diagnostics())
 	require.True(fixture.t, hold.running(), "the live session must not be terminated by a mismatched launch")
 	after := fixture.docker.inspectContainer()
 	require.True(fixture.t, after.State.Running, "the container must remain running")
 	require.Equal(fixture.t, before.ID, after.ID, "a fingerprint mismatch must not replace the live container")
 	require.Len(fixture.t, fixture.docker.managedContainers(), 1, "a mismatch must not create a second container")
+
+	forced := fixture.launcher.startBinary(
+		fixture.launcher.agentsBinary,
+		fixture.project.worktree,
+		false,
+		[]string{"CODEX_HOME=" + sentinel.otherCodexHome},
+		"--force-exec", "true",
+	)
+	forced.requireExit(fixture.t, "forced fingerprint-mismatch exec")
+	require.Contains(fixture.t, forced.stderr.String(), "--force-exec",
+		"forced reuse must emit an explicit warning\n%s", forced.diagnostics())
+	require.Contains(fixture.t, forced.stderr.String(), before.Config.Labels["agents-safe.launch-config"],
+		"forced reuse warning must identify the running fingerprint\n%s", forced.diagnostics())
+	require.Contains(fixture.t, forced.stderr.String(), "existing creation-time configuration remains in effect",
+		"forced reuse must explain that the active contract remains authoritative\n%s", forced.diagnostics())
+	require.True(fixture.t, hold.running(), "forced exec must join rather than terminate the held session")
+	forcedInspection := fixture.docker.inspectContainer()
+	require.Equal(fixture.t, before.ID, forcedInspection.ID, "forced exec must use the existing container")
+	require.Equal(fixture.t, before.Config.Labels["agents-safe.launch-config"],
+		forcedInspection.Config.Labels["agents-safe.launch-config"],
+		"forced exec must not rewrite the active creation fingerprint")
 }
 
 // TestSysboxCodexCredentialedAcceptance is an opt-in acceptance test for a full Codex turn. It runs

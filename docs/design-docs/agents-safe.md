@@ -134,6 +134,8 @@ agents-safe [launcher options] [--] command [argument ...]
   [Project-Specific Agent Environments](project-environments.md).
 - The typed `.agents-safe/config.toml` is resolved as specified by
   [Project Launcher Configuration](project-launcher-configuration.md); mount changes apply only to a new container.
+- `--force-exec` is an invocation-only emergency override that accepts the running container's creation-time
+  resources when its fingerprint differs; it never bypasses ownership or manager-protocol validation.
 - Interactive mode attaches stdin, stdout, stderr, and the terminal to the container process.
 - After successful environment setup, the Codex exit code becomes the `codex-safe` exit code.
 
@@ -162,6 +164,7 @@ Minimum launcher options:
 - `--help`: show launcher help and exit;
 - `--project <path>`: select a project instead of the current directory;
 - `--image <reference>`: override the image for diagnostics or experiments;
+- `--force-exec`: execute in an owned, protocol-compatible active container despite a fingerprint mismatch;
 - `--cpus <count>`: optionally cap the container-session CPU; unset means no limit;
 - `--memory <size>`: optionally cap the container-session memory; unset means no limit;
 - `--pids-limit <count>`: optionally cap the container-session PID count; unset means no limit.
@@ -223,20 +226,36 @@ directory stays read-write because commits, refs, the linked-worktree index, and
 
 By default no virtual-environment target is preconfigured. On every launch, each existing directory under the active
 worktree that contains a regular `pyvenv.cfg` is masked by a writable session-local `tmpfs` mounted after the worktree
-bind; nothing is created for an environment that does not exist. Discovery does not follow symlinks, skips `.git`, and
-stops descending once it finds an environment. `common.tmpfs_mounts` optionally adds further explicit targets to that
-discovered set, and duplicate targets are removed. The image cannot read or modify those host environments, and tmpfs
-content disappears with the managed container. Docker receives these masks through its dedicated `--tmpfs` option;
-the launcher also passes the same validated target/mode list to privileged container bootstrap. Sysbox 0.7 can attach
-the broader idmapped worktree bind after Docker's tmpfs and cover it, so bootstrap reapplies every tmpfs inside the
-final mount namespace and verifies its effective filesystem type before session readiness. A missing target, mount
-failure, or non-tmpfs result fails startup without running an agent. The same contract applies to regular and linked
-worktrees.
+bind. Discovery does not follow symlinks, skips `.git`, and stops descending once it finds an environment.
 
-`common.use_host_python_venv = true` or the explicit `--use-host-python-venv` flag skips both discovered and configured
-venv tmpfs mounts, exposing those directories through the normal worktree bind. The resolved policy and complete
-tmpfs target/mode list are creation-time fingerprint inputs. Reusable Python downloads belong in the separately
-configured [host-backed uv cache](host-backed-dependency-caches.md), not in a virtual environment.
+A regular Python-project marker at the worktree root also reserves the conventional root `.venv` before it exists.
+The fixed marker set is `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `Pipfile`, `uv.lock`,
+`poetry.lock`, `pdm.lock`, `tox.ini`, `pytest.ini`, and `.python-version`. Marker symlinks and directories do not
+trigger reservation. Nested project markers do not proactively create nested targets; regular `pyvenv.cfg` discovery
+still masks nested environments after they exist.
+
+If the reserved `.venv` is absent, the host launcher creates one empty mountpoint only after it has ruled out
+active-container reuse and immediately before cold container creation. An existing symlink or non-directory target
+fails closed. The host directory remains empty after session removal; environment contents live on tmpfs and disappear
+with the managed container. One-time mountpoint materialization is not a fingerprint input because the requested tmpfs
+target and mode are identical before and after it.
+
+`common.tmpfs_mounts` optionally adds further explicit targets to the selected set, and duplicate targets are removed.
+The image cannot read or modify host environments. Docker receives these masks through its dedicated `--tmpfs`
+option; the launcher also passes the same validated target/mode list to privileged container bootstrap. Sysbox 0.7 can
+attach the broader idmapped worktree bind after Docker's tmpfs and cover it, so bootstrap reapplies every tmpfs inside
+the final mount namespace and verifies its effective filesystem type before session readiness. A missing target, mount
+failure, or non-tmpfs result fails startup without running an agent. Because a fresh tmpfs is root-owned, bootstrap then
+hands each virtual-environment mask to the host user with a non-sticky `0755` mode, so a masked `.venv` is populated and
+owned like an ordinary user directory rather than a root-owned sticky mount; explicit `common.tmpfs_mounts` that are not
+environments keep the default root-owned scratch mode. Ownership is applied only during bootstrap and is not a
+fingerprint input, so a session created before this contract keeps its identity and its root-owned masks until it is
+recreated. The same contract applies to regular and linked worktrees.
+
+`common.use_host_python_venv = true` or the explicit `--use-host-python-venv` flag skips proactive, discovered, and
+configured venv tmpfs mounts, exposing those directories through the normal worktree bind. The resolved policy and
+complete tmpfs target/mode list are creation-time fingerprint inputs. Reusable Python downloads belong in the
+separately configured [host-backed uv cache](host-backed-dependency-caches.md), not in a virtual environment.
 
 #### Path overlaps
 
@@ -532,9 +551,18 @@ to use distinct Docker daemons and writable layers.
 
 Creation-time parameters are fixed when the container is created and cannot be changed by `docker exec`. A fingerprint
 mismatch prevents reuse. The launcher reports the running and requested fingerprints and asks the user to finish the
-active session before retrying; it does not silently use stale configuration, terminate another command, or replace
-the container. Ownership or protocol label mismatches remain name conflicts. Command-time parameters are excluded
-from the fingerprint and apply to each new `docker exec`.
+active session before retrying, and names `--force-exec` as the explicit alternative. Without that flag it does not
+silently use stale configuration, terminate another command, or replace the container.
+
+With `--force-exec`, a fingerprint mismatch emits a warning containing both fingerprints and permits `docker exec`
+only after the normal deterministic-name ownership and manager-protocol checks succeed. The active container's
+creation-time contract remains authoritative: the launcher does not change its image, bind mounts, tmpfs filesystems,
+creation environment, or host-MCP forwarding, and it skips host-MCP sidecar reconciliation from the newly resolved
+plan. It does not reconstruct an exec request from the active container; the normal command-time argv, working
+directory, and exec environment still come from the current invocation. The flag is invocation-only, absent from
+project config and the fingerprint, and has no effect when the fingerprints already match. Ownership or protocol
+label mismatches remain name conflicts. Command-time parameters are excluded from the fingerprint and apply to each
+new `docker exec`.
 
 A change between absent and present product state changes the normalized physical mount plan and therefore the
 creation-time fingerprint. It uses the same generic fingerprint-mismatch rejection as every other creation-time
@@ -759,6 +787,8 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Verify the deterministic name is derived from canonical worktree path and host UID, inspected directly, and reused
   through a wrapped `docker exec`.
 - Reject reuse when any creation-time parameter changes; prove command-time argument changes reuse the container.
+- Prove `--force-exec` permits only fingerprint-mismatched reuse, preserves ownership/protocol rejection, and performs
+  no creation-time host-MCP reconciliation.
 - Verify simultaneous first callers create one container and both commands register with its manager.
 - Verify the final managed command removes the container only after the idle timeout.
 - After each normal scenario, prove the Sysbox container and nested containers stopped and were removed.

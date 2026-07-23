@@ -276,10 +276,10 @@ func (attempt *launchAttempt) discardHostMCPCandidate(ctx context.Context) error
 }
 
 // reuseHostMCPAfterWait re-inspects a container that became reusable while this attempt waited, and
-// applies host-MCP reuse to it. It is a no-op for a launch that forwards nothing, so the empty-set
-// path stays exactly as it was before this feature: no extra inspect, no new failure mode.
+// applies post-wait adoption to it. A launch that forwards nothing remains a no-op unless --force-exec
+// must report that it is bypassing a fingerprint mismatch.
 func (attempt *launchAttempt) reuseHostMCPAfterWait(ctx context.Context) error {
-	if attempt.hostMCP.set.Empty() {
+	if attempt.hostMCP.set.Empty() && !attempt.forceExec {
 		return nil
 	}
 	inspection, found, err := attempt.inspectOwnedContainer(ctx)
@@ -298,6 +298,24 @@ func (attempt *launchAttempt) reuseHostMCPAfterWait(ctx context.Context) error {
 // reuseHostMCP validates a running session's forwarding against this launch's resolution, adopts its
 // channel, and recreates a sidecar that has died.
 func (attempt *launchAttempt) reuseHostMCP(ctx context.Context, inspection dockercli.ContainerInspection) error {
+	if attempt.forcedFingerprintMismatch(inspection) {
+		// --force-exec only bypasses fingerprint equality. The current launch may have resolved a
+		// different endpoint set, channel shape, or no forwarding at all, so host-MCP reconciliation
+		// must not modify the already-running container's creation-time contract.
+		running := inspection.Config.Labels[launchConfigLabel]
+		fmt.Fprintf(
+			attempt.docker.Stderr,
+			"warning: --force-exec: executing in managed session container %q (ID %q) despite "+
+				"creation fingerprint mismatch (running %q, requested %q); "+
+				"the container's existing creation-time configuration remains in effect\n",
+			attempt.containerName, inspection.ID, running, attempt.launchFingerprint,
+		)
+		if err := attempt.hostMCP.removeCandidate(); err != nil {
+			return err
+		}
+		attempt.hostMCP.candidate = false
+		return nil
+	}
 	if attempt.hostMCP.set.Empty() {
 		return nil
 	}

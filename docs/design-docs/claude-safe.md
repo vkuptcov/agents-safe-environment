@@ -67,8 +67,10 @@ bridge between the products.
 
 ### 1. Public Command
 
-`claude-safe [--project PATH] [--image REF] [--no-host-mcp] [-- CLAUDE ARG...]` always executes the managed Claude
-Code binary. Arguments after `--` are Claude Code arguments, never an arbitrary executable and never shell text.
+`claude-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [--force-exec]
+[-- CLAUDE ARG...]` always executes the managed Claude Code binary. Arguments after `--` are Claude Code arguments,
+never an arbitrary executable and never shell text. The common launcher owns `--force-exec` semantics; it does not
+change Claude argv.
 
 The configured default is `--permission-mode auto`. An invocation that explicitly supplies
 `--permission-mode`, `--dangerously-skip-permissions`, or `--allow-dangerously-skip-permissions` suppresses only that

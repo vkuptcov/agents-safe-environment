@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ func TestMountContainerTmpfsMountsAndVerifiesEffectiveFilesystem(t *testing.T) {
 	if err := mountContainerTmpfs(
 		context.Background(),
 		[]TmpfsMount{{Target: target, Mode: "1777"}},
+		0, 0,
 		runner,
 	); err != nil {
 		t.Fatalf("mountContainerTmpfs() error = %v", err)
@@ -27,12 +29,41 @@ func TestMountContainerTmpfsMountsAndVerifiesEffectiveFilesystem(t *testing.T) {
 	}
 }
 
+func TestMountContainerTmpfsHandsOwnedMaskToHostUser(t *testing.T) {
+	target := t.TempDir()
+	if err := os.Chmod(target, 0o1777); err != nil {
+		t.Fatal(err)
+	}
+	runner := &tmpfsCommandRunner{filesystem: "tmpfs\n"}
+	// The command runner fakes the mount, so the temp directory keeps its real on-disk owner. Chowning
+	// to the current identity is the permitted no-op that still exercises the ownership branch.
+	if err := mountContainerTmpfs(
+		context.Background(),
+		[]TmpfsMount{{Target: target, Mode: "1777", Owned: true}},
+		os.Getuid(), os.Getgid(),
+		runner,
+	); err != nil {
+		t.Fatalf("mountContainerTmpfs() error = %v", err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != ownedTmpfsMode {
+		t.Fatalf("owned tmpfs mode = %o, want %o", perm, ownedTmpfsMode)
+	}
+	if info.Mode()&os.ModeSticky != 0 {
+		t.Fatalf("owned tmpfs retained the sticky bit: %v", info.Mode())
+	}
+}
+
 func TestMountContainerTmpfsFailsClosedForMissingTarget(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "missing")
 	runner := &tmpfsCommandRunner{filesystem: "tmpfs\n"}
 	err := mountContainerTmpfs(
 		context.Background(),
 		[]TmpfsMount{{Target: target, Mode: "1777"}},
+		0, 0,
 		runner,
 	)
 	if err == nil || !strings.Contains(err.Error(), "stat tmpfs target") {
@@ -49,6 +80,7 @@ func TestMountContainerTmpfsRejectsIneffectiveMount(t *testing.T) {
 	err := mountContainerTmpfs(
 		context.Background(),
 		[]TmpfsMount{{Target: target, Mode: "1777"}},
+		0, 0,
 		runner,
 	)
 	if err == nil || !strings.Contains(err.Error(), `effective filesystem "ext2/ext3"`) {

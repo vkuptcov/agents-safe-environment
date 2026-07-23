@@ -61,6 +61,10 @@ type launchAttempt struct {
 	projectKey    string
 	// noHostMCP skips discovery entirely for this launch.
 	noHostMCP bool
+	// forceExec permits reuse when only the immutable creation fingerprint differs. Whether a given
+	// running container is being force-adopted is derived from its inspection, so no per-inspection
+	// state is retained across the polled fingerprint predicate.
+	forceExec bool
 	// launchFingerprint is the resolved immutable creation contract, computed before any container
 	// adoption, image preparation, sidecar allocation, or create request.
 	launchFingerprint string
@@ -140,6 +144,7 @@ func (docker *DockerLauncher) Launch(
 		containerName: ProjectContainerName(docker.HostUID, plan.ProjectRoot),
 		projectKey:    ProjectKey(docker.HostUID, plan.ProjectRoot),
 		noHostMCP:     options.NoHostMCP,
+		forceExec:     options.ForceExec,
 	}
 	// Discovery runs during preflight, before a container is created or reused, and its channel must
 	// exist before either container because it is a bind mount.

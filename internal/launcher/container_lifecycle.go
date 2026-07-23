@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strconv"
 	"time"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 	"github.com/vkuptcov/agents-safe-environment/internal/session"
 )
 
@@ -76,6 +79,9 @@ func (attempt *launchAttempt) acquireContainer(
 	if err := attempt.resolveHostMCPImage(ctx); err != nil {
 		return "", err
 	}
+	if err := materializeTmpfsTargets(attempt.plan.TmpfsMounts); err != nil {
+		return "", err
+	}
 	for count := 0; count < containerCreateAttempts; count++ {
 		containerID, conflict, err := attempt.createSessionWithHostMCP(ctx)
 		if err != nil {
@@ -114,6 +120,27 @@ func (attempt *launchAttempt) acquireContainer(
 	return "", fmt.Errorf(
 		"container name %q was not released after a concurrent create", attempt.containerName,
 	)
+}
+
+// materializeTmpfsTargets creates only heuristic-selected mountpoints and only on the cold-create path.
+// The empty directory remains on the host, while Docker and privileged bootstrap cover it with session tmpfs.
+func materializeTmpfsTargets(mounts []launchplan.TmpfsMount) error {
+	for _, mount := range mounts {
+		if !mount.CreateTarget {
+			continue
+		}
+		if err := os.Mkdir(mount.Target, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("create proactive tmpfs target %q: %w", mount.Target, err)
+		}
+		info, err := os.Lstat(mount.Target)
+		if err != nil {
+			return fmt.Errorf("inspect proactive tmpfs target %q: %w", mount.Target, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("proactive tmpfs target %q is not a directory", mount.Target)
+		}
+	}
+	return nil
 }
 
 func waitForContainerPoll(ctx context.Context) error {
@@ -188,17 +215,29 @@ func (attempt *launchAttempt) validateOwnership(inspection dockercli.ContainerIn
 }
 
 // validateRunningFingerprint is the sole creation-time reuse predicate after ownership and protocol checks.
+// It is a pure predicate that polling callers re-run freely: --force-exec tolerates a mismatch here, while
+// the one-time adoption warning and skipped host-MCP reconciliation happen at the reuse site.
 func (attempt *launchAttempt) validateRunningFingerprint(inspection dockercli.ContainerInspection) error {
-	if running := inspection.Config.Labels[launchConfigLabel]; running != attempt.launchFingerprint {
-		return &launchConfigMismatchError{
-			containerName: attempt.containerName,
-			containerID:   inspection.ID,
-			projectRoot:   attempt.plan.ProjectRoot,
-			running:       running,
-			requested:     attempt.launchFingerprint,
-		}
+	if attempt.forcedFingerprintMismatch(inspection) || !attempt.fingerprintMismatch(inspection) {
+		return nil
 	}
-	return nil
+	return &launchConfigMismatchError{
+		containerName: attempt.containerName,
+		containerID:   inspection.ID,
+		projectRoot:   attempt.plan.ProjectRoot,
+		running:       inspection.Config.Labels[launchConfigLabel],
+		requested:     attempt.launchFingerprint,
+	}
+}
+
+// fingerprintMismatch reports whether the running container's creation fingerprint differs from this launch.
+func (attempt *launchAttempt) fingerprintMismatch(inspection dockercli.ContainerInspection) bool {
+	return inspection.Config.Labels[launchConfigLabel] != attempt.launchFingerprint
+}
+
+// forcedFingerprintMismatch reports whether --force-exec is adopting this running container despite a mismatch.
+func (attempt *launchAttempt) forcedFingerprintMismatch(inspection dockercli.ContainerInspection) bool {
+	return attempt.forceExec && attempt.fingerprintMismatch(inspection)
 }
 
 func (attempt *launchAttempt) waitForReusableOrReleased(

@@ -23,6 +23,9 @@ const (
 type bootstrapTmpfsMount struct {
 	Target string `json:"target"`
 	Mode   string `json:"mode"`
+	// Owned asks privileged bootstrap to chown the mount to the host user. It rides the bootstrap wire
+	// but not the creation fingerprint, so it never changes session-reuse identity.
+	Owned bool `json:"owned,omitempty"`
 }
 
 // Host identity is validated once by validateConfiguration before a launch starts, so the request
@@ -124,7 +127,7 @@ func (docker *DockerLauncher) buildCreateRequest(
 func encodeBootstrapTmpfsMounts(mounts []launchplan.TmpfsMount) (string, error) {
 	wire := make([]bootstrapTmpfsMount, 0, len(mounts))
 	for _, mount := range mounts {
-		wire = append(wire, bootstrapTmpfsMount{Target: mount.Target, Mode: mount.Mode})
+		wire = append(wire, bootstrapTmpfsMount{Target: mount.Target, Mode: mount.Mode, Owned: mount.Owned})
 	}
 	encoded, err := json.Marshal(wire)
 	if err != nil {

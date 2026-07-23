@@ -116,7 +116,7 @@ The product interface is:
 
 ```text
 codex-safe update
-codex-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [-- CODEX ARG...]
+codex-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [--force-exec] [-- CODEX ARG...]
 ```
 
 Update the shared Linux installation from any directory:
@@ -153,7 +153,11 @@ container lifecycle.
 
 A relaunch that resolves different product state or another creation-time mount for a still-running worktree is
 rejected with a finish-active-session diagnostic: mounts are fixed when the container is created, so the launcher
-neither reuses the stale session nor terminates the live one.
+neither reuses the stale session nor terminates the live one. The diagnostic also names `--force-exec` as an explicit
+emergency override. When supplied before `--`, that flag executes in the owned, protocol-compatible running container
+with its existing image, mounts, cache mounts, tmpfs filesystems, and host-MCP state. The launcher prints both
+fingerprints and does not try to reconcile those creation-time resources to the newly resolved plan; the normal
+command-time argv and exec environment still come from the current invocation.
 
 When stdin and stdout are attached to a terminal, the launcher allocates a Docker TTY and forwards terminal input, so
 interactive Codex behaves as it does on the host.
@@ -164,7 +168,7 @@ The Claude Code product interface is:
 
 ```text
 claude-safe update
-claude-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [-- CLAUDE ARG...]
+claude-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [--force-exec] [-- CLAUDE ARG...]
 ```
 
 Update the independent shared Linux installation from any directory:
@@ -205,7 +209,7 @@ The generic command interface is:
 
 ```text
 agents-safe init [--project PATH] [--host-caches=auto|none|go_build,go_modules,uv]
-agents-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [--] COMMAND [ARG...]
+agents-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [--force-exec] [--] COMMAND [ARG...]
 ```
 
 Prepare an inactive project-environment template from anywhere inside a Git worktree:

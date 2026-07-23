@@ -8,6 +8,7 @@
   - `internal/launcher/`
   - `internal/container/`
   - `internal/cli/`
+  - `ARCHITECTURE.md`
   - `docs/design-docs/agents-safe.md`
   - `docs/design-docs/go-session-manager.md`
   - `docs/design-docs/project-launcher-configuration.md`
@@ -22,6 +23,8 @@ them.
 
 - With `use_host_python_venv = false`, each session masks the configured root `.venv` and every discovered
   project-local Python virtual environment with a writable container-local filesystem.
+- A root Python-project marker reserves `<worktree>/.venv` before the first environment is created, so a second
+  launcher can reuse the same active session without changing the creation fingerprint.
 - `use_host_python_venv = true` and its explicit CLI override expose host environments without tmpfs mounts.
 - An existing session without that mask is not reused after the change.
 - Focused launcher tests, the repository test gate, documentation check, and the real mount proof pass.
@@ -40,6 +43,12 @@ bind intentionally remains shared and is not a virtual environment.
   bootstrap because Sysbox 0.7 can still cover Docker's tmpfs with the broader bind.
 - Discover existing environments by regular `pyvenv.cfg` markers on every launch; do not follow symlinks or scan Git
   metadata.
+- Treat a conservative set of regular root manifest, lock, and tool-config files as Python-project markers. Reserve
+  only the root `.venv`; nested projects continue to rely on regular `pyvenv.cfg` discovery.
+- Carry missing-target intent in the host launch plan but exclude it from the creation fingerprint and container
+  contract. Materialize the empty host directory only after active-session reuse is ruled out and before cold create.
+- Keep fingerprint schema 5 for the follow-up: affected Python projects gain a hashed `.venv` target, while transient
+  host materialization and unaffected project contracts do not change.
 - Keep tmpfs mounts distinct from host bind mounts and expose their base list as `common.tmpfs_mounts`; they have no
   source or logical host-access role. The generated config preconfigures no venv target; masking is driven by
   launch-time discovery, and `common.tmpfs_mounts` is an optional explicit addition.
@@ -70,20 +79,35 @@ test proves host content is unchanged.
 2. Add a smoke test that observes independent host and container `.venv` content and verifies the effective
    filesystem type with `statfs`.
 
+### Phase 3: Proactive Root Environment Reservation
+Purpose: Keep the creation-time venv plan stable when a Python tool creates `.venv` after session startup.
+Status: done
+Done when: a root Python-project marker selects `.venv` tmpfs before it exists, cold create materializes only the
+required empty mountpoint, and later launchers resolve the same fingerprint.
+
+1. Detect the documented regular root Python-project markers without following symlinks.
+2. Add the root `.venv` target to the resolved tmpfs plan and carry whether cold create must materialize it.
+3. Materialize the mountpoint only after active-container adoption is ruled out.
+4. Cover marker detection, unsafe targets, fingerprint stability, cold-create timing, and effective Sysbox tmpfs.
+5. Update the durable design contract and validation record.
+
 ## Validation Gates
 
 - `gofmt -w` on changed Go files completes without changes afterwards.
 - `go test ./internal/launcher ./internal/launcher/dockercli` passes.
 - `go test ./internal/container` passes.
 - `make test` passes.
+- `make lint` passes.
 - `make check-docs` passes.
-- `make test-smoke-go` passes on a compatible Linux/Sysbox host and proves `.venv` isolation.
+- `make test-smoke-go` passes on a compatible Linux/Sysbox host and proves proactive `.venv` isolation.
 
 ## Risks and Constraints
 
 - `tmpfs` content is intentionally lost when the managed container exits; dependency downloads continue to use the
   separately configured uv cache.
 - A running session created before this change must finish before the new mount contract can take effect.
+- Proactive reservation leaves one empty host `.venv` mountpoint after session removal; environment contents remain
+  session-local and disappear with the container.
 
 ## Out of Scope
 
@@ -112,3 +136,16 @@ test proves host content is unchanged.
   assertions were implemented. Focused tests, `make test`, `make lint`, `make check-docs`, and the complete
   `make test-smoke-go` gate pass; the real Sysbox suite completed in 333.198 seconds.
 - 2026-07-22: Removing the bootstrap workaround after a verified Sysbox fix was explicitly deferred to `TD-5`.
+- 2026-07-23: Owner follow-up reopened the plan to reserve root `.venv` for Python projects before `pyvenv.cfg`
+  exists, preventing a post-start environment creation from changing the next launch fingerprint.
+- 2026-07-23: Root marker detection, cold-create-only host mountpoint materialization, unsafe-target rejection, and
+  fingerprint stability were implemented. `make test`, `make lint`, and `make check-docs` pass.
+- 2026-07-23: The complete `make test-smoke-go` gate passes in 279.929 seconds. The real Sysbox venv scenario starts
+  without `.venv`, observes effective `tmpfs`, keeps container writes off the host, and leaves only the empty host
+  mountpoint after removal.
+- 2026-07-23: Owner follow-up — a freshly mounted venv mask was root-owned `1777` inside the session, so `.venv`
+  appeared as a root-owned sticky directory. Bootstrap now chowns every owned mask to the host user and applies `0755`.
+  The `Owned` flag rides the launch plan and the `AGENTS_SAFE_TMPFS_MOUNTS` wire but is deliberately excluded from the
+  creation fingerprint, so running sessions keep their identity and generic `common.tmpfs_mounts` stay root-owned
+  scratch. `make test`, `make lint`, and `make check-docs` pass; the Sysbox smoke gate still needs a rerun for the
+  ownership assertion.

@@ -53,6 +53,15 @@ func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
 		hostmcp.Set{Endpoints: []hostmcp.Endpoint{{Host: "localhost", Port: 8080, Names: []string{"renamed"}}}}); got != base {
 		t.Fatalf("non-creation fields changed fingerprint = %q, want %q", got, base)
 	}
+
+	materialized := planWithTmpfsMount(plan)
+	beforeCreate := materialized
+	beforeCreate.TmpfsMounts = append([]launchplan.TmpfsMount(nil), materialized.TmpfsMounts...)
+	beforeCreate.TmpfsMounts[0].CreateTarget = true
+	if got, want := mustCreationFingerprint(t, beforeCreate, "image:one", false, false, false, endpoints),
+		mustCreationFingerprint(t, materialized, "image:one", false, false, false, endpoints); got != want {
+		t.Fatalf("one-time target materialization changed fingerprint = %q, want %q", got, want)
+	}
 }
 
 func TestCreationFingerprintIncludesSchemaVersionFive(t *testing.T) {
@@ -99,7 +108,8 @@ func TestDockerLaunchRejectsFingerprintMismatchBeforePreflight(t *testing.T) {
 		output: inspectionJSON(t, containerID, true, "running", labels),
 	}}}
 	err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{})
-	if err == nil || !strings.Contains(err.Error(), "creation fingerprint") || !strings.Contains(err.Error(), "finish the active session") {
+	if err == nil || !strings.Contains(err.Error(), "creation fingerprint") ||
+		!strings.Contains(err.Error(), "finish the active session") || !strings.Contains(err.Error(), "--force-exec") {
 		t.Fatalf("Launch() error = %v, want fingerprint mismatch", err)
 	}
 	if !strings.Contains(err.Error(), containerName) || !strings.Contains(err.Error(), containerID) {
@@ -114,6 +124,39 @@ func TestDockerLaunchRejectsFingerprintMismatchBeforePreflight(t *testing.T) {
 	}
 	if len(runner.combinedCalls) != 1 || len(runner.runCalls) != 0 {
 		t.Fatalf("mismatch reached Docker lifecycle: combined %#v run %#v", runner.combinedCalls, runner.runCalls)
+	}
+}
+
+func TestDockerLaunchForceExecReusesFingerprintMismatch(t *testing.T) {
+	plan := planWithCache(simplePlan())
+	containerID := strings.Repeat("b", 64)
+	labels := matchingLabels(t, plan, 1000)
+	runningFingerprint := strings.Repeat("f", 64)
+	labels[launchConfigLabel] = runningFingerprint
+	runner := &fakeCommandRunner{outputs: []commandResult{{
+		output: inspectionJSON(t, containerID, true, "running", labels),
+	}}}
+	docker := testDocker(runner)
+	stderr := new(strings.Builder)
+	docker.Stderr = stderr
+
+	if err := docker.Launch(
+		context.Background(), plan, "image", []string{"true"}, launchplan.Options{ForceExec: true},
+	); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	assertSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"true"})
+	if !containsSequence(runner.runCalls[1], "--env", "GOCACHE=/host/cache") {
+		t.Fatalf("forced exec = %#v, want ordinary current-plan environment", runner.runCalls[1])
+	}
+	warning := stderr.String()
+	if !strings.Contains(warning, "--force-exec") ||
+		!strings.Contains(warning, runningFingerprint) ||
+		!strings.Contains(warning, "existing creation-time configuration remains in effect") {
+		t.Fatalf("warning = %q, want forced mismatch details", warning)
+	}
+	if got := strings.Count(warning, "creation fingerprint mismatch"); got != 1 {
+		t.Fatalf("warning count = %d, want one; warning = %q", got, warning)
 	}
 }
 

@@ -76,6 +76,8 @@ func creationFingerprint(
 	}
 	tmpfsMounts := make([]fingerprintTmpfsMount, 0, len(plan.TmpfsMounts))
 	for _, mount := range plan.TmpfsMounts {
+		// CreateTarget is deliberately excluded: it records one-time host materialization. Once the
+		// empty directory exists, the requested container mount remains exactly the same.
 		tmpfsMounts = append(tmpfsMounts, fingerprintTmpfsMount{Target: mount.Target, Mode: mount.Mode})
 	}
 
@@ -121,7 +123,8 @@ func (err *launchConfigMismatchError) Error() string {
 	return fmt.Sprintf(
 		"managed session container %q (ID %q) for worktree %q has creation fingerprint %q, "+
 			"but this launch resolved %q; "+
-			"finish the active session before retrying, then relaunch",
+			"finish the active session before retrying, then relaunch, or pass --force-exec "+
+			"to execute in the existing container with its current creation-time configuration",
 		err.containerName, err.containerID, err.projectRoot, err.running, err.requested,
 	)
 }

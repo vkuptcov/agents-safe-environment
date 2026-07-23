@@ -169,8 +169,8 @@ func TestResolvePythonVirtualEnvironmentsUsesDiscoveredTargetsUnlessHostUseIsEna
 		t.Fatal(err)
 	}
 	want := []TmpfsMount{
-		{Target: environments[0], Mode: projectenv.DefaultTmpfsMode},
-		{Target: environments[1], Mode: projectenv.DefaultTmpfsMode},
+		{Target: environments[0], Mode: projectenv.DefaultTmpfsMode, Owned: true},
+		{Target: environments[1], Mode: projectenv.DefaultTmpfsMode, Owned: true},
 	}
 	if !reflect.DeepEqual(resolution.Plan.TmpfsMounts, want) {
 		t.Fatalf("TmpfsMounts = %#v, want %#v", resolution.Plan.TmpfsMounts, want)
@@ -183,6 +183,38 @@ func TestResolvePythonVirtualEnvironmentsUsesDiscoveredTargetsUnlessHostUseIsEna
 	}
 	if len(resolution.Plan.TmpfsMounts) != 0 {
 		t.Fatalf("TmpfsMounts = %#v, want host environments exposed", resolution.Plan.TmpfsMounts)
+	}
+}
+
+func TestResolvePythonProjectReservesRootVenvBeforeItExists(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pyproject.toml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveTmpfsMounts(root, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []TmpfsMount{{
+		Target:       filepath.Join(root, ".venv"),
+		Mode:         projectenv.DefaultTmpfsMode,
+		CreateTarget: true,
+		Owned:        true,
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolveTmpfsMounts() = %#v, want %#v", got, want)
+	}
+	if _, err := os.Lstat(want[0].Target); !os.IsNotExist(err) {
+		t.Fatalf("Resolve materialized %q before cold-container creation: %v", want[0].Target, err)
+	}
+
+	got, err = resolveTmpfsMounts(root, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("resolveTmpfsMounts() = %#v, want host environment policy to skip reservation", got)
 	}
 }
 

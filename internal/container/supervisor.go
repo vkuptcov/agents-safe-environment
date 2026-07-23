@@ -77,7 +77,13 @@ func (supervisor *Supervisor) Serve(ctx context.Context) error {
 	// design's cold-start bound; the launcher bounds container creation as the other half.
 	bootstrapContext, cancelBootstrap := context.WithTimeout(ctx, PreLeaseDeadline)
 	defer cancelBootstrap()
-	if err := mountContainerTmpfs(bootstrapContext, supervisor.config.TmpfsMounts, supervisor.commands); err != nil {
+	if err := mountContainerTmpfs(
+		bootstrapContext,
+		supervisor.config.TmpfsMounts,
+		supervisor.config.HostUID,
+		supervisor.config.HostGID,
+		supervisor.commands,
+	); err != nil {
 		return fmt.Errorf("mount container tmpfs: %w", err)
 	}
 	if err := reconcileContainerAccount(bootstrapContext, supervisor.config, supervisor.commands); err != nil {

@@ -16,6 +16,9 @@ import (
 // the package both the CLI scaffold and the launcher already import, so neither has to depend on the
 // other to name them.
 type Options struct {
+	// ForceExec permits docker exec into an owned, protocol-compatible running container even when
+	// its immutable creation fingerprint differs. The existing container remains unchanged.
+	ForceExec bool
 	// ImageOverride records explicit --image intent. Its value is independent of the selected image:
 	// supplying the default reference still deliberately bypasses project-environment discovery.
 	ImageOverride bool
@@ -53,6 +56,14 @@ type BindMount struct {
 type TmpfsMount struct {
 	Target string
 	Mode   string
+	// CreateTarget records that cold-container creation must materialize an empty host mountpoint.
+	// It is transient launch work, not part of the container or fingerprint contract.
+	CreateTarget bool
+	// Owned records that privileged bootstrap must chown this mount to the host user and give it a
+	// user-appropriate mode. It marks Python virtual-environment masks, which the user populates and
+	// expects to own, and never generic scratch tmpfs. Like CreateTarget it is excluded from the
+	// creation fingerprint, so a running session keeps the same identity across this change.
+	Owned bool
 }
 
 // Plan is the validated filesystem contract passed from Git-project discovery to the launcher.
@@ -75,8 +86,8 @@ type Plan struct {
 	// DependencyCaches keeps cache identity distinct from generic mount normalization. Source is the
 	// symlink-resolved host bind source; Target is the configured tool-visible container path.
 	DependencyCaches []DependencyCache
-	// TmpfsMounts are the complete ordered container-local filesystems selected by project configuration and
-	// Python virtual-environment discovery.
+	// TmpfsMounts are the complete ordered container-local filesystems selected by project configuration,
+	// root Python-project detection, and Python virtual-environment discovery.
 	TmpfsMounts []TmpfsMount
 }
 
@@ -348,22 +359,38 @@ func resolveTmpfsMounts(
 		return nil, nil
 	}
 
-	result := make([]TmpfsMount, 0, len(configured))
-	seen := make(map[string]struct{}, len(configured))
+	result := make([]TmpfsMount, 0, len(configured)+1)
+	seen := make(map[string]int, len(configured)+1)
 	for _, mount := range configured {
 		result = append(result, TmpfsMount{Target: mount.Target, Mode: mount.Mode})
-		seen[mount.Target] = struct{}{}
+		seen[mount.Target] = len(result) - 1
+	}
+	reservation, found, err := rootPythonVenvReservation(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		if index, exists := seen[reservation.Target]; exists {
+			result[index].CreateTarget = reservation.CreateTarget
+			result[index].Owned = reservation.Owned
+		} else {
+			result = append(result, reservation)
+			seen[reservation.Target] = len(result) - 1
+		}
 	}
 	discovered, err := DiscoverPythonVirtualEnvironments(projectRoot)
 	if err != nil {
 		return nil, err
 	}
 	for _, target := range discovered {
-		if _, found := seen[target]; found {
+		if index, found := seen[target]; found {
+			// A discovered environment is a venv the user owns even when it was also listed as a
+			// generic tmpfs mount, so upgrade the existing entry rather than leaving it root-owned.
+			result[index].Owned = true
 			continue
 		}
-		result = append(result, TmpfsMount{Target: target, Mode: projectenv.DefaultTmpfsMode})
-		seen[target] = struct{}{}
+		result = append(result, TmpfsMount{Target: target, Mode: projectenv.DefaultTmpfsMode, Owned: true})
+		seen[target] = len(result) - 1
 	}
 	for first := range result {
 		if strings.Contains(result[first].Target, ":") {

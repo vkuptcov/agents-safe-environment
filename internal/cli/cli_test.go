@@ -37,7 +37,8 @@ func TestRunResolvesExplicitFlagsBeforeLaunch(t *testing.T) {
 	var gotDefaultImage string
 	var gotHostHome string
 	exit := cli.Run(context.Background(), testConfig(),
-		[]string{"--project", "/project/nested", "--image", "override:image", "--no-host-mcp=false", "--use-host-python-venv", "cmd"},
+		[]string{"--project", "/project/nested", "--image", "override:image", "--no-host-mcp=false",
+			"--use-host-python-venv", "--force-exec", "cmd"},
 		new(bytes.Buffer), new(bytes.Buffer), cli.Dependencies{
 			Discover: func(_ context.Context, path string) (gitproject.Project, error) {
 				if path != "/project/nested" {
@@ -80,7 +81,7 @@ func TestRunResolvesExplicitFlagsBeforeLaunch(t *testing.T) {
 	if !reflect.DeepEqual(launcher.Command, []string{"configured", "cmd"}) {
 		t.Fatalf("command = %#v", launcher.Command)
 	}
-	if launcher.Image != "resolved:image" || !launcher.Options.NoHostMCP {
+	if launcher.Image != "resolved:image" || !launcher.Options.NoHostMCP || !launcher.Options.ForceExec {
 		t.Fatalf("launch = image %q, options %#v", launcher.Image, launcher.Options)
 	}
 }
