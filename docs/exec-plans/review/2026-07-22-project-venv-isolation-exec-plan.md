@@ -143,3 +143,9 @@ required empty mountpoint, and later launchers resolve the same fingerprint.
 - 2026-07-23: The complete `make test-smoke-go` gate passes in 279.929 seconds. The real Sysbox venv scenario starts
   without `.venv`, observes effective `tmpfs`, keeps container writes off the host, and leaves only the empty host
   mountpoint after removal.
+- 2026-07-23: Owner follow-up — a freshly mounted venv mask was root-owned `1777` inside the session, so `.venv`
+  appeared as a root-owned sticky directory. Bootstrap now chowns every owned mask to the host user and applies `0755`.
+  The `Owned` flag rides the launch plan and the `AGENTS_SAFE_TMPFS_MOUNTS` wire but is deliberately excluded from the
+  creation fingerprint, so running sessions keep their identity and generic `common.tmpfs_mounts` stay root-owned
+  scratch. `make test`, `make lint`, and `make check-docs` pass; the Sysbox smoke gate still needs a rerun for the
+  ownership assertion.

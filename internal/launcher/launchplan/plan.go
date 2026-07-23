@@ -59,6 +59,11 @@ type TmpfsMount struct {
 	// CreateTarget records that cold-container creation must materialize an empty host mountpoint.
 	// It is transient launch work, not part of the container or fingerprint contract.
 	CreateTarget bool
+	// Owned records that privileged bootstrap must chown this mount to the host user and give it a
+	// user-appropriate mode. It marks Python virtual-environment masks, which the user populates and
+	// expects to own, and never generic scratch tmpfs. Like CreateTarget it is excluded from the
+	// creation fingerprint, so a running session keeps the same identity across this change.
+	Owned bool
 }
 
 // Plan is the validated filesystem contract passed from Git-project discovery to the launcher.
@@ -367,6 +372,7 @@ func resolveTmpfsMounts(
 	if found {
 		if index, exists := seen[reservation.Target]; exists {
 			result[index].CreateTarget = reservation.CreateTarget
+			result[index].Owned = reservation.Owned
 		} else {
 			result = append(result, reservation)
 			seen[reservation.Target] = len(result) - 1
@@ -377,10 +383,13 @@ func resolveTmpfsMounts(
 		return nil, err
 	}
 	for _, target := range discovered {
-		if _, found := seen[target]; found {
+		if index, found := seen[target]; found {
+			// A discovered environment is a venv the user owns even when it was also listed as a
+			// generic tmpfs mount, so upgrade the existing entry rather than leaving it root-owned.
+			result[index].Owned = true
 			continue
 		}
-		result = append(result, TmpfsMount{Target: target, Mode: projectenv.DefaultTmpfsMode})
+		result = append(result, TmpfsMount{Target: target, Mode: projectenv.DefaultTmpfsMode, Owned: true})
 		seen[target] = len(result) - 1
 	}
 	for first := range result {

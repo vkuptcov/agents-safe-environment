@@ -39,7 +39,7 @@ func rootPythonVenvReservation(projectRoot string) (TmpfsMount, bool, error) {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return TmpfsMount{
-			Target: target, Mode: projectenv.DefaultTmpfsMode, CreateTarget: true,
+			Target: target, Mode: projectenv.DefaultTmpfsMode, CreateTarget: true, Owned: true,
 		}, true, nil
 	case err != nil:
 		return TmpfsMount{}, false, fmt.Errorf("inspect proactive Python virtual environment target %q: %w", target, err)
@@ -49,7 +49,7 @@ func rootPythonVenvReservation(projectRoot string) (TmpfsMount, bool, error) {
 			target,
 		)
 	default:
-		return TmpfsMount{Target: target, Mode: projectenv.DefaultTmpfsMode}, true, nil
+		return TmpfsMount{Target: target, Mode: projectenv.DefaultTmpfsMode, Owned: true}, true, nil
 	}
 }
 

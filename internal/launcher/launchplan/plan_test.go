@@ -169,8 +169,8 @@ func TestResolvePythonVirtualEnvironmentsUsesDiscoveredTargetsUnlessHostUseIsEna
 		t.Fatal(err)
 	}
 	want := []TmpfsMount{
-		{Target: environments[0], Mode: projectenv.DefaultTmpfsMode},
-		{Target: environments[1], Mode: projectenv.DefaultTmpfsMode},
+		{Target: environments[0], Mode: projectenv.DefaultTmpfsMode, Owned: true},
+		{Target: environments[1], Mode: projectenv.DefaultTmpfsMode, Owned: true},
 	}
 	if !reflect.DeepEqual(resolution.Plan.TmpfsMounts, want) {
 		t.Fatalf("TmpfsMounts = %#v, want %#v", resolution.Plan.TmpfsMounts, want)
@@ -200,6 +200,7 @@ func TestResolvePythonProjectReservesRootVenvBeforeItExists(t *testing.T) {
 		Target:       filepath.Join(root, ".venv"),
 		Mode:         projectenv.DefaultTmpfsMode,
 		CreateTarget: true,
+		Owned:        true,
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("resolveTmpfsMounts() = %#v, want %#v", got, want)

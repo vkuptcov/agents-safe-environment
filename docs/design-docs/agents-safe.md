@@ -245,8 +245,12 @@ The image cannot read or modify host environments. Docker receives these masks t
 option; the launcher also passes the same validated target/mode list to privileged container bootstrap. Sysbox 0.7 can
 attach the broader idmapped worktree bind after Docker's tmpfs and cover it, so bootstrap reapplies every tmpfs inside
 the final mount namespace and verifies its effective filesystem type before session readiness. A missing target, mount
-failure, or non-tmpfs result fails startup without running an agent. The same contract applies to regular and linked
-worktrees.
+failure, or non-tmpfs result fails startup without running an agent. Because a fresh tmpfs is root-owned, bootstrap then
+hands each virtual-environment mask to the host user with a non-sticky `0755` mode, so a masked `.venv` is populated and
+owned like an ordinary user directory rather than a root-owned sticky mount; explicit `common.tmpfs_mounts` that are not
+environments keep the default root-owned scratch mode. Ownership is applied only during bootstrap and is not a
+fingerprint input, so a session created before this contract keeps its identity and its root-owned masks until it is
+recreated. The same contract applies to regular and linked worktrees.
 
 `common.use_host_python_venv = true` or the explicit `--use-host-python-venv` flag skips proactive, discovered, and
 configured venv tmpfs mounts, exposing those directories through the normal worktree bind. The resolved policy and

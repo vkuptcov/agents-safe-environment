@@ -77,7 +77,7 @@ func TestRootPythonVenvReservationRecognizesRegularProjectMarkers(t *testing.T) 
 				t.Fatal(err)
 			}
 			want := TmpfsMount{
-				Target: filepath.Join(root, ".venv"), Mode: "1777", CreateTarget: true,
+				Target: filepath.Join(root, ".venv"), Mode: "1777", CreateTarget: true, Owned: true,
 			}
 			if !found || !reflect.DeepEqual(got, want) {
 				t.Fatalf("rootPythonVenvReservation() = %#v, %t, want %#v, true", got, found, want)
@@ -117,7 +117,7 @@ func TestRootPythonVenvReservationUsesExistingDirectoryWithoutMaterialization(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := TmpfsMount{Target: target, Mode: "1777"}
+	want := TmpfsMount{Target: target, Mode: "1777", Owned: true}
 	if !found || !reflect.DeepEqual(got, want) {
 		t.Fatalf("rootPythonVenvReservation() = %#v, %t, want %#v, true", got, found, want)
 	}
