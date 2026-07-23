@@ -128,7 +128,7 @@ func TestDockerLaunchRejectsFingerprintMismatchBeforePreflight(t *testing.T) {
 }
 
 func TestDockerLaunchForceExecReusesFingerprintMismatch(t *testing.T) {
-	plan := simplePlan()
+	plan := planWithCache(simplePlan())
 	containerID := strings.Repeat("b", 64)
 	labels := matchingLabels(t, plan, 1000)
 	runningFingerprint := strings.Repeat("f", 64)
@@ -146,6 +146,9 @@ func TestDockerLaunchForceExecReusesFingerprintMismatch(t *testing.T) {
 		t.Fatalf("Launch() error = %v", err)
 	}
 	assertSessionReadyThenWrappedRun(t, runner.runCalls, containerID, []string{"true"})
+	if !containsSequence(runner.runCalls[1], "--env", "GOCACHE=/host/cache") {
+		t.Fatalf("forced exec = %#v, want ordinary current-plan environment", runner.runCalls[1])
+	}
 	warning := stderr.String()
 	if !strings.Contains(warning, "--force-exec") ||
 		!strings.Contains(warning, runningFingerprint) ||

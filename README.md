@@ -155,8 +155,9 @@ A relaunch that resolves different product state or another creation-time mount 
 rejected with a finish-active-session diagnostic: mounts are fixed when the container is created, so the launcher
 neither reuses the stale session nor terminates the live one. The diagnostic also names `--force-exec` as an explicit
 emergency override. When supplied before `--`, that flag executes in the owned, protocol-compatible running container
-with its existing image, mounts, caches, tmpfs filesystems, and host-MCP state. The launcher prints both fingerprints
-and does not try to reconcile the running container to the newly resolved plan.
+with its existing image, mounts, cache mounts, tmpfs filesystems, and host-MCP state. The launcher prints both
+fingerprints and does not try to reconcile those creation-time resources to the newly resolved plan; the normal
+command-time argv and exec environment still come from the current invocation.
 
 When stdin and stdout are attached to a terminal, the launcher allocates a Docker TTY and forwards terminal input, so
 interactive Codex behaves as it does on the host.

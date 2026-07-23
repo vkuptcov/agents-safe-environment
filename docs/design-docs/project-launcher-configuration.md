@@ -24,7 +24,7 @@ This gives the user two things immediately:
 - visibility: the project file shows the image, mount plan, host-MCP choice, and launcher-specific arguments;
 - persistence: editing a value once replaces the need to pass the same flag on every invocation.
 
-Parameters have two lifecycle classes:
+Parameters have three lifecycle classes:
 
 | Class | Parameters | Running-container behavior |
 | --- | --- | --- |
@@ -83,7 +83,8 @@ layer, an omitted flag changes nothing; only a flag explicitly present in argv o
 
 `--force-exec` is not a project-config override. It is an invocation-only adoption decision made after resolution and
 fingerprinting: the current plan is still computed for diagnostics, but the owned, protocol-compatible active
-container's creation-time resources remain in effect.
+container's creation-time resources remain in effect. The ordinary exec request is still built from the current
+resolved plan; the override does not reconstruct command-time values from container inspection.
 
 Host paths are resolved once per invocation. The canonical home used to build mount targets is carried through the
 resolved CLI configuration into lazy launcher construction, so container environment and exec requests use the same
@@ -422,7 +423,8 @@ container exits and is removed, the next invocation creates one from the resolve
 When `--force-exec` is present, only creation-fingerprint equality is bypassed. Ownership and manager-protocol checks
 remain mandatory. The launcher warns with both fingerprints, executes against the active container's existing
 creation-time state, and does not reconcile host-MCP forwarding or any other immutable resource from the current
-plan. The flag is not serialized and is excluded from the fingerprint.
+plan. It then builds the same command-time exec request as an ordinary matching-fingerprint launch. The flag is not
+serialized and is excluded from the fingerprint.
 
 Command-time parameters are the configured and invocation argv for `codex-safe`, `claude-safe`, or `agents-safe`.
 They are not part of the creation-time fingerprint and are applied to every command through `docker exec`, including

@@ -16,11 +16,14 @@ func TestReuseHostMCPSkipsReconciliationForForcedFingerprintMismatch(t *testing.
 	t.Parallel()
 	candidate := t.TempDir()
 	attempt := &launchAttempt{
-		docker:                    testDocker(&fakeCommandRunner{}),
-		hostMCP:                   hostMCPPlan{set: oneEndpointSet(t), channel: hostmcp.Channel{Generation: candidate}, candidate: true},
-		fingerprintMismatchForced: true,
+		docker:            testDocker(&fakeCommandRunner{}),
+		hostMCP:           hostMCPPlan{set: oneEndpointSet(t), channel: hostmcp.Channel{Generation: candidate}, candidate: true},
+		forceExec:         true,
+		launchFingerprint: "requested",
 	}
-	if err := attempt.reuseHostMCP(context.Background(), dockercli.ContainerInspection{}); err != nil {
+	inspection := dockercli.ContainerInspection{}
+	inspection.Config.Labels = map[string]string{launchConfigLabel: "running"}
+	if err := attempt.reuseHostMCP(context.Background(), inspection); err != nil {
 		t.Fatalf("reuseHostMCP() error = %v, want forced as-is reuse", err)
 	}
 	if attempt.hostMCP.candidate {
@@ -28,6 +31,32 @@ func TestReuseHostMCPSkipsReconciliationForForcedFingerprintMismatch(t *testing.
 	}
 	if _, err := os.Stat(candidate); !os.IsNotExist(err) {
 		t.Fatalf("candidate stat error = %v, want removed", err)
+	}
+}
+
+func TestReuseHostMCPAfterWaitWarnsForForcedMismatchWithoutEndpoints(t *testing.T) {
+	t.Parallel()
+	plan := testPlan()
+	containerID := strings.Repeat("b", 64)
+	labels := matchingLabels(t, plan, 1000)
+	labels[launchConfigLabel] = "running"
+	runner := &fakeCommandRunner{outputs: []commandResult{{
+		output: inspectionJSON(t, containerID, true, "running", labels),
+	}}}
+	attempt := attemptWith(runner)
+	attempt.forceExec = true
+	attempt.launchFingerprint = "requested"
+	stderr := new(strings.Builder)
+	attempt.docker.Stderr = stderr
+
+	if err := attempt.reuseHostMCPAfterWait(context.Background()); err != nil {
+		t.Fatalf("reuseHostMCPAfterWait() error = %v", err)
+	}
+	warning := stderr.String()
+	if !strings.Contains(warning, "--force-exec") ||
+		!strings.Contains(warning, "running") ||
+		!strings.Contains(warning, "requested") {
+		t.Fatalf("warning = %q, want forced mismatch details", warning)
 	}
 }
 

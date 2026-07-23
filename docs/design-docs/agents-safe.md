@@ -552,11 +552,13 @@ silently use stale configuration, terminate another command, or replace the cont
 
 With `--force-exec`, a fingerprint mismatch emits a warning containing both fingerprints and permits `docker exec`
 only after the normal deterministic-name ownership and manager-protocol checks succeed. The active container's
-creation-time contract remains authoritative: the launcher does not change its image, mounts, cache routing, tmpfs
-filesystems, environment, or host-MCP forwarding, and it skips host-MCP sidecar reconciliation from the newly resolved
-plan. The flag is invocation-only, absent from project config and the fingerprint, and has no effect when the
-fingerprints already match. Ownership or protocol label mismatches remain name conflicts. Command-time parameters
-are excluded from the fingerprint and apply to each new `docker exec`.
+creation-time contract remains authoritative: the launcher does not change its image, bind mounts, tmpfs filesystems,
+creation environment, or host-MCP forwarding, and it skips host-MCP sidecar reconciliation from the newly resolved
+plan. It does not reconstruct an exec request from the active container; the normal command-time argv, working
+directory, and exec environment still come from the current invocation. The flag is invocation-only, absent from
+project config and the fingerprint, and has no effect when the fingerprints already match. Ownership or protocol
+label mismatches remain name conflicts. Command-time parameters are excluded from the fingerprint and apply to each
+new `docker exec`.
 
 A change between absent and present product state changes the normalized physical mount plan and therefore the
 creation-time fingerprint. It uses the same generic fingerprint-mismatch rejection as every other creation-time

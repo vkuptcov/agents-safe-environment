@@ -215,34 +215,29 @@ func (attempt *launchAttempt) validateOwnership(inspection dockercli.ContainerIn
 }
 
 // validateRunningFingerprint is the sole creation-time reuse predicate after ownership and protocol checks.
+// It is a pure predicate that polling callers re-run freely: --force-exec tolerates a mismatch here, while
+// the one-time adoption warning and skipped host-MCP reconciliation happen at the reuse site.
 func (attempt *launchAttempt) validateRunningFingerprint(inspection dockercli.ContainerInspection) error {
-	running := inspection.Config.Labels[launchConfigLabel]
-	attempt.fingerprintMismatchForced = false
-	if running == attempt.launchFingerprint {
+	if attempt.forcedFingerprintMismatch(inspection) || !attempt.fingerprintMismatch(inspection) {
 		return nil
 	}
-	mismatch := &launchConfigMismatchError{
+	return &launchConfigMismatchError{
 		containerName: attempt.containerName,
 		containerID:   inspection.ID,
 		projectRoot:   attempt.plan.ProjectRoot,
-		running:       running,
+		running:       inspection.Config.Labels[launchConfigLabel],
 		requested:     attempt.launchFingerprint,
 	}
-	if !attempt.forceExec {
-		return mismatch
-	}
-	attempt.fingerprintMismatchForced = true
-	if !attempt.forceExecWarningPrinted {
-		fmt.Fprintf(
-			attempt.docker.Stderr,
-			"warning: --force-exec: executing in managed session container %q (ID %q) despite "+
-				"creation fingerprint mismatch (running %q, requested %q); "+
-				"the container's existing creation-time configuration remains in effect\n",
-			attempt.containerName, inspection.ID, running, attempt.launchFingerprint,
-		)
-		attempt.forceExecWarningPrinted = true
-	}
-	return nil
+}
+
+// fingerprintMismatch reports whether the running container's creation fingerprint differs from this launch.
+func (attempt *launchAttempt) fingerprintMismatch(inspection dockercli.ContainerInspection) bool {
+	return inspection.Config.Labels[launchConfigLabel] != attempt.launchFingerprint
+}
+
+// forcedFingerprintMismatch reports whether --force-exec is adopting this running container despite a mismatch.
+func (attempt *launchAttempt) forcedFingerprintMismatch(inspection dockercli.ContainerInspection) bool {
+	return attempt.forceExec && attempt.fingerprintMismatch(inspection)
 }
 
 func (attempt *launchAttempt) waitForReusableOrReleased(

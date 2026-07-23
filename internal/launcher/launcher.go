@@ -61,12 +61,10 @@ type launchAttempt struct {
 	projectKey    string
 	// noHostMCP skips discovery entirely for this launch.
 	noHostMCP bool
-	// forceExec permits reuse when only the immutable creation fingerprint differs.
+	// forceExec permits reuse when only the immutable creation fingerprint differs. Whether a given
+	// running container is being force-adopted is derived from its inspection, so no per-inspection
+	// state is retained across the polled fingerprint predicate.
 	forceExec bool
-	// fingerprintMismatchForced records that the currently inspected running container was adopted
-	// despite a mismatch. Creation-time reconciliation must then use the container as-is.
-	fingerprintMismatchForced bool
-	forceExecWarningPrinted   bool
 	// launchFingerprint is the resolved immutable creation contract, computed before any container
 	// adoption, image preparation, sidecar allocation, or create request.
 	launchFingerprint string
