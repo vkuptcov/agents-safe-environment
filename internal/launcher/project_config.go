@@ -29,18 +29,40 @@ type ResolvedProjectConfig struct {
 	DefaultClaudeHomeSet bool
 }
 
+// ConfiglessConfigGenerator produces the complete in-memory configuration for a project that carries no
+// config.toml. It is the same generator `agents-safe init` uses to write the file, so a config-less launch
+// (for example a linked worktree whose git-ignored config was never materialized) resolves the identical
+// contract, including its auto-discovered dependency caches. A nil generator falls back to the plain host
+// defaults with no caches.
+type ConfiglessConfigGenerator func(
+	project gitproject.Project,
+	host HostEnvironment,
+) (projectenv.ProjectConfig, error)
+
 // ResolveProjectConfig applies the documented defaults -> TOML -> explicit-flags order for one discovered project.
+// Configuration follows exactly two paths: a persisted config.toml is read as-is, or, when absent, the project
+// generates the same default `agents-safe init` would have written. Explicit CLI flags override either result.
 func ResolveProjectConfig(
 	project gitproject.Project,
 	host HostEnvironment,
 	defaultImage string,
 	overrides launchplan.Overrides,
+	generateConfigless ConfiglessConfigGenerator,
 ) (ResolvedProjectConfig, error) {
 	defaults, err := DefaultProjectConfig(project, host, defaultImage)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	config, err := projectenv.Load(project.WorktreeRoot, defaults)
+	configExists, err := projectenv.ConfigFileExists(project.WorktreeRoot)
+	if err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	var config projectenv.ProjectConfig
+	if !configExists && generateConfigless != nil {
+		config, err = generateConfigless(project, host)
+	} else {
+		config, err = projectenv.Load(project.WorktreeRoot, defaults)
+	}
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}

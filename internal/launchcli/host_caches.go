@@ -46,10 +46,13 @@ func ParseHostCacheSelection(value string) (HostCacheSelection, error) {
 	return selection, nil
 }
 
-// HostCacheResolution is the persisted snapshot and non-fatal auto-discovery diagnostics.
+// HostCacheResolution is the persisted snapshot and non-fatal auto-discovery diagnostics. Warnings are
+// operator-facing notices surfaced at both init and launch (for example a uv config override skipped for
+// safety); Diagnostics are routine "cache unavailable" notes that only init prints.
 type HostCacheResolution struct {
 	Caches      []projectenv.DependencyCacheConfig
 	Diagnostics []string
+	Warnings    []string
 }
 
 // ResolveHostCaches resolves one init snapshot without Docker or network access.
@@ -130,6 +133,7 @@ func resolveHostCaches(
 		}
 		candidates = append(candidates, uvResult.Caches...)
 		result.Diagnostics = append(result.Diagnostics, uvResult.Diagnostics...)
+		result.Warnings = append(result.Warnings, uvResult.Warnings...)
 	}
 
 	// Go resolves its kinds canonically, and the uv candidate follows the Go family.

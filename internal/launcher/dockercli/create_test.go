@@ -6,6 +6,41 @@ import (
 	"testing"
 )
 
+// Docker's own `--tmpfs` defaults mark every such mount noexec, which makes native extension modules
+// under a masked virtual environment unloadable. The launcher therefore spells the options out.
+func TestTmpfsMountArgSpellsOutConfinementAndExecutability(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		mount TmpfsMount
+		want  string
+	}{
+		{
+			name:  "scratch mount stays non-executable",
+			mount: TmpfsMount{Target: "/project/scratch", Mode: "1777"},
+			want:  "/project/scratch:rw,nosuid,nodev,noexec,mode=1777",
+		},
+		{
+			name:  "virtual environment mask is executable",
+			mount: TmpfsMount{Target: "/project/.venv", Mode: "0755", Exec: true},
+			want:  "/project/.venv:rw,nosuid,nodev,exec,mode=0755",
+		},
+		{
+			name:  "mode is optional",
+			mount: TmpfsMount{Target: "/project/.venv", Exec: true},
+			want:  "/project/.venv:rw,nosuid,nodev,exec",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tmpfsMountArg(test.mount); got != test.want {
+				t.Fatalf("tmpfsMountArg() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildCreateArgsPreservesOrderedInputs(t *testing.T) {
 	t.Parallel()
 	request := CreateRequest{
@@ -43,7 +78,7 @@ func TestBuildCreateArgsPreservesOrderedInputs(t *testing.T) {
 		"--workdir", "/project/nested",
 		"--mount", "type=bind,source=/primary,target=/primary,bind-propagation=rprivate,readonly",
 		"--mount", "type=bind,source=/project,target=/project,bind-propagation=rprivate",
-		"--tmpfs", "/project/.venv:mode=1777",
+		"--tmpfs", "/project/.venv:rw,nosuid,nodev,noexec,mode=1777",
 		"image",
 	}
 	if !reflect.DeepEqual(got, want) {

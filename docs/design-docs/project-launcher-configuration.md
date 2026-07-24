@@ -348,7 +348,7 @@ The creation-time fingerprint is the SHA-256 digest of one versioned canonical s
 
 | Field | Canonical value |
 | --- | --- |
-| `schema_version` | Integer `5`; incremented whenever encoding or implicit creation behavior changes. |
+| `schema_version` | Integer `6`; incremented whenever encoding or implicit creation behavior changes. |
 | `image_reference` | Resolved requested image reference, before resolving or building an immutable image ID. |
 | `image_override` | Explicit `--image` bypasses the project Dockerfile, even when its reference is unchanged. |
 | `mounts` | Ordered physical binds with canonical `source`, `target`, and `read_only`. |
@@ -392,7 +392,13 @@ unaffected project's creation contract is unchanged.
 
 | Field | Canonical value |
 | --- | --- |
-| `tmpfs_mounts` | Ordered target/mode pairs from config, proactive root reservation, and `pyvenv.cfg` discovery. |
+| `tmpfs_mounts` | Ordered target/mode/owned entries from config, proactive root reservation, and `pyvenv.cfg` discovery. |
+
+Schema version 6 makes virtual-environment tmpfs masks executable and adds `owned` to each canonical `tmpfs_mounts`
+entry. The version bump prevents reuse of a version 5 session whose masks are still `noexec`, and `owned` keeps the
+distinction inside the digest: a configured scratch target that later becomes a discovered virtual environment
+changes its container contract without changing its target or mode, so it must fail the reuse predicate instead of
+silently keeping the non-executable, root-owned mask of the running session.
 
 `mounts` uses the exact deterministic order passed to Docker after alias and nesting normalization. It excludes the
 materialized `host_mcp_channel` bind because that bind has a random generation-directory source;

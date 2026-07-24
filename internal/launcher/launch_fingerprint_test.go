@@ -64,37 +64,48 @@ func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
 	}
 }
 
-func TestCreationFingerprintIncludesSchemaVersionFive(t *testing.T) {
+func TestCreationFingerprintIncludesSchemaVersionSix(t *testing.T) {
 	plan := testPlan()
 	got := mustCreationFingerprint(t, plan, "image", false, false, false, hostmcp.Set{})
-	legacyInput := launchFingerprintInput{SchemaVersion: 2, ImageReference: "image", Mounts: []fingerprintMount{
-		{Source: plan.Mounts[0].Source, Target: plan.Mounts[0].Target, ReadOnly: plan.Mounts[0].ReadOnly},
-		{Source: plan.Mounts[1].Source, Target: plan.Mounts[1].Target, ReadOnly: plan.Mounts[1].ReadOnly},
-		{Source: plan.Mounts[2].Source, Target: plan.Mounts[2].Target, ReadOnly: plan.Mounts[2].ReadOnly},
-		{Source: plan.Mounts[3].Source, Target: plan.Mounts[3].Target, ReadOnly: plan.Mounts[3].ReadOnly},
-	}}
-	_ = legacyInput
-	if launchConfigSchemaVersion != 5 || got == "" {
+	if launchConfigSchemaVersion != 6 || got == "" {
 		t.Fatalf("schema/fingerprint = %d/%q", launchConfigSchemaVersion, got)
 	}
 }
 
-func TestCreationFingerprintKeepsVersionFiveBaselines(t *testing.T) {
+func TestCreationFingerprintKeepsVersionSixBaselines(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		plan launchplan.Plan
 		want string
 	}{
-		{name: "empty", plan: testPlan(), want: "a877a8f64be7dfcd03922929d15d860bf4d0e75b6f83b9a6dda0c288b01b957b"},
-		{name: "go only", plan: planWithCache(testPlan()), want: "2ec6be81f46be7faf15fda5614e5719e1e6b4c424a9ec9879b5113486ca37ce2"},
+		{name: "empty", plan: testPlan(), want: "673ebf619e0e0a9298991ec4d4242ea39bdcedf158e50ef4b1061153f9a051cd"},
+		{name: "go only", plan: planWithCache(testPlan()), want: "7cb8c4df582e7d070a280b6d92a2645a8b1d823ddf5ae03a633c85a3e9e750e6"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if got := mustCreationFingerprint(t, test.plan, "image", false, false, false, hostmcp.Set{}); got != test.want {
-				t.Fatalf("fingerprint = %q, want version-5 baseline %q", got, test.want)
+				t.Fatalf("fingerprint = %q, want version-6 baseline %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestCreationFingerprintDistinguishesOwnedTmpfsMask(t *testing.T) {
+	t.Parallel()
+	// Owned fixes ownership and executability of a tmpfs mask at creation, so toggling only that bit must
+	// change the digest: a session holding a root-owned, noexec mask must not be reused as a virtual
+	// environment. See fingerprintTmpfsMount.Owned.
+	scratch := planWithTmpfsMount(testPlan())
+	owned := planWithTmpfsMount(testPlan())
+	owned.TmpfsMounts[0].Owned = true
+	if scratch.TmpfsMounts[0].Owned {
+		t.Fatal("baseline tmpfs mask should be unowned scratch")
+	}
+	scratchPrint := mustCreationFingerprint(t, scratch, "image", false, false, false, hostmcp.Set{})
+	ownedPrint := mustCreationFingerprint(t, owned, "image", false, false, false, hostmcp.Set{})
+	if scratchPrint == ownedPrint {
+		t.Fatalf("fingerprints match despite differing Owned bit: %q", ownedPrint)
 	}
 }
 

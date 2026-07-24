@@ -248,9 +248,19 @@ the final mount namespace and verifies its effective filesystem type before sess
 failure, or non-tmpfs result fails startup without running an agent. Because a fresh tmpfs is root-owned, bootstrap then
 hands each virtual-environment mask to the host user with a non-sticky `0755` mode, so a masked `.venv` is populated and
 owned like an ordinary user directory rather than a root-owned sticky mount; explicit `common.tmpfs_mounts` that are not
-environments keep the default root-owned scratch mode. Ownership is applied only during bootstrap and is not a
-fingerprint input, so a session created before this contract keeps its identity and its root-owned masks until it is
-recreated. The same contract applies to regular and linked worktrees.
+environments keep the default root-owned scratch mode. Each mask's ownership is fixed at creation and canonicalized
+into the creation fingerprint through the `owned` field of every tmpfs entry, so a target that becomes a virtual
+environment after creation fails session reuse instead of retaining a root-owned mask; the schema-version bump
+additionally recreates sessions created before this contract. The same contract applies to regular and linked
+worktrees.
+
+Every session tmpfs is `nosuid,nodev`. Virtual-environment masks are additionally mounted `exec`, on both the Docker
+and the bootstrap mount, while generic `common.tmpfs_mounts` scratch targets stay `noexec`. A virtual environment
+exists to be executed: the dynamic loader maps native extension modules with `PROT_EXEC`, so a `noexec` mask leaves
+package contents intact on disk but makes every compiled import fail. Because Docker's own `--tmpfs` defaults are
+`rw,nosuid,nodev,noexec`, the launcher spells the option list out rather than relying on them. Executability is fixed
+at creation together with ownership in each tmpfs entry's `owned` fingerprint field, and the creation-schema version
+was raised to 6, so sessions still holding non-executable masks are recreated rather than reused.
 
 `common.use_host_python_venv = true` or the explicit `--use-host-python-venv` flag skips proactive, discovered, and
 configured venv tmpfs mounts, exposing those directories through the normal worktree bind. The resolved policy and

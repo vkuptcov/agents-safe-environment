@@ -131,6 +131,36 @@ type claudeOverlay struct {
 
 type agentsOverlay struct{}
 
+// ConfigFileExists reports whether projectRoot carries a persisted launcher config file. It applies the
+// same presence test as Load, so callers can decide whether to seed config-less defaults (for example
+// auto-discovered dependency caches) that a written config would otherwise own.
+func ConfigFileExists(projectRoot string) (bool, error) {
+	_, exists, err := locateConfigFile(projectRoot)
+	return exists, err
+}
+
+// locateConfigFile resolves the launcher config path under projectRoot and reports whether it is a
+// usable regular file. A missing project-environment directory or config file is a non-error absence;
+// only an unreadable or non-regular entry is an error.
+func locateConfigFile(projectRoot string) (string, bool, error) {
+	contextPath, exists, err := inspectContextDirectory(projectRoot)
+	if err != nil || !exists {
+		return "", false, err
+	}
+	path := filepath.Join(contextPath, ConfigName)
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("inspect project launcher config %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", false, fmt.Errorf("project launcher config %q is not a regular file", path)
+	}
+	return path, true, nil
+}
+
 // Load overlays a regular local config file on a complete default configuration. Omitted fields retain the
 // corresponding default while a present mounts array replaces the full list.
 func Load(projectRoot string, defaults ProjectConfig) (ProjectConfig, error) {
@@ -139,20 +169,12 @@ func Load(projectRoot string, defaults ProjectConfig) (ProjectConfig, error) {
 		return ProjectConfig{}, fmt.Errorf("validate project configuration defaults: %w", err)
 	}
 
-	contextPath, exists, err := inspectContextDirectory(projectRoot)
-	if err != nil || !exists {
-		return config, err
-	}
-	path := filepath.Join(contextPath, ConfigName)
-	info, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return config, nil
-	}
+	path, exists, err := locateConfigFile(projectRoot)
 	if err != nil {
-		return ProjectConfig{}, fmt.Errorf("inspect project launcher config %q: %w", path, err)
+		return ProjectConfig{}, err
 	}
-	if !info.Mode().IsRegular() {
-		return ProjectConfig{}, fmt.Errorf("project launcher config %q is not a regular file", path)
+	if !exists {
+		return config, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -46,6 +46,7 @@ type initializationResult struct {
 	Created     bool
 	Caches      []projectenv.DependencyCacheConfig
 	Diagnostics []string
+	Warnings    []string
 }
 
 type commandDependencies struct {
@@ -89,18 +90,14 @@ func productionDependencies() commandDependencies {
 				if err != nil {
 					return projectenv.ProjectConfig{}, err
 				}
-				defaults, err := launcher.DefaultProjectConfig(project, host, defaultImage)
+				config, resolution, err := launchcli.GenerateDefaultConfig(ctx, project, host, defaultImage, selection)
 				if err != nil {
 					return projectenv.ProjectConfig{}, err
 				}
-				caches, err := launchcli.ResolveHostCaches(ctx, selection, project, defaults, host.HomeDir)
-				if err != nil {
-					return projectenv.ProjectConfig{}, err
-				}
-				defaults.Common.DependencyCaches = caches.Caches
-				result.Caches = caches.Caches
-				result.Diagnostics = caches.Diagnostics
-				return defaults, nil
+				result.Caches = resolution.Caches
+				result.Diagnostics = resolution.Diagnostics
+				result.Warnings = resolution.Warnings
+				return config, nil
 			})
 			if err != nil {
 				return initializationResult{}, err
@@ -192,6 +189,9 @@ func runInit(
 	}
 	for _, diagnostic := range result.Diagnostics {
 		fmt.Fprintf(stderr, "agents-safe init: %s\n", diagnostic)
+	}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(stderr, "agents-safe init: warning: %s\n", warning)
 	}
 	for _, cache := range result.Caches {
 		fmt.Fprintf(stdout, "Host dependency cache: %s  %s  shared_rw\n", cache.Kind, cache.Source)

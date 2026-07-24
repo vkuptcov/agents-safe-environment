@@ -13,22 +13,32 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
-func TestUVCacheResolverUsesProjectEffectiveProbe(t *testing.T) {
+func TestUVCacheResolverMountsNoConfigPathAndWarnsOnOverride(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	cache := filepath.Join(root, "uv cache")
-	if err := os.Mkdir(cache, 0o700); err != nil {
-		t.Fatal(err)
+	trusted := filepath.Join(root, "uv cache")
+	override := filepath.Join(root, "project-cache")
+	for _, dir := range []string{trusted, override} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
+	// The mounted path must come from `uv cache dir --no-config` so a project uv.toml cannot choose it. The
+	// override probe (`--directory <project>`) reads project config and is used only to detect and warn.
 	resolver := uvCacheResolver{
 		run: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			if name != "uv" {
 				t.Fatalf("command = %q, want uv", name)
 			}
-			if want := []string{"cache", "dir", "--directory", filepath.Join(root, "project")}; !reflect.DeepEqual(args, want) {
-				t.Fatalf("args = %#v, want %#v", args, want)
+			switch {
+			case reflect.DeepEqual(args, []string{"cache", "dir", "--no-config"}):
+				return []byte(trusted + "\r\n"), nil
+			case reflect.DeepEqual(args, []string{"cache", "dir", "--directory", filepath.Join(root, "project")}):
+				return []byte(override + "\n"), nil
+			default:
+				t.Fatalf("unexpected uv args %#v", args)
+				return nil, nil
 			}
-			return []byte(cache + "\r\n"), nil
 		},
 		getenv:      func(string) string { return "" },
 		homeDir:     root,
@@ -36,13 +46,40 @@ func TestUVCacheResolverUsesProjectEffectiveProbe(t *testing.T) {
 		stat:        os.Stat,
 		access:      func(string, uint32) error { return nil },
 	}
-	got, err := resolver.resolve(context.Background(), false)
+	got, err := resolver.resolve(context.Background(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []projectenv.DependencyCacheConfig{{Kind: projectenv.DependencyCacheUV, Source: cache}}
+	want := []projectenv.DependencyCacheConfig{{Kind: projectenv.DependencyCacheUV, Source: trusted}}
 	if !reflect.DeepEqual(got.Caches, want) {
-		t.Fatalf("caches = %#v, want %#v", got.Caches, want)
+		t.Fatalf("caches = %#v, want the no-config path %#v", got.Caches, want)
+	}
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], override) {
+		t.Fatalf("warnings = %#v, want one mentioning the overridden path %q", got.Warnings, override)
+	}
+}
+
+func TestUVCacheResolverDoesNotWarnWhenConfigMatchesDefault(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	cache := filepath.Join(root, "uv cache")
+	if err := os.Mkdir(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resolver := uvCacheResolver{
+		run:         func(context.Context, string, ...string) ([]byte, error) { return []byte(cache + "\n"), nil },
+		getenv:      func(string) string { return "" },
+		homeDir:     root,
+		projectRoot: filepath.Join(root, "project"),
+		stat:        os.Stat,
+		access:      func(string, uint32) error { return nil },
+	}
+	got, err := resolver.resolve(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none when config and default agree", got.Warnings)
 	}
 }
 

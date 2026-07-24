@@ -27,8 +27,9 @@ var accountNamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]*[$]?$`)
 type TmpfsMount struct {
 	Target string `json:"target"`
 	Mode   string `json:"mode"`
-	// Owned marks a mount that bootstrap must chown to the host user with a user-appropriate mode,
-	// so a Python virtual-environment mask does not appear as a root-owned sticky directory.
+	// Owned marks a Python virtual-environment mask. Bootstrap chowns it to the host user with a
+	// user-appropriate mode, so it does not appear as a root-owned sticky directory, and mounts it
+	// executable, so the dynamic loader can map its native extension modules.
 	Owned bool `json:"owned,omitempty"`
 }
 

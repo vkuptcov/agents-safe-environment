@@ -23,8 +23,10 @@ const (
 type bootstrapTmpfsMount struct {
 	Target string `json:"target"`
 	Mode   string `json:"mode"`
-	// Owned asks privileged bootstrap to chown the mount to the host user. It rides the bootstrap wire
-	// but not the creation fingerprint, so it never changes session-reuse identity.
+	// Owned asks privileged bootstrap to chown the mount to the host user and remount it executable. It
+	// rides the bootstrap wire and is also canonicalized into the creation fingerprint (see
+	// fingerprintTmpfsMount.Owned), so toggling it changes session-reuse identity and recreates a session
+	// still holding a root-owned, noexec mask.
 	Owned bool `json:"owned,omitempty"`
 }
 
@@ -139,7 +141,8 @@ func encodeBootstrapTmpfsMounts(mounts []launchplan.TmpfsMount) (string, error) 
 func dockerTmpfsMounts(resolved []launchplan.TmpfsMount) []dockercli.TmpfsMount {
 	mounts := make([]dockercli.TmpfsMount, 0, len(resolved))
 	for _, mount := range resolved {
-		mounts = append(mounts, dockercli.TmpfsMount{Target: mount.Target, Mode: mount.Mode})
+		// Owned marks the virtual-environment masks, which are exactly the mounts that must run code.
+		mounts = append(mounts, dockercli.TmpfsMount{Target: mount.Target, Mode: mount.Mode, Exec: mount.Owned})
 	}
 	return mounts
 }

@@ -211,7 +211,9 @@ There is no launch-time CLI override. Cache bindings are persistent project inte
 
 ### 2. Initialization UX
 
-Cache discovery is an `agents-safe init` concern, not a launch concern:
+Cache discovery is configured through `agents-safe init`; a launch of a project that never had a config file written
+mirrors the same `auto` default so its effective configuration matches an init-generated one (see
+[In-memory launcher defaults](#in-memory-launcher-defaults) below):
 
 ```text
 agents-safe init
@@ -350,9 +352,32 @@ Because initialization preserves existing files, cache discovery never rewrites 
 projects enable caches by editing their ignored config; an update command that preserves arbitrary TOML formatting is
 outside the first release.
 
-In-memory launcher defaults keep `dependency_caches` empty. Initialization adds its detected snapshot only to the
-config passed to the encoder, so launching a project without `.agents-safe/config.toml` never triggers discovery or
-implicit cache mounts.
+#### In-memory launcher defaults
+
+Configuration resolves along exactly two paths. A persisted `.agents-safe/config.toml` is read as-is and is
+authoritative — including when it deliberately declares no caches. When the file is absent, launch runs the same
+generator `agents-safe init` uses to write the file (`GenerateDefaultConfig` with the `auto` selection) and keeps the
+result in memory, so a config-less project mounts the same host caches instead of silently launching with none. There
+is no separate cache-less-then-seed path: the generated default already carries its `dependency_caches`. This closes
+the gap for a linked worktree, where the git-ignored `config.toml` is never carried over by `git worktree add` and
+would otherwise fall back to a cache-less default. Generating in memory still never creates or rewrites a
+`config.toml`; the caches exist only in the resolved configuration, and the creation fingerprint's cache entries make
+a previously cache-less container recreate rather than silently reuse the old mask.
+
+##### uv discovery trust boundary
+
+Automatic discovery runs on any checkout, including one whose files were not reviewed, so it must not let
+project-controlled configuration choose which host directory is mounted. `uv` resolves its cache directory from
+`uv.toml`/`pyproject.toml`, and a checked-in `cache-dir = "/run/user/1000"` (or any writable host path outside
+`$HOME`) would otherwise pass mount validation and be bind-mounted read-write into the container — exposing a rootless
+Docker socket or a credential directory and defeating the sandbox. Discovery therefore resolves the mounted path with
+`uv cache dir --no-config`, which ignores every uv configuration file and honors only `UV_CACHE_DIR`/XDG/platform
+defaults. When the effective (config-aware) uv cache directory differs from that trusted default, launch and init
+emit a non-fatal warning naming the path; automatic discovery never mounts it. A custom cache location is opt-in: the
+operator reviews the warning and, if intended, records the path explicitly in `.agents-safe/config.toml`, which is
+authoritative. This is deliberately stricter than honoring host user config, because discovery cannot distinguish a
+trusted `~/.config/uv` override from an untrusted in-repo one; the explicit `config.toml` is the single trusted place
+to pin a non-default cache.
 
 ### 3. Tool Profiles
 
