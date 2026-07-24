@@ -62,8 +62,8 @@ type TmpfsMount struct {
 	// Owned marks Python virtual-environment masks, which the user populates and expects to own, and
 	// never generic scratch tmpfs. Privileged bootstrap chowns such a mount to the host user and gives
 	// it a user-appropriate mode, and both mount paths make it executable so the dynamic loader can map
-	// native extension modules. Like CreateTarget it is excluded from the creation fingerprint, so a
-	// running session keeps the same identity across this change.
+	// native extension modules. Unlike CreateTarget it is a creation-fingerprint input, because it
+	// selects container state that only a new container can apply.
 	Owned bool
 }
 

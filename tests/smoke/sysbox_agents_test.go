@@ -106,9 +106,11 @@ func TestSysboxProjectVenvIsIsolated(t *testing.T) {
 test ! -e service/.venv-dev/host-sentinel
 printf 'container\n' > .venv/container-sentinel
 printf 'container-service\n' > service/.venv-dev/container-sentinel
-printf 'isolated=yes\nroot_fstype=%s\nservice_fstype=%s\n' \
+printf 'isolated=yes\nroot_fstype=%s\nservice_fstype=%s\nroot_exec=%s\nservice_exec=%s\n' \
   "$(stat -f -c %T .venv)" \
-  "$(stat -f -c %T service/.venv-dev)" > "$1"
+  "$(stat -f -c %T service/.venv-dev)" \
+  "$(findmnt -no OPTIONS --target .venv | grep -qw noexec && echo no || echo yes)" \
+  "$(findmnt -no OPTIONS --target service/.venv-dev | grep -qw noexec && echo no || echo yes)" > "$1"
 : > "$2"
 while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	)
@@ -117,6 +119,8 @@ while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	require.Equal(t, "yes", observed["isolated"])
 	require.Equal(t, "tmpfs", observed["root_fstype"], "root venv mask must be the effective filesystem")
 	require.Equal(t, "tmpfs", observed["service_fstype"], "nested venv mask must be the effective filesystem")
+	require.Equal(t, "yes", observed["root_exec"], "root venv mask must be executable so native extensions load")
+	require.Equal(t, "yes", observed["service_exec"], "nested venv mask must be executable so native extensions load")
 	hostInfo, err := os.Lstat(hostVenv)
 	require.NoError(t, err, "cold create must leave the root .venv mountpoint on the host")
 	require.True(t, hostInfo.IsDir(), "root .venv mountpoint must be a directory")

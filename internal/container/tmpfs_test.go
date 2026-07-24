@@ -50,6 +50,9 @@ func TestMountContainerTmpfsHandsOwnedMaskToHostUser(t *testing.T) {
 	wantMount := commandKey(
 		"mount", "--types", "tmpfs", "--options", "mode=1777,nosuid,nodev,exec", "tmpfs", target,
 	)
+	if len(runner.calls) == 0 {
+		t.Fatal("mountContainerTmpfs() ran no commands, want an owned tmpfs mount")
+	}
 	if runner.calls[0] != wantMount {
 		t.Fatalf("owned tmpfs mount command = %q, want %q", runner.calls[0], wantMount)
 	}

@@ -48,8 +48,9 @@ tmpfs /home/<user>/<project>/.venv tmpfs rw,nosuid,nodev,noexec,relatime,uid=100
   already rides the bootstrap wire.
 - Keep `nosuid,nodev` on every session tmpfs; only `noexec` is relaxed, and only for venv masks.
 - Bump `launchConfigSchemaVersion` so live containers created with `noexec` masks are recreated
-  instead of reused. The exec bit itself stays out of the fingerprint payload because it is derived,
-  not user-configurable.
+  instead of reused. Add `Owned` to each canonical tmpfs entry in the fingerprint payload so a target
+  that becomes a virtual environment after creation also fails the reuse predicate; the version bump
+  alone only covers pre-existing sessions, not later per-mount transitions within version 6.
 
 ## Phases
 
@@ -102,5 +103,9 @@ mount classes, and `docs/design-docs/agents-safe.md` states the executability ru
   from the resulting mount, so the launcher-side change does not depend on the bootstrap remount
   alone.
 - `go test ./internal/...`, `gofmt -l internal/`, and `make check-docs` pass.
-- The manual gate — importing a compiled extension module from a masked `.venv` — is still pending.
-  It requires recreating a session, and the only live managed container had work running.
+- The manual gate is satisfied. On a live Sysbox host, a recreated session mounts both the root and a
+  nested `.venv` mask as `tmpfs` with `exec` (no `noexec` in `findmnt -no OPTIONS`), and the dynamic
+  loader's `mmap(PROT_EXEC)` path — exercised via `LD_PRELOAD` of a mask-resident `.so` and an execve
+  of a mask-resident binary, since the smoke image ships no `python3`/`uv` — succeeds from the mask
+  while the pre-change `noexec` reuse path is denied. The launch-time Docker `--tmpfs` argument and the
+  effective in-container mount options both carry `exec`.

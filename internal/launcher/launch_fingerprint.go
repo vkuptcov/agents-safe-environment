@@ -13,9 +13,10 @@ import (
 
 const (
 	launchConfigLabel = "agents-safe.launch-config"
-	// Version 6 makes virtual-environment tmpfs masks executable. The exec bit is derived from the
-	// mount plan rather than configured, so it is not a fingerprint payload field; the bump exists to
-	// recreate sessions still holding noexec masks instead of silently reusing them.
+	// Version 6 makes virtual-environment tmpfs masks executable and adds Owned to each canonical
+	// tmpfs entry. The bump recreates sessions still holding noexec masks; the new field keeps later
+	// transitions honest, because a target that becomes a virtual environment changes its container
+	// contract without changing its target or mode.
 	launchConfigSchemaVersion = 6
 )
 
@@ -36,6 +37,11 @@ type launchFingerprintInput struct {
 type fingerprintTmpfsMount struct {
 	Target string `json:"target"`
 	Mode   string `json:"mode"`
+	// Owned selects the ownership and executability the container applies to this mask, both of which
+	// are fixed at creation. It is a payload field rather than derived state so that a target upgraded
+	// to a virtual environment after creation fails the reuse predicate instead of keeping the
+	// root-owned, non-executable mask of the running session.
+	Owned bool `json:"owned"`
 }
 
 type fingerprintDependencyCache struct {
@@ -81,7 +87,9 @@ func creationFingerprint(
 	for _, mount := range plan.TmpfsMounts {
 		// CreateTarget is deliberately excluded: it records one-time host materialization. Once the
 		// empty directory exists, the requested container mount remains exactly the same.
-		tmpfsMounts = append(tmpfsMounts, fingerprintTmpfsMount{Target: mount.Target, Mode: mount.Mode})
+		tmpfsMounts = append(tmpfsMounts, fingerprintTmpfsMount{
+			Target: mount.Target, Mode: mount.Mode, Owned: mount.Owned,
+		})
 	}
 
 	orderedEndpoints := append([]hostmcp.Endpoint(nil), endpoints.Endpoints...)

@@ -79,8 +79,8 @@ func TestCreationFingerprintKeepsVersionSixBaselines(t *testing.T) {
 		plan launchplan.Plan
 		want string
 	}{
-		{name: "empty", plan: testPlan(), want: "876db33f93b25a6bb8b2b9d74c9a532f8a456eab655fbca451e9c41798ac5824"},
-		{name: "go only", plan: planWithCache(testPlan()), want: "a5c415029d5e89f710d3252dcc2b7078233eb174dc1fcfb0ecce2ec4fe961d85"},
+		{name: "empty", plan: testPlan(), want: "673ebf619e0e0a9298991ec4d4242ea39bdcedf158e50ef4b1061153f9a051cd"},
+		{name: "go only", plan: planWithCache(testPlan()), want: "7cb8c4df582e7d070a280b6d92a2645a8b1d823ddf5ae03a633c85a3e9e750e6"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

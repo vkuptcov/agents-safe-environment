@@ -264,9 +264,11 @@ The Go `serve` process starts as root and performs the existing privileged boots
 7. create the manager listener owned by that user.
 
 The tmpfs list arrives as creation-time JSON in `AGENTS_SAFE_TMPFS_MOUNTS`. `serve` validates every absolute target
-and octal mode, mounts with the same `nosuid,nodev,noexec` policy as Docker `--tmpfs`, and checks the effective
-filesystem with `statfs` before continuing. This compensates for Sysbox 0.7 attaching a broader idmapped worktree bind
-over Docker's earlier tmpfs; the mount exists only in the container namespace. Empty configuration keeps bootstrap's
+and octal mode, mounts each target `nosuid,nodev` with the same per-mount executability the launcher passes to Docker
+— `noexec` for a generic scratch target and `exec` for a virtual-environment mask, whose native extension modules the
+dynamic loader must map with `PROT_EXEC` — and checks the effective filesystem with `statfs` before continuing. This
+compensates for Sysbox 0.7 attaching a broader idmapped worktree bind over Docker's earlier tmpfs; the mount exists
+only in the container namespace. Empty configuration keeps bootstrap's
 previous zero-mount path.
 
 The Go process remains root because it owns the root-started dockerd child and must stop it cleanly. It never executes
