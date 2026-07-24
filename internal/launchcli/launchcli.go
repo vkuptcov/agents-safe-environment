@@ -5,10 +5,13 @@
 package launchcli
 
 import (
+	"context"
+
 	"github.com/vkuptcov/agents-safe-environment/internal/cli"
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 // ResolveConfig resolves the host environment and project configuration for one discovered project and
@@ -22,7 +25,7 @@ func ResolveConfig(
 	if err != nil {
 		return cli.ResolvedConfig{}, err
 	}
-	resolved, err := launcher.ResolveProjectConfig(project, host, defaultImage, overrides)
+	resolved, err := launcher.ResolveProjectConfig(project, host, defaultImage, overrides, discoverDefaultCaches)
 	if err != nil {
 		return cli.ResolvedConfig{}, err
 	}
@@ -37,4 +40,25 @@ func ResolveConfig(
 		DefaultClaudeHomeSet: resolved.DefaultClaudeHomeSet,
 		HostHome:             host.HomeDir,
 	}, nil
+}
+
+// discoverDefaultCaches seeds a config-less launch with the same caches `agents-safe init` would
+// auto-discover, so a project whose config.toml was never generated (for example a linked worktree, where
+// the git-ignored file is not carried over) still mounts its host dependency caches. It uses the init
+// default `auto` selection, which drops unavailable caches non-fatally. The probes impose their own
+// timeouts, so context.Background() is sufficient and cannot hang the launch.
+func discoverDefaultCaches(
+	project gitproject.Project,
+	host launcher.HostEnvironment,
+	defaults projectenv.ProjectConfig,
+) ([]projectenv.DependencyCacheConfig, error) {
+	selection, err := ParseHostCacheSelection("auto")
+	if err != nil {
+		return nil, err
+	}
+	resolution, err := ResolveHostCaches(context.Background(), selection, project, defaults, host.HomeDir)
+	if err != nil {
+		return nil, err
+	}
+	return resolution.Caches, nil
 }

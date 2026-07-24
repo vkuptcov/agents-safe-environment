@@ -29,16 +29,43 @@ type ResolvedProjectConfig struct {
 	DefaultClaudeHomeSet bool
 }
 
+// DefaultCacheDiscoverer resolves the dependency caches to seed into the defaults when a project carries
+// no config.toml, so a config-less launch matches `agents-safe init` auto-discovery. It receives the
+// cache-less defaults it is enriching and returns the caches to attach. A nil discoverer keeps the
+// historical no-cache fallback.
+type DefaultCacheDiscoverer func(
+	project gitproject.Project,
+	host HostEnvironment,
+	defaults projectenv.ProjectConfig,
+) ([]projectenv.DependencyCacheConfig, error)
+
 // ResolveProjectConfig applies the documented defaults -> TOML -> explicit-flags order for one discovered project.
+// When the project has no config.toml and discoverDefaultCaches is non-nil, the discovered caches seed the
+// defaults so a config-less launch resolves the same contract `agents-safe init` would have written. A present
+// config.toml stays authoritative, including when it deliberately declares no caches.
 func ResolveProjectConfig(
 	project gitproject.Project,
 	host HostEnvironment,
 	defaultImage string,
 	overrides launchplan.Overrides,
+	discoverDefaultCaches DefaultCacheDiscoverer,
 ) (ResolvedProjectConfig, error) {
 	defaults, err := DefaultProjectConfig(project, host, defaultImage)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
+	}
+	if discoverDefaultCaches != nil {
+		configExists, err := projectenv.ConfigFileExists(project.WorktreeRoot)
+		if err != nil {
+			return ResolvedProjectConfig{}, err
+		}
+		if !configExists {
+			caches, err := discoverDefaultCaches(project, host, defaults)
+			if err != nil {
+				return ResolvedProjectConfig{}, err
+			}
+			defaults.Common.DependencyCaches = caches
+		}
 	}
 	config, err := projectenv.Load(project.WorktreeRoot, defaults)
 	if err != nil {

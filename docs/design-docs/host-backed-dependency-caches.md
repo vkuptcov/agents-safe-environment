@@ -211,7 +211,9 @@ There is no launch-time CLI override. Cache bindings are persistent project inte
 
 ### 2. Initialization UX
 
-Cache discovery is an `agents-safe init` concern, not a launch concern:
+Cache discovery is configured through `agents-safe init`; a launch of a project that never had a config file written
+mirrors the same `auto` default so its effective configuration matches an init-generated one (see
+[In-memory launcher defaults](#in-memory-launcher-defaults) below):
 
 ```text
 agents-safe init
@@ -350,9 +352,16 @@ Because initialization preserves existing files, cache discovery never rewrites 
 projects enable caches by editing their ignored config; an update command that preserves arbitrary TOML formatting is
 outside the first release.
 
-In-memory launcher defaults keep `dependency_caches` empty. Initialization adds its detected snapshot only to the
-config passed to the encoder, so launching a project without `.agents-safe/config.toml` never triggers discovery or
-implicit cache mounts.
+#### In-memory launcher defaults
+
+In-memory launcher defaults keep `dependency_caches` empty until resolution. A persisted
+`.agents-safe/config.toml` is authoritative — including when it deliberately declares no caches — and launch
+performs no discovery in that case. When the file is absent, launch seeds the defaults with the same `auto` discovery
+`agents-safe init` would have written, so a config-less project mounts the same host caches instead of silently
+launching with none. This closes the gap for a linked worktree, where the git-ignored `config.toml` is never carried
+over by `git worktree add` and would otherwise fall back to a cache-less default. Discovery still never creates or
+rewrites a `config.toml`; the seeded caches exist only in the resolved in-memory configuration, and the creation
+fingerprint's cache entries make a previously cache-less container recreate rather than silently reuse the old mask.
 
 ### 3. Tool Profiles
 

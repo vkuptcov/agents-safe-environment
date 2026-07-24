@@ -8,6 +8,7 @@ None.
 
 ## Review
 
+- [Config-less Launch Cache Parity](review/2026-07-24-config-less-launch-cache-parity-exec-plan.md)
 - [Venv tmpfs exec permission](review/2026-07-23-venv-tmpfs-exec-permission-exec-plan.md)
 - [Forced Exec into an Active Session](review/2026-07-23-force-exec-fingerprint-override-exec-plan.md)
 - [Project Virtual Environment Isolation](review/2026-07-22-project-venv-isolation-exec-plan.md)

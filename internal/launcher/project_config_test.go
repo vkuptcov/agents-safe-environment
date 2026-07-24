@@ -189,6 +189,67 @@ func TestResolveHostEnvironmentRejectsIncompleteInputs(t *testing.T) {
 	}
 }
 
+func TestResolveProjectConfigSeedsDefaultCachesOnlyWhenConfigAbsent(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	projectRoot := filepath.Join(base, "project")
+	gitDir := filepath.Join(projectRoot, ".git")
+	cacheDir := filepath.Join(base, "uv-cache")
+	for _, path := range []string{home, projectRoot, gitDir, cacheDir} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The launcher-facing directory exists but carries no config.toml, which is exactly the linked-worktree
+	// case: the git-ignored config file was never materialized.
+	if err := os.Mkdir(filepath.Join(projectRoot, projectenv.Directory), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	project := gitproject.Project{
+		RequestedDir: projectRoot, WorktreeRoot: projectRoot, PrimaryRoot: projectRoot, CommonGitDir: gitDir,
+	}
+	host := HostEnvironment{HomeDir: home}
+
+	discovered := []projectenv.DependencyCacheConfig{{Kind: projectenv.DependencyCacheUV, Source: cacheDir}}
+	calls := 0
+	discoverer := func(gitproject.Project, HostEnvironment, projectenv.ProjectConfig) ([]projectenv.DependencyCacheConfig, error) {
+		calls++
+		return discovered, nil
+	}
+
+	absent, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{}, discoverer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("discoverer calls = %d, want 1 for a config-less project", calls)
+	}
+	if len(absent.Config.Common.DependencyCaches) != 1 ||
+		absent.Config.Common.DependencyCaches[0].Kind != projectenv.DependencyCacheUV {
+		t.Fatalf("config-less caches = %#v, want the discovered uv cache", absent.Config.Common.DependencyCaches)
+	}
+
+	// A present config.toml owns the cache list, even when it declares none: the discoverer must not run.
+	if err := os.WriteFile(
+		filepath.Join(projectRoot, projectenv.Directory, projectenv.ConfigName),
+		[]byte("[common]\nimage = \"configured:image\"\n"), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	calls = 0
+	present, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{}, discoverer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("discoverer calls = %d, want 0 when config.toml is present", calls)
+	}
+	if len(present.Config.Common.DependencyCaches) != 0 {
+		t.Fatalf("present-config caches = %#v, want none inherited from discovery", present.Config.Common.DependencyCaches)
+	}
+}
+
 func TestResolveProjectConfigAppliesOnlyExplicitOverridesAfterTOML(t *testing.T) {
 	t.Parallel()
 	base := t.TempDir()
@@ -216,7 +277,7 @@ use_host_python_venv = true
 	}
 
 	host := HostEnvironment{HomeDir: home}
-	withoutFlags, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{})
+	withoutFlags, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +288,7 @@ use_host_python_venv = true
 
 	withFlags, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{
 		Image: "flag:image", ImageOverride: true, NoHostMCPOverride: true, UseHostPythonVenvOverride: true,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +301,7 @@ use_host_python_venv = true
 	}
 	if _, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{
 		Image: " invalid:image ", ImageOverride: true,
-	}); err == nil {
+	}, nil); err == nil {
 		t.Fatal("ResolveProjectConfig() accepted an invalid explicit image")
 	}
 }
