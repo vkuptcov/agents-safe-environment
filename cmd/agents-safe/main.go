@@ -89,18 +89,13 @@ func productionDependencies() commandDependencies {
 				if err != nil {
 					return projectenv.ProjectConfig{}, err
 				}
-				defaults, err := launcher.DefaultProjectConfig(project, host, defaultImage)
+				config, resolution, err := launchcli.GenerateDefaultConfig(ctx, project, host, defaultImage, selection)
 				if err != nil {
 					return projectenv.ProjectConfig{}, err
 				}
-				caches, err := launchcli.ResolveHostCaches(ctx, selection, project, defaults, host.HomeDir)
-				if err != nil {
-					return projectenv.ProjectConfig{}, err
-				}
-				defaults.Common.DependencyCaches = caches.Caches
-				result.Caches = caches.Caches
-				result.Diagnostics = caches.Diagnostics
-				return defaults, nil
+				result.Caches = resolution.Caches
+				result.Diagnostics = resolution.Diagnostics
+				return config, nil
 			})
 			if err != nil {
 				return initializationResult{}, err

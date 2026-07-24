@@ -354,14 +354,15 @@ outside the first release.
 
 #### In-memory launcher defaults
 
-In-memory launcher defaults keep `dependency_caches` empty until resolution. A persisted
-`.agents-safe/config.toml` is authoritative — including when it deliberately declares no caches — and launch
-performs no discovery in that case. When the file is absent, launch seeds the defaults with the same `auto` discovery
-`agents-safe init` would have written, so a config-less project mounts the same host caches instead of silently
-launching with none. This closes the gap for a linked worktree, where the git-ignored `config.toml` is never carried
-over by `git worktree add` and would otherwise fall back to a cache-less default. Discovery still never creates or
-rewrites a `config.toml`; the seeded caches exist only in the resolved in-memory configuration, and the creation
-fingerprint's cache entries make a previously cache-less container recreate rather than silently reuse the old mask.
+Configuration resolves along exactly two paths. A persisted `.agents-safe/config.toml` is read as-is and is
+authoritative — including when it deliberately declares no caches. When the file is absent, launch runs the same
+generator `agents-safe init` uses to write the file (`GenerateDefaultConfig` with the `auto` selection) and keeps the
+result in memory, so a config-less project mounts the same host caches instead of silently launching with none. There
+is no separate cache-less-then-seed path: the generated default already carries its `dependency_caches`. This closes
+the gap for a linked worktree, where the git-ignored `config.toml` is never carried over by `git worktree add` and
+would otherwise fall back to a cache-less default. Generating in memory still never creates or rewrites a
+`config.toml`; the caches exist only in the resolved configuration, and the creation fingerprint's cache entries make
+a previously cache-less container recreate rather than silently reuse the old mask.
 
 ### 3. Tool Profiles
 

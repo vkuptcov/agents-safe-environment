@@ -25,7 +25,11 @@ func ResolveConfig(
 	if err != nil {
 		return cli.ResolvedConfig{}, err
 	}
-	resolved, err := launcher.ResolveProjectConfig(project, host, defaultImage, overrides, discoverDefaultCaches)
+	resolved, err := launcher.ResolveProjectConfig(project, host, defaultImage, overrides,
+		func(project gitproject.Project, host launcher.HostEnvironment) (projectenv.ProjectConfig, error) {
+			config, _, err := GenerateDefaultConfig(context.Background(), project, host, defaultImage, autoHostCacheSelection())
+			return config, err
+		})
 	if err != nil {
 		return cli.ResolvedConfig{}, err
 	}
@@ -42,23 +46,34 @@ func ResolveConfig(
 	}, nil
 }
 
-// discoverDefaultCaches seeds a config-less launch with the same caches `agents-safe init` would
-// auto-discover, so a project whose config.toml was never generated (for example a linked worktree, where
-// the git-ignored file is not carried over) still mounts its host dependency caches. It uses the init
-// default `auto` selection, which drops unavailable caches non-fatally. The probes impose their own
-// timeouts, so context.Background() is sufficient and cannot hang the launch.
-func discoverDefaultCaches(
+// GenerateDefaultConfig builds the complete default project configuration for a project that has no
+// persisted config.toml, seeded with the host dependency caches for selection. It is the single generator
+// shared by `agents-safe init` (which encodes the result to config.toml) and a config-less launch (which
+// keeps it in memory), so launching without config.toml resolves the same contract init would have
+// written. The returned HostCacheResolution carries the non-fatal auto-discovery diagnostics. The cache
+// probes impose their own timeouts, so context.Background() is sufficient and cannot hang a launch.
+func GenerateDefaultConfig(
+	ctx context.Context,
 	project gitproject.Project,
 	host launcher.HostEnvironment,
-	defaults projectenv.ProjectConfig,
-) ([]projectenv.DependencyCacheConfig, error) {
-	selection, err := ParseHostCacheSelection("auto")
+	image string,
+	selection HostCacheSelection,
+) (projectenv.ProjectConfig, HostCacheResolution, error) {
+	config, err := launcher.DefaultProjectConfig(project, host, image)
 	if err != nil {
-		return nil, err
+		return projectenv.ProjectConfig{}, HostCacheResolution{}, err
 	}
-	resolution, err := ResolveHostCaches(context.Background(), selection, project, defaults, host.HomeDir)
+	resolution, err := ResolveHostCaches(ctx, selection, project, config, host.HomeDir)
 	if err != nil {
-		return nil, err
+		return projectenv.ProjectConfig{}, HostCacheResolution{}, err
 	}
-	return resolution.Caches, nil
+	config.Common.DependencyCaches = resolution.Caches
+	return config, resolution, nil
+}
+
+// autoHostCacheSelection returns the init default cache selection: auto-discover Go and uv caches,
+// dropping any that are unavailable. "auto" is a fixed literal that ParseHostCacheSelection never rejects.
+func autoHostCacheSelection() HostCacheSelection {
+	selection, _ := ParseHostCacheSelection("auto")
+	return selection
 }

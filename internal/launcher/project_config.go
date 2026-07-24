@@ -29,45 +29,40 @@ type ResolvedProjectConfig struct {
 	DefaultClaudeHomeSet bool
 }
 
-// DefaultCacheDiscoverer resolves the dependency caches to seed into the defaults when a project carries
-// no config.toml, so a config-less launch matches `agents-safe init` auto-discovery. It receives the
-// cache-less defaults it is enriching and returns the caches to attach. A nil discoverer keeps the
-// historical no-cache fallback.
-type DefaultCacheDiscoverer func(
+// ConfiglessConfigGenerator produces the complete in-memory configuration for a project that carries no
+// config.toml. It is the same generator `agents-safe init` uses to write the file, so a config-less launch
+// (for example a linked worktree whose git-ignored config was never materialized) resolves the identical
+// contract, including its auto-discovered dependency caches. A nil generator falls back to the plain host
+// defaults with no caches.
+type ConfiglessConfigGenerator func(
 	project gitproject.Project,
 	host HostEnvironment,
-	defaults projectenv.ProjectConfig,
-) ([]projectenv.DependencyCacheConfig, error)
+) (projectenv.ProjectConfig, error)
 
 // ResolveProjectConfig applies the documented defaults -> TOML -> explicit-flags order for one discovered project.
-// When the project has no config.toml and discoverDefaultCaches is non-nil, the discovered caches seed the
-// defaults so a config-less launch resolves the same contract `agents-safe init` would have written. A present
-// config.toml stays authoritative, including when it deliberately declares no caches.
+// Configuration follows exactly two paths: a persisted config.toml is read as-is, or, when absent, the project
+// generates the same default `agents-safe init` would have written. Explicit CLI flags override either result.
 func ResolveProjectConfig(
 	project gitproject.Project,
 	host HostEnvironment,
 	defaultImage string,
 	overrides launchplan.Overrides,
-	discoverDefaultCaches DefaultCacheDiscoverer,
+	generateConfigless ConfiglessConfigGenerator,
 ) (ResolvedProjectConfig, error) {
 	defaults, err := DefaultProjectConfig(project, host, defaultImage)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	if discoverDefaultCaches != nil {
-		configExists, err := projectenv.ConfigFileExists(project.WorktreeRoot)
-		if err != nil {
-			return ResolvedProjectConfig{}, err
-		}
-		if !configExists {
-			caches, err := discoverDefaultCaches(project, host, defaults)
-			if err != nil {
-				return ResolvedProjectConfig{}, err
-			}
-			defaults.Common.DependencyCaches = caches
-		}
+	configExists, err := projectenv.ConfigFileExists(project.WorktreeRoot)
+	if err != nil {
+		return ResolvedProjectConfig{}, err
 	}
-	config, err := projectenv.Load(project.WorktreeRoot, defaults)
+	var config projectenv.ProjectConfig
+	if !configExists && generateConfigless != nil {
+		config, err = generateConfigless(project, host)
+	} else {
+		config, err = projectenv.Load(project.WorktreeRoot, defaults)
+	}
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}

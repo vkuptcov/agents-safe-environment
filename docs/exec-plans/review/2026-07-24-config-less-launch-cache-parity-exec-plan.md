@@ -26,16 +26,19 @@ authoritative.
 
 ## Implementation Decisions
 
-- Gate the new behavior strictly on config-file absence. A present `config.toml` already owns the cache
-  list, and TOML omission of `[[common.dependency_caches]]` must keep meaning "inherit the (cache-less)
-  defaults", not "auto-discover". Seeding caches into the defaults unconditionally would let a
-  present-but-omitted config silently inherit auto caches, so the seed only applies when no file exists.
-- Discover through the existing init machinery (`launchcli.ResolveHostCaches` with the `auto` selection),
-  not a second implementation, so launch and init cannot drift.
-- Inject discovery as a callback into `launcher.ResolveProjectConfig` rather than importing `launchcli`
-  from `launcher`. `launchcli` already imports `launcher`; the callback keeps the dependency edge
-  one-way while letting `launcher` own the "only when absent" policy in its single defaults→Load→plan
-  flow.
+- Resolve configuration along exactly two paths, not three. A present `config.toml` is read as-is and is
+  authoritative — including when it deliberately declares no caches. When the file is absent, the launch
+  generates the same default `agents-safe init` would have written and keeps it in memory. There is no
+  intermediate "cache-less default, then conditionally seed" step: the generated default already carries
+  its `dependency_caches`.
+- Share one generator between init and launch. `launchcli.GenerateDefaultConfig` builds the full default
+  (`DefaultProjectConfig` + `ResolveHostCaches`) and is called by both `agents-safe init` (which encodes
+  it to `config.toml`) and the config-less launch path (which keeps it in memory), so the two cannot
+  drift. Init passes the user's `--host-caches` selection; launch is fixed to `auto`, the init default.
+- Inject the generator as a callback into `launcher.ResolveProjectConfig` rather than importing
+  `launchcli` from `launcher`. `launchcli` already imports `launcher`; the callback keeps the dependency
+  edge one-way while `launcher` owns the "config present → read, absent → generate" branch. A nil
+  generator (used by unit tests) falls back to the plain cache-less defaults.
 - Use `context.Background()` for the probes. Both cache probes (`go env`, `uv cache dir`) impose their
   own 5s timeout, and the init path's context is itself `context.Background()` from `main`, so parity is
   exact and a config-less launch cannot hang.
@@ -52,15 +55,16 @@ duplicated between the two.
 
 - Extract `locateConfigFile` from `Load` and reuse it in a new exported `ConfigFileExists`.
 
-### Phase 2 — Seed config-less defaults with auto-discovered caches
+### Phase 2 — Generate config-less defaults from init's generator
 
 Status: done
 Done when: a launch with no `config.toml` mounts the same caches init would, and a launch with a present
 `config.toml` is byte-for-byte unchanged.
 
-- Add a `DefaultCacheDiscoverer` callback parameter to `launcher.ResolveProjectConfig`; when the config
-  file is absent and the callback is non-nil, set the discovered caches on the defaults before `Load`.
-- Wire the callback in `launchcli.ResolveConfig` to `ResolveHostCaches` with the `auto` selection.
+- Add a `ConfiglessConfigGenerator` callback parameter to `launcher.ResolveProjectConfig`; when the config
+  file is absent and the callback is non-nil, use its result as the configuration instead of `Load`.
+- Extract `launchcli.GenerateDefaultConfig` (`DefaultProjectConfig` + `ResolveHostCaches`) and call it
+  from both `agents-safe init` and the `launchcli.ResolveConfig` callback with the `auto` selection.
 
 ### Phase 3 — Tests and design-doc update
 

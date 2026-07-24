@@ -213,17 +213,22 @@ func TestResolveProjectConfigSeedsDefaultCachesOnlyWhenConfigAbsent(t *testing.T
 
 	discovered := []projectenv.DependencyCacheConfig{{Kind: projectenv.DependencyCacheUV, Source: cacheDir}}
 	calls := 0
-	discoverer := func(gitproject.Project, HostEnvironment, projectenv.ProjectConfig) ([]projectenv.DependencyCacheConfig, error) {
+	generateConfigless := func(p gitproject.Project, h HostEnvironment) (projectenv.ProjectConfig, error) {
 		calls++
-		return discovered, nil
+		config, err := DefaultProjectConfig(p, h, "default:image")
+		if err != nil {
+			return projectenv.ProjectConfig{}, err
+		}
+		config.Common.DependencyCaches = discovered
+		return config, nil
 	}
 
-	absent, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{}, discoverer)
+	absent, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{}, generateConfigless)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
-		t.Fatalf("discoverer calls = %d, want 1 for a config-less project", calls)
+		t.Fatalf("generator calls = %d, want 1 for a config-less project", calls)
 	}
 	if len(absent.Config.Common.DependencyCaches) != 1 ||
 		absent.Config.Common.DependencyCaches[0].Kind != projectenv.DependencyCacheUV {
@@ -238,12 +243,12 @@ func TestResolveProjectConfigSeedsDefaultCachesOnlyWhenConfigAbsent(t *testing.T
 		t.Fatal(err)
 	}
 	calls = 0
-	present, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{}, discoverer)
+	present, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{}, generateConfigless)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if calls != 0 {
-		t.Fatalf("discoverer calls = %d, want 0 when config.toml is present", calls)
+		t.Fatalf("generator calls = %d, want 0 when config.toml is present", calls)
 	}
 	if len(present.Config.Common.DependencyCaches) != 0 {
 		t.Fatalf("present-config caches = %#v, want none inherited from discovery", present.Config.Common.DependencyCaches)
