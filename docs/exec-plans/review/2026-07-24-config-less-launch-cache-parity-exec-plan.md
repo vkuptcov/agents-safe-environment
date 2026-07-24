@@ -92,3 +92,21 @@ and the dependency-cache design doc states the config-less parity rule.
 - Persisting a generated `config.toml` during launch.
 - Any `--host-caches` selection surface for launch; config-less launch is fixed to `auto`, matching the
   init default.
+
+## Review Responses (Codex, 2026-07-24)
+
+- **F-1 (blocker) — automatic uv discovery consumed project-controlled configuration.** Fixed. Making
+  discovery automatic on every config-less launch (this plan) widened a pre-existing trust gap: `uv cache
+  dir --directory <project>` honors a checked-in `uv.toml` `cache-dir`, so a hostile checkout could bind-mount
+  an arbitrary writable host path (for example `/run/user/<uid>` holding a rootless Docker socket) read-write
+  into the container. Discovery now resolves the mounted path with `uv cache dir --no-config` and only warns
+  when the config-aware path differs; a custom path is opt-in through `.agents-safe/config.toml`. Documented
+  under "uv discovery trust boundary" in the dependency-cache design doc, with regression coverage in
+  `uv_deps_test.go`.
+- **F-2 (major) — config-less discovery diagnostics discarded.** Won't-fix, by decision. Routine "cache
+  unavailable" notes (for example Go absent) are init-time noise and stay unshown at launch. A new `Warnings`
+  channel — distinct from those diagnostics — carries only operator-actionable notices (the F-1 uv override)
+  and is surfaced at both launch and init.
+- **F-3 (minor) — presence-check/load TOCTOU.** Won't-fix, by decision. The window requires deleting
+  `config.toml` between the two stats mid-launch; on that race the launch falls back to safe defaults. Not
+  worth the churn of reworking `Load` into a single `(config, present, error)` operation.

@@ -102,15 +102,21 @@ func TestSysboxProjectVenvIsIsolated(t *testing.T) {
 
 	command := fixture.launcher.startAgents(
 		fixture.project.worktree,
-		"bash", "-c", `test -d .venv
+		"bash", "-c", `exec_state() {
+  local opts
+  opts=$(findmnt -no OPTIONS --target "$1") || { printf error; return; }
+  [ -n "$opts" ] || { printf error; return; }
+  if printf '%s' "$opts" | grep -qw noexec; then printf no; else printf yes; fi
+}
+test -d .venv
 test ! -e service/.venv-dev/host-sentinel
 printf 'container\n' > .venv/container-sentinel
 printf 'container-service\n' > service/.venv-dev/container-sentinel
 printf 'isolated=yes\nroot_fstype=%s\nservice_fstype=%s\nroot_exec=%s\nservice_exec=%s\n' \
   "$(stat -f -c %T .venv)" \
   "$(stat -f -c %T service/.venv-dev)" \
-  "$(findmnt -no OPTIONS --target .venv | grep -qw noexec && echo no || echo yes)" \
-  "$(findmnt -no OPTIONS --target service/.venv-dev | grep -qw noexec && echo no || echo yes)" > "$1"
+  "$(exec_state .venv)" \
+  "$(exec_state service/.venv-dev)" > "$1"
 : > "$2"
 while [[ ! -e "$3" ]]; do sleep 1; done`, "bash", report, ready, release,
 	)

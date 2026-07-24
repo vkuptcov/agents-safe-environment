@@ -33,12 +33,15 @@ type Dependencies struct {
 
 // ResolvedConfig is the resolver output shared by command assembly and container launch.
 type ResolvedConfig struct {
-	Plan                 launchplan.Plan
-	Image                string
-	Options              launchplan.Options
-	CodexArguments       []string
-	ClaudeArguments      []string
-	Degradations         []launchplan.Degradation
+	Plan            launchplan.Plan
+	Image           string
+	Options         launchplan.Options
+	CodexArguments  []string
+	ClaudeArguments []string
+	Degradations    []launchplan.Degradation
+	// Warnings are operator-facing notices surfaced before launch (for example a uv config override that
+	// automatic discovery skipped for safety). They are distinct from role Degradations.
+	Warnings             []string
 	DefaultCodexHomeSet  bool
 	DefaultClaudeHomeSet bool
 	HostHome             string
@@ -160,6 +163,9 @@ func printDegradationWarnings(cfg Config, resolved ResolvedConfig, stderr io.Wri
 	}
 	for _, degradation := range degradations {
 		fmt.Fprintf(stderr, "%s: warning: %s\n", cfg.Name, launchplan.DegradationMessage(degradation.Role))
+	}
+	for _, warning := range resolved.Warnings {
+		fmt.Fprintf(stderr, "%s: warning: %s\n", cfg.Name, warning)
 	}
 }
 

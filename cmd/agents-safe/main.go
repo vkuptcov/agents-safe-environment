@@ -46,6 +46,7 @@ type initializationResult struct {
 	Created     bool
 	Caches      []projectenv.DependencyCacheConfig
 	Diagnostics []string
+	Warnings    []string
 }
 
 type commandDependencies struct {
@@ -95,6 +96,7 @@ func productionDependencies() commandDependencies {
 				}
 				result.Caches = resolution.Caches
 				result.Diagnostics = resolution.Diagnostics
+				result.Warnings = resolution.Warnings
 				return config, nil
 			})
 			if err != nil {
@@ -187,6 +189,9 @@ func runInit(
 	}
 	for _, diagnostic := range result.Diagnostics {
 		fmt.Fprintf(stderr, "agents-safe init: %s\n", diagnostic)
+	}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(stderr, "agents-safe init: warning: %s\n", warning)
 	}
 	for _, cache := range result.Caches {
 		fmt.Fprintf(stdout, "Host dependency cache: %s  %s  shared_rw\n", cache.Kind, cache.Source)

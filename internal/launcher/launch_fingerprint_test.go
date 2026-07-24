@@ -91,6 +91,24 @@ func TestCreationFingerprintKeepsVersionSixBaselines(t *testing.T) {
 	}
 }
 
+func TestCreationFingerprintDistinguishesOwnedTmpfsMask(t *testing.T) {
+	t.Parallel()
+	// Owned fixes ownership and executability of a tmpfs mask at creation, so toggling only that bit must
+	// change the digest: a session holding a root-owned, noexec mask must not be reused as a virtual
+	// environment. See fingerprintTmpfsMount.Owned.
+	scratch := planWithTmpfsMount(testPlan())
+	owned := planWithTmpfsMount(testPlan())
+	owned.TmpfsMounts[0].Owned = true
+	if scratch.TmpfsMounts[0].Owned {
+		t.Fatal("baseline tmpfs mask should be unowned scratch")
+	}
+	scratchPrint := mustCreationFingerprint(t, scratch, "image", false, false, false, hostmcp.Set{})
+	ownedPrint := mustCreationFingerprint(t, owned, "image", false, false, false, hostmcp.Set{})
+	if scratchPrint == ownedPrint {
+		t.Fatalf("fingerprints match despite differing Owned bit: %q", ownedPrint)
+	}
+}
+
 func TestDockerLaunchRejectsFingerprintMismatchBeforePreflight(t *testing.T) {
 	plan := simplePlan()
 	containerID := strings.Repeat("b", 64)

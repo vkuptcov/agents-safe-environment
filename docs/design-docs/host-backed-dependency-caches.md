@@ -364,6 +364,21 @@ would otherwise fall back to a cache-less default. Generating in memory still ne
 `config.toml`; the caches exist only in the resolved configuration, and the creation fingerprint's cache entries make
 a previously cache-less container recreate rather than silently reuse the old mask.
 
+##### uv discovery trust boundary
+
+Automatic discovery runs on any checkout, including one whose files were not reviewed, so it must not let
+project-controlled configuration choose which host directory is mounted. `uv` resolves its cache directory from
+`uv.toml`/`pyproject.toml`, and a checked-in `cache-dir = "/run/user/1000"` (or any writable host path outside
+`$HOME`) would otherwise pass mount validation and be bind-mounted read-write into the container — exposing a rootless
+Docker socket or a credential directory and defeating the sandbox. Discovery therefore resolves the mounted path with
+`uv cache dir --no-config`, which ignores every uv configuration file and honors only `UV_CACHE_DIR`/XDG/platform
+defaults. When the effective (config-aware) uv cache directory differs from that trusted default, launch and init
+emit a non-fatal warning naming the path; automatic discovery never mounts it. A custom cache location is opt-in: the
+operator reviews the warning and, if intended, records the path explicitly in `.agents-safe/config.toml`, which is
+authoritative. This is deliberately stricter than honoring host user config, because discovery cannot distinguish a
+trusted `~/.config/uv` override from an untrusted in-repo one; the explicit `config.toml` is the single trusted place
+to pin a non-default cache.
+
 ### 3. Tool Profiles
 
 The launcher derives targets and managed routing settings; the TOML cannot override them.

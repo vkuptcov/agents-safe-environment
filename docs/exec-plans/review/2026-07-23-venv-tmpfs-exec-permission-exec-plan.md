@@ -109,3 +109,17 @@ mount classes, and `docs/design-docs/agents-safe.md` states the executability ru
   of a mask-resident binary, since the smoke image ships no `python3`/`uv` — succeeds from the mask
   while the pre-change `noexec` reuse path is denied. The launch-time Docker `--tmpfs` argument and the
   effective in-container mount options both carry `exec`.
+
+## Review Responses (Codex, 2026-07-24)
+
+- **F-4 (minor) — smoke exec probe passed on inspection failure.** Fixed. The old
+  `findmnt … | grep -qw noexec && echo no || echo yes` recorded `yes` (executable) whenever `findmnt`
+  itself failed, so a broken inspection masqueraded as success. Replaced with an `exec_state` shell
+  helper that captures `findmnt` output, treats command failure or empty output as `error`, and only
+  then classifies `noexec`; the assertion now fails loudly on inspection failure.
+- **F-5 (minor) — docs/comment contradicted the schema-6 fingerprint.** Fixed. `agents-safe.md` and
+  the `bootstrapTmpfsMount.Owned` comment claimed ownership/executability were not fingerprint inputs,
+  contradicting `fingerprintTmpfsMount.Owned` added in schema 6. Both now state that `Owned` fixes
+  ownership and executability at creation and is canonical fingerprint data. Added
+  `TestCreationFingerprintDistinguishesOwnedTmpfsMask`, which proves toggling only `Owned` changes the
+  digest.

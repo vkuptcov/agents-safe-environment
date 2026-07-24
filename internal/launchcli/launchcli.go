@@ -25,10 +25,19 @@ func ResolveConfig(
 	if err != nil {
 		return cli.ResolvedConfig{}, err
 	}
+	// A config-less launch generates the default in memory; warnings from that discovery (for example a uv
+	// config override skipped for safety) are captured here and surfaced before launch. Routine "cache
+	// unavailable" diagnostics are intentionally not shown at launch — they are init-time noise.
+	var warnings []string
 	resolved, err := launcher.ResolveProjectConfig(project, host, defaultImage, overrides,
 		func(project gitproject.Project, host launcher.HostEnvironment) (projectenv.ProjectConfig, error) {
-			config, _, err := GenerateDefaultConfig(context.Background(), project, host, defaultImage, autoHostCacheSelection())
-			return config, err
+			config, resolution, err := GenerateDefaultConfig(
+				context.Background(), project, host, defaultImage, autoHostCacheSelection())
+			if err != nil {
+				return projectenv.ProjectConfig{}, err
+			}
+			warnings = resolution.Warnings
+			return config, nil
 		})
 	if err != nil {
 		return cli.ResolvedConfig{}, err
@@ -40,6 +49,7 @@ func ResolveConfig(
 		CodexArguments:       resolved.Config.Codex.Arguments,
 		ClaudeArguments:      resolved.Config.Claude.Arguments,
 		Degradations:         resolved.Resolution.Degradations,
+		Warnings:             warnings,
 		DefaultCodexHomeSet:  resolved.DefaultCodexHomeSet,
 		DefaultClaudeHomeSet: resolved.DefaultClaudeHomeSet,
 		HostHome:             host.HomeDir,
