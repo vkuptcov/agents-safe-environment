@@ -131,8 +131,6 @@ type claudeOverlay struct {
 
 type agentsOverlay struct{}
 
-// Load overlays a regular local config file on a complete default configuration. Omitted fields retain the
-// corresponding default while a present mounts array replaces the full list.
 // ConfigFileExists reports whether projectRoot carries a persisted launcher config file. It applies the
 // same presence test as Load, so callers can decide whether to seed config-less defaults (for example
 // auto-discovered dependency caches) that a written config would otherwise own.
@@ -163,6 +161,8 @@ func locateConfigFile(projectRoot string) (string, bool, error) {
 	return path, true, nil
 }
 
+// Load overlays a regular local config file on a complete default configuration. Omitted fields retain the
+// corresponding default while a present mounts array replaces the full list.
 func Load(projectRoot string, defaults ProjectConfig) (ProjectConfig, error) {
 	config := cloneConfig(defaults)
 	if err := Validate(config); err != nil {
