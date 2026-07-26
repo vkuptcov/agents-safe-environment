@@ -68,6 +68,7 @@ RUN apt-get update \
         docker.io \
         file \
         git \
+        git-lfs \
         iproute2 \
         jq \
         less \
@@ -98,6 +99,8 @@ COPY --chmod=0755 container/claude-safe-update /usr/local/bin/claude-safe-update
 # Fail the image build immediately if any copied binary is unusable on the target platform, and
 # verify the updater wrapper before the post-build volume installation runs.
 RUN /usr/local/bin/crun --version \
+    && git lfs install --system \
+    && git lfs version \
     && /usr/local/bin/agents-safe-session --help \
     && test -x /usr/local/bin/codex-safe-update \
     && test -x /usr/local/bin/claude-safe-update \
