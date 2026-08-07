@@ -74,7 +74,10 @@ both the module paths and document links.
 - Git-topology roles are required and fail before Docker access when omitted. Host Git config, Codex home, Claude
   state, personal skills, and host MCP are degradable roles: omission keeps them absent and emits an explicit startup
   warning.
-- A linked worktree's primary checkout is mounted read-only while the shared Git directory remains writable.
+- The shared Git directory remains writable for ordinary refs, objects, and selected-checkout state, while every
+  session mounts `<CommonGitDir>/worktrees` read-only. A linked session restores write access only for its own direct
+  child GitDir. Worktree topology changes are therefore host-only operations, and a hidden sibling cannot be pruned
+  through either a primary- or linked-worktree container.
 - A root Python-project marker proactively reserves `.venv`, and existing project-local Python virtual environments
   are masked by session-local tmpfs mounts unless `use_host_python_venv` is explicitly enabled.
 - Active-session reuse fails closed on a creation-fingerprint mismatch. The invocation-only `--force-exec` escape

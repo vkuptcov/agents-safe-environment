@@ -38,12 +38,24 @@ func newSmokeFixture(t *testing.T) *smokeFixture {
 
 func newSmokeFixtureWithCodexHome(t *testing.T, createCodexHome bool) *smokeFixture {
 	t.Helper()
-	project := newProjectLayout(t, createCodexHome)
-	host := newHostIdentity(t, project)
+	return newSmokeFixtureFromLayout(t, newProjectLayout(t, createCodexHome))
+}
+
+// newPrimaryOnlySmokeFixture builds a repository with no linked worktree and points the harness at the
+// primary checkout, so assertions that must hold for primary sessions run against the same fixture shape.
+func newPrimaryOnlySmokeFixture(t *testing.T) *smokeFixture {
+	t.Helper()
+	fixture := newSmokeFixtureFromLayout(t, newPrimaryProjectLayout(t, true))
+	fixture.docker.selectProject(fixture.project.primary)
+	return fixture
+}
+
+func newSmokeFixtureFromLayout(t *testing.T, project projectLayout) *smokeFixture {
+	t.Helper()
 	fixture := &smokeFixture{
 		t:        t,
 		project:  project,
-		host:     host,
+		host:     newHostIdentity(t, project),
 		files:    newSmokeArtifacts(project),
 		launcher: newLauncherHarness(t, project.hostHome),
 		docker:   newDockerHarness(t, project),

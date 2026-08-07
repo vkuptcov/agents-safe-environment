@@ -179,8 +179,8 @@ arguments = [
 ### Success Criteria
 
 - The first screen explains what is configured and the exact application order.
-- The generated file always contains the three required project/Git roles; Docker receives their minimal normalized
-  physical mount set.
+- The generated file always contains the three required project/Git roles; Docker also receives the non-configurable
+  derived registry guard and, for a linked checkout, its active-GitDir override.
 - Project values persist until the user edits the file; explicit CLI values affect one invocation.
 - Removing a required mount fails before Docker access; removing a degradable mount starts with an explicit warning.
 - A running container is reused only when all creation-time parameters match, unless that invocation explicitly uses
@@ -351,7 +351,7 @@ The creation-time fingerprint is the SHA-256 digest of one versioned canonical s
 | `schema_version` | Integer `6`; incremented whenever encoding or implicit creation behavior changes. |
 | `image_reference` | Resolved requested image reference, before resolving or building an immutable image ID. |
 | `image_override` | Explicit `--image` bypasses the project Dockerfile, even when its reference is unchanged. |
-| `mounts` | Ordered physical binds with canonical `source`, `target`, and `read_only`. |
+| `mounts` | Ordered physical binds with validated `source`, absolute `target`, and `read_only`. |
 | `no_host_mcp` | Resolved boolean after defaults, TOML, and explicit CLI overrides. |
 | `use_host_python_venv` | Resolved host-virtual-environment policy after TOML and explicit CLI overrides. |
 | `host_mcp_endpoints` | Eligible endpoints as canonical `host:port` strings, sorted by host and then port. |
@@ -400,6 +400,11 @@ distinction inside the digest: a configured scratch target that later becomes a 
 changes its container contract without changing its target or mode, so it must fail the reuse predicate instead of
 silently keeping the non-executable, root-owned mask of the running session.
 
+The worktree-registry guard keeps schema version 6 because its unconditional physical bind is already encoded in
+`mounts`. Every pre-guard session therefore mismatches once without a format bump. Registry existence, materialization,
+entry count, and host-side pruning do not affect later fingerprints because the same read-only bind remains in every
+plan; a linked plan also always contains the selected active-GitDir override.
+
 `mounts` uses the exact deterministic order passed to Docker after alias and nesting normalization. It excludes the
 materialized `host_mcp_channel` bind because that bind has a random generation-directory source;
 `host_mcp_endpoints` captures whether the channel is needed and what it forwards. Endpoint server names are excluded:
@@ -415,6 +420,7 @@ The following values are deliberately excluded:
 - the invocation working directory, which every `docker exec` supplies independently;
 - built image IDs, Dockerfile contents, and mutable-tag resolution results;
 - host-MCP server names, random channel-generation paths, and sidecar container/image identities;
+- one-time host materialization state for the unconditional worktree registry source;
 - separate project-identity, host-UID, ownership, and manager-protocol fields, which are validated independently
   before the fingerprint; project paths still appear naturally in the normalized mount entries.
 
@@ -482,7 +488,7 @@ logical access modes; normalization may satisfy several logical roles with one p
 | --- | --- | --- | --- | --- |
 | `worktree` | Always. | `rw` | Stop. | No project files or valid working directory. |
 | `primary_checkout` | Always. | See below. | Stop. | Preserve primary-checkout topology. |
-| `common_git_dir` | Always. | `rw` | Stop. | Git refs, indexes, locks, and worktree metadata must remain writable. |
+| `common_git_dir` | Always. | `rw` | Stop. | Shared Git refs, objects, locks, and selected-checkout state must remain writable. |
 | `host_git_config` | Host file exists. | `ro` | Warn and continue. | Host identity/includes/defaults disappear. |
 | `codex_home` | Host directory exists. | `rw` | Warn and continue. | Otherwise use ephemeral state. |
 | `claude_home` | Complete default state or explicit config directory exists. | `rw` | Warn and continue. | Otherwise use ephemeral Claude state. |
@@ -491,18 +497,20 @@ logical access modes; normalization may satisfy several logical roles with one p
 | `host_mcp_channel` | Host MCP enabled. | `rw` | Warn and continue. | Project works without forwarded host services. |
 | `additional` | Never generated. | configured `ro` or `rw` | Ignore. | User-requested access only. |
 
-The three project/Git roles are always generated and required. Their default paths and modes are:
+The three project/Git roles are always generated and required. Two physical guards are launcher-derived and cannot be
+serialized or removed: `<CommonGitDir>/worktrees` is always `ro`, and a linked checkout's active GitDir is `rw` after
+validation proves it is a canonical direct registry child. Their resulting plans are:
 
-| Checkout kind | `worktree` | `primary_checkout` | `common_git_dir` | Physical result |
-| --- | --- | --- | --- | --- |
-| Regular | root, `rw` | root, `rw` | `<root>/.git`, `rw` | One root bind. |
-| Linked worktree | linked root, `rw` | primary root, `ro` | `<primary>/.git`, `rw` | Three ordered binds. |
+| Checkout kind | Serialized topology | Derived guards | Physical result |
+| --- | --- | --- | --- |
+| Regular | root `rw`; nested `<root>/.git` `rw` | registry `ro` | Root `rw`, registry `ro`. |
+| Linked worktree | linked root `rw`; primary `ro`; common `.git` `rw` | registry `ro`; active GitDir `rw` | Five binds; nested Git parents precede children. |
 
 For a regular checkout, the exact `worktree`/`primary_checkout` alias is deduplicated and the writable worktree mount
-already exposes the nested writable `.git` directory, so no separate `common_git_dir` bind is needed. For a linked
-worktree, none of the three roles is redundant. `docker inspect` therefore shows the normalized physical result, not
-necessarily one entry per serialized logical role; every inspected bind must still be traceable to one or more
-validated roles.
+already exposes the nested writable `.git` directory, so no separate `common_git_dir` bind is needed. The narrower
+registry guard remains. For a linked worktree, none of the three serialized roles or two derived guards is redundant.
+`docker inspect` therefore shows the normalized physical result, not necessarily one entry per serialized logical
+role; derived guards intentionally have no TOML role.
 
 The launcher stops when any of the three required project/Git roles is missing because the authoritative file no
 longer describes a complete topology that can be validated and normalized safely. It does not reconstruct a deleted
@@ -533,15 +541,21 @@ change cannot silently broaden or redirect access. Optionality authorizes deleti
 An omitted degradable role is still a creation-time mount-plan change. A cold launch may start after warning, but a
 running container created with that mount remains incompatible and is left untouched until its active session ends.
 
-Filesystem sources and targets are canonical absolute paths. Required roles must match the discovered project and
+Filesystem sources and targets are validated absolute paths. Required roles must match the discovered project and
 host identity. In a regular checkout, `worktree` and `primary_checkout` must be the same writable path and
 `common_git_dir` must be its writable `.git` directory. In a linked worktree, the primary checkout must be read-only
 and its nested common Git directory writable. Other security-sensitive read-only modes cannot be weakened. Conflicting
 duplicate targets, root sources, missing sources, invalid modes, and unsafe overlaps fail before Docker creation.
 
-Normalization deduplicates exact source/target/mode aliases and removes a nested mount only when an already retained
-parent exposes the same source subtree with the required mode. It never replaces `ro` with broader `rw` access. The
-creation-time fingerprint is computed from this normalized physical mount list, not from redundant logical aliases.
+Configured bind and dependency-cache sources are resolved through host symlinks only for overlap checks against the
+protected registry. Their exact configured source remains in the physical plan and fingerprint, and container targets
+are never host-resolved. Any configured source, target, cache, or tmpfs that could expose or cover protected metadata
+fails preflight; only the launcher-derived active GitDir is exempt.
+
+Normalization deduplicates exact source/target/mode aliases and removes a nested mount only when its nearest retained
+ancestor exposes the same source subtree with the required mode. This preserves intermediate access changes such as
+`rw` -> `ro` -> `rw` in the Git guard chain and never replaces `ro` with broader `rw` access. The creation-time
+fingerprint is computed from this normalized physical mount list, not from redundant logical aliases.
 
 The `host_mcp_channel` role is conditional. Its `runtime://host-mcp-channel` source is not treated as a filesystem
 path. The launcher materializes it only when `common.no_host_mcp` is `false`, the role remains in the resolved list,
@@ -582,8 +596,10 @@ affect a later launch, so every writable source in the file must be treated as a
   host defaults.
 - Removing each required role fails before Docker access; removing each degradable role emits the exact warning and
   omits that mount from the effective plan.
-- A regular checkout serializes all three required roles and normalizes them to one writable physical mount; a linked
-  worktree normalizes them to the three expected physical mounts in safe parent-before-child order.
+- A regular checkout serializes all three required roles and resolves to the writable root plus the read-only registry;
+  a linked worktree resolves to its five expected physical mounts in safe parent-before-child Git order.
+- Derived guard tests cover an absent registry, invalid linked GitDir topology, nearest-ancestor mode transitions,
+  symlink-aware configured-source checks, and cache/tmpfs overlap rejection.
 - An invalid or stale mount snapshot fails before Docker creation.
 - Creation-time fingerprints are stable, exclude comments and command argv, and cover every immutable config field.
 - Schema version 4 fingerprints include canonical cache entries, both implicit product volumes, and the merged
@@ -595,7 +611,7 @@ affect a later launch, so every writable source in the file must be treated as a
 - Explicit invocation permission arguments suppress Claude's configured automatic-mode default.
 - Host-MCP mount presence follows `no_host_mcp` and endpoint eligibility.
 - Real Sysbox smoke compares the normalized physical plan with session-container `docker inspect` output and traces
-  every physical bind back to its serialized logical role or roles.
+  every bind back to serialized logical roles or the two launcher-derived guards.
 
 Implementation requires focused Go tests, `make lint`, `make test`, `make check-docs`, and `make test-smoke-go` on a
 host with Sysbox.

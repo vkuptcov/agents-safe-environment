@@ -3,6 +3,8 @@ package launcher
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -70,6 +72,89 @@ func TestCreationFingerprintIncludesSchemaVersionSix(t *testing.T) {
 	if launchConfigSchemaVersion != 6 || got == "" {
 		t.Fatalf("schema/fingerprint = %d/%q", launchConfigSchemaVersion, got)
 	}
+}
+
+func TestCreationFingerprintChangesOnceWhenRegistryGuardIsAdded(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		before     []launchplan.BindMount
+		guardMount []launchplan.BindMount
+	}{
+		{
+			name:   "regular checkout",
+			before: []launchplan.BindMount{{Source: "/repo", Target: "/repo"}},
+			guardMount: []launchplan.BindMount{{
+				Source: "/repo/.git/worktrees", Target: "/repo/.git/worktrees", ReadOnly: true,
+			}},
+		},
+		{
+			name: "linked worktree",
+			before: []launchplan.BindMount{
+				{Source: "/repo", Target: "/repo", ReadOnly: true},
+				{Source: "/repo/.git", Target: "/repo/.git"},
+				{Source: "/feature", Target: "/feature"},
+			},
+			guardMount: []launchplan.BindMount{
+				{Source: "/repo/.git/worktrees", Target: "/repo/.git/worktrees", ReadOnly: true},
+				{Source: "/repo/.git/worktrees/feature", Target: "/repo/.git/worktrees/feature"},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			before := launchplan.Plan{ProjectRoot: "/feature", Mounts: test.before}
+			after := before
+			after.Mounts = append(append([]launchplan.BindMount(nil), test.before...), test.guardMount...)
+			beforeFingerprint := mustCreationFingerprint(t, before, "image", false, false, false, hostmcp.Set{})
+			afterFingerprint := mustCreationFingerprint(t, after, "image", false, false, false, hostmcp.Set{})
+			if beforeFingerprint == afterFingerprint {
+				t.Fatalf("fingerprint = %q before and after derived registry guard", afterFingerprint)
+			}
+		})
+	}
+}
+
+func TestCreationFingerprintIgnoresWorktreeRegistryHostState(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	commonGit := filepath.Join(root, ".git")
+	registry := filepath.Join(commonGit, "worktrees")
+	if err := os.Mkdir(commonGit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan := launchplan.Plan{
+		ProjectRoot: root,
+		Mounts: []launchplan.BindMount{
+			{Source: root, Target: root},
+			{Source: registry, Target: registry, ReadOnly: true},
+		},
+		WorktreeRegistryDir: registry,
+	}
+	want := mustCreationFingerprint(t, plan, "image", false, false, false, hostmcp.Set{})
+	assertFingerprint := func(state string) {
+		t.Helper()
+		if got := mustCreationFingerprint(t, plan, "image", false, false, false, hostmcp.Set{}); got != want {
+			t.Fatalf("%s registry fingerprint = %q, want %q", state, got, want)
+		}
+	}
+	assertFingerprint("absent")
+	if err := os.Mkdir(registry, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	assertFingerprint("materialized")
+	entry := filepath.Join(registry, "feature")
+	if err := os.Mkdir(entry, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	assertFingerprint("populated")
+	if err := os.Remove(entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(registry); err != nil {
+		t.Fatal(err)
+	}
+	assertFingerprint("host-pruned")
 }
 
 func TestCreationFingerprintKeepsVersionSixBaselines(t *testing.T) {

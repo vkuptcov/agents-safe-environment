@@ -43,7 +43,8 @@ type Overrides struct {
 
 // BindMount describes one host path exposed to the Sysbox container through a Docker bind mount.
 type BindMount struct {
-	// Source is the canonical absolute path on the host.
+	// Source is the validated absolute path on the host. Launcher-derived sources are canonical;
+	// configured sources retain their exact spelling after symlink-aware safety validation.
 	Source string
 	// Target is the absolute path inside the container. It normally equals Source so Git and
 	// nested Docker continue to see the same project paths as the host.
@@ -90,6 +91,10 @@ type Plan struct {
 	// TmpfsMounts are the complete ordered container-local filesystems selected by project configuration,
 	// root Python-project detection, and Python virtual-environment discovery.
 	TmpfsMounts []TmpfsMount
+	// WorktreeRegistryDir is the launcher-derived host directory mounted read-only to protect linked-worktree
+	// administrative metadata. Cold creation materializes it when absent; it is already represented in Mounts
+	// and therefore needs no separate fingerprint field.
+	WorktreeRegistryDir string
 }
 
 // DependencyCache is the ordered, validated dependency-cache routing contract.
@@ -287,8 +292,12 @@ func ResolveWithHostHome(
 	if err := validateProjectRoles(project, configRoles); err != nil {
 		return Resolution{}, err
 	}
+	worktreeRegistry, err := validateWorktreeTopology(project)
+	if err != nil {
+		return Resolution{}, err
+	}
 
-	logical := make([]logicalMount, 0, len(config.Common.Mounts))
+	logical := make([]logicalMount, 0, len(config.Common.Mounts)+2)
 	for _, mount := range config.Common.Mounts {
 		if mount.Role == projectenv.RoleHostMCPChannel {
 			continue
@@ -296,16 +305,27 @@ func ResolveWithHostHome(
 		if err := validateExistingMount(mount); err != nil {
 			return Resolution{}, err
 		}
+		if err := validateConfiguredMountProtection(mount, worktreeRegistry); err != nil {
+			return Resolution{}, err
+		}
 		logical = append(logical, logicalMount{
 			mount: BindMount{Source: mount.Source, Target: mount.Target, ReadOnly: mount.ReadOnly},
 			role:  mount.Role,
 		})
 	}
+	logical = append(logical, logicalMount{mount: BindMount{
+		Source: worktreeRegistry, Target: worktreeRegistry, ReadOnly: true,
+	}})
+	if project.Linked {
+		logical = append(logical, logicalMount{mount: BindMount{
+			Source: project.GitDir, Target: project.GitDir,
+		}})
+	}
 	physical, provenance, err := normalizeLogicalMounts(logical)
 	if err != nil {
 		return Resolution{}, err
 	}
-	caches, err := resolveDependencyCaches(config.Common.DependencyCaches, hostHome, logical)
+	caches, err := resolveDependencyCaches(config.Common.DependencyCaches, hostHome, logical, worktreeRegistry)
 	if err != nil {
 		return Resolution{}, err
 	}
@@ -317,6 +337,7 @@ func ResolveWithHostHome(
 		project.WorktreeRoot,
 		config.Common.TmpfsMounts,
 		config.Common.UseHostPythonVenv,
+		worktreeRegistry,
 	)
 	if err != nil {
 		return Resolution{}, err
@@ -334,13 +355,14 @@ func ResolveWithHostHome(
 	}
 	return Resolution{
 		Plan: Plan{
-			ProjectRoot:      project.WorktreeRoot,
-			WorkingDir:       project.RequestedDir,
-			Mounts:           physical,
-			Provenance:       provenance,
-			HostMCPChannel:   hostMCPChannel,
-			DependencyCaches: caches,
-			TmpfsMounts:      tmpfsMounts,
+			ProjectRoot:         project.WorktreeRoot,
+			WorkingDir:          project.RequestedDir,
+			Mounts:              physical,
+			Provenance:          provenance,
+			HostMCPChannel:      hostMCPChannel,
+			DependencyCaches:    caches,
+			TmpfsMounts:         tmpfsMounts,
+			WorktreeRegistryDir: worktreeRegistry,
 		},
 		Degradations: degradations,
 	}, nil
@@ -350,6 +372,7 @@ func resolveTmpfsMounts(
 	projectRoot string,
 	configured []projectenv.TmpfsMountConfig,
 	useHostPythonVenv bool,
+	worktreeRegistry string,
 ) ([]TmpfsMount, error) {
 	for _, mount := range configured {
 		if !pathContains(projectRoot, mount.Target) || mount.Target == projectRoot {
@@ -394,6 +417,13 @@ func resolveTmpfsMounts(
 		seen[target] = len(result) - 1
 	}
 	for first := range result {
+		if PathsOverlap(result[first].Target, worktreeRegistry) {
+			return nil, fmt.Errorf(
+				"tmpfs target %q overlaps protected worktree registry %q",
+				result[first].Target,
+				worktreeRegistry,
+			)
+		}
 		if strings.Contains(result[first].Target, ":") {
 			return nil, fmt.Errorf("tmpfs target %q cannot be represented safely with Docker --tmpfs", result[first].Target)
 		}
@@ -414,6 +444,7 @@ func resolveDependencyCaches(
 	configured []projectenv.DependencyCacheConfig,
 	hostHome string,
 	logical []logicalMount,
+	worktreeRegistry string,
 ) ([]DependencyCache, error) {
 	if len(configured) == 0 {
 		return nil, nil
@@ -430,7 +461,7 @@ func resolveDependencyCaches(
 			if cache.Kind != kind {
 				continue
 			}
-			physical, err := validateDependencyCache(cache, hostHome, logical, result)
+			physical, err := validateDependencyCache(cache, hostHome, logical, result, worktreeRegistry)
 			if err != nil {
 				return nil, err
 			}
@@ -445,6 +476,7 @@ func validateDependencyCache(
 	hostHome string,
 	logical []logicalMount,
 	resolved []DependencyCache,
+	worktreeRegistry string,
 ) (string, error) {
 	if err := ValidateMountPath("dependency cache source", cache.Source); err != nil {
 		return "", err
@@ -469,8 +501,17 @@ func validateDependencyCache(
 	if pathContains(physical, hostHome) {
 		return "", fmt.Errorf("dependency cache %q resolves to the host home or its ancestor", cache.Source)
 	}
+	if PathsOverlap(cache.Source, worktreeRegistry) || PathsOverlap(physical, worktreeRegistry) {
+		return "", fmt.Errorf(
+			"dependency cache %q overlaps protected worktree registry %q",
+			cache.Source,
+			worktreeRegistry,
+		)
+	}
 	for _, mount := range logical {
-		if mount.role == projectenv.RoleHostMCPChannel {
+		// Launcher-derived mounts carry no role and cannot be canonicalized here; the registry check
+		// above already covers them, because both of them are the registry or nested inside it.
+		if mount.role == "" || mount.role == projectenv.RoleHostMCPChannel {
 			continue
 		}
 		mountPhysical, evalErr := filepath.EvalSymlinks(mount.mount.Source)
@@ -539,9 +580,60 @@ func validateProjectRoles(project gitproject.Project, roles map[projectenv.Mount
 	return nil
 }
 
+func validateWorktreeTopology(project gitproject.Project) (string, error) {
+	registry := filepath.Join(project.CommonGitDir, "worktrees")
+	if err := ValidateMountPath("worktree registry", registry); err != nil {
+		return "", err
+	}
+	if !project.Linked {
+		return registry, nil
+	}
+	if err := ValidateMountPath("linked-worktree Git directory", project.GitDir); err != nil {
+		return "", err
+	}
+	canonicalGitDir, err := filepath.EvalSymlinks(project.GitDir)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize linked-worktree Git directory %q: %w", project.GitDir, err)
+	}
+	if canonicalGitDir != project.GitDir || filepath.Dir(project.GitDir) != registry {
+		return "", fmt.Errorf(
+			"unsupported linked-worktree Git directory %q: expected a canonical direct child of %q",
+			project.GitDir,
+			registry,
+		)
+	}
+	return registry, nil
+}
+
+func validateConfiguredMountProtection(mount projectenv.MountConfig, worktreeRegistry string) error {
+	switch mount.Role {
+	// These three overlap the registry by Git topology alone, and validateProjectRoles has already
+	// pinned each of them to the discovered path, so they cannot be aimed at the registry from
+	// configuration. Every other mount is denied any overlap, ancestors included.
+	case projectenv.RolePrimaryCheckout, projectenv.RoleCommonGitDir, projectenv.RoleWorktree:
+		return nil
+	}
+	physicalSource, err := filepath.EvalSymlinks(mount.Source)
+	if err != nil {
+		return fmt.Errorf("resolve mount source %q while protecting worktree metadata: %w", mount.Source, err)
+	}
+	if PathsOverlap(physicalSource, worktreeRegistry) || PathsOverlap(mount.Target, worktreeRegistry) {
+		return fmt.Errorf(
+			"mount source %q or target %q overlaps protected worktree registry %q",
+			mount.Source,
+			mount.Target,
+			worktreeRegistry,
+		)
+	}
+	return nil
+}
+
 type logicalMount struct {
 	mount BindMount
-	role  projectenv.MountRole
+	// role is empty exactly for launcher-derived mounts. That is load-bearing beyond provenance:
+	// a derived source may not exist on the host yet at resolution time, so callers that canonicalize
+	// sources must skip these entries and cover them by a path check against the derived path itself.
+	role projectenv.MountRole
 }
 
 func validateExistingMount(mount projectenv.MountConfig) error {
@@ -575,7 +667,9 @@ func normalizeLogicalMounts(logical []logicalMount) ([]BindMount, []MountProvena
 	merged := make([]MountProvenance, 0, len(logical))
 	for _, item := range logical {
 		if index, found := byMount[item.mount]; found {
-			merged[index].Roles = append(merged[index].Roles, item.role)
+			if item.role != "" {
+				merged[index].Roles = append(merged[index].Roles, item.role)
+			}
 			continue
 		}
 		for _, existing := range merged {
@@ -584,21 +678,26 @@ func normalizeLogicalMounts(logical []logicalMount) ([]BindMount, []MountProvena
 			}
 		}
 		byMount[item.mount] = len(merged)
-		merged = append(merged, MountProvenance{Mount: item.mount, Roles: []projectenv.MountRole{item.role}})
+		roles := []projectenv.MountRole(nil)
+		if item.role != "" {
+			roles = append(roles, item.role)
+		}
+		merged = append(merged, MountProvenance{Mount: item.mount, Roles: roles})
 	}
 
 	merged = orderMountParentsFirst(merged)
 	retained := make([]MountProvenance, 0, len(merged))
 	for _, candidate := range merged {
-		redundant := false
+		// Every retained container of one candidate is nested in the previous one, and
+		// orderMountParentsFirst already placed parents before children, so the last match in this
+		// forward scan is the nearest effective ancestor. Only that one may absorb the candidate:
+		// absorbing into a farther ancestor would discard a mount that deliberately punches a
+		// different access mode through an intervening one.
+		nearestAncestor := -1
 		for index := range retained {
 			existing := &retained[index]
 			if mountContains(existing.Mount, candidate.Mount) {
-				if existing.Mount.ReadOnly == candidate.Mount.ReadOnly {
-					existing.Roles = append(existing.Roles, candidate.Roles...)
-					redundant = true
-					break
-				}
+				nearestAncestor = index
 				continue
 			}
 			if PathsOverlap(existing.Mount.Source, candidate.Mount.Source) ||
@@ -606,9 +705,11 @@ func normalizeLogicalMounts(logical []logicalMount) ([]BindMount, []MountProvena
 				return nil, nil, fmt.Errorf("unsafe overlapping mounts %+v and %+v", existing.Mount, candidate.Mount)
 			}
 		}
-		if !redundant {
-			retained = append(retained, candidate)
+		if nearestAncestor >= 0 && retained[nearestAncestor].Mount.ReadOnly == candidate.Mount.ReadOnly {
+			retained[nearestAncestor].Roles = append(retained[nearestAncestor].Roles, candidate.Roles...)
+			continue
 		}
+		retained = append(retained, candidate)
 	}
 	mounts := make([]BindMount, 0, len(retained))
 	for _, mount := range retained {

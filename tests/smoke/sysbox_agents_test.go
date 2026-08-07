@@ -61,6 +61,8 @@ func TestSysboxRegularCheckoutNormalizesProjectRoles(t *testing.T) {
 
 	inspection := fixture.docker.inspectContainer()
 	requireMount(t, inspection, fixture.project.primary, fixture.project.primary, true)
+	registry := filepath.Join(fixture.project.primary, ".git", "worktrees")
+	requireMount(t, inspection, registry, registry, false)
 	for _, mount := range inspection.Mounts {
 		require.NotEqual(t, filepath.Join(fixture.project.primary, ".git"), mount.Source,
 			"regular checkout must not retain a redundant common-Git bind")

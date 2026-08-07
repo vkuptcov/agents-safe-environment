@@ -23,8 +23,9 @@ The target:
 1. builds `bin/codex-safe`, `bin/claude-safe`, `bin/agents-safe`, and `bin/agents-safe-session`;
 2. builds the `agents-safe-mvp:local` image;
 3. enables the opt-in smoke test with `CODEX_SAFE_RUN_SYSBOX_SMOKE=1`;
-4. runs every `TestSysbox` scenario (linked worktree, both product launchers, shared-session coexistence,
-   `agents-safe bash`, configured mounts, and project-image selection) without the Go test cache.
+4. runs every `TestSysbox` scenario (linked worktree, worktree-metadata guard, both product launchers,
+   shared-session coexistence, `agents-safe bash`, configured mounts, and project-image selection) without the Go
+   test cache.
 
 The test requires:
 
@@ -78,7 +79,7 @@ Host Go test
 Managed container (sysbox-runc, not privileged)
 ├── agents-safe-session manager
 ├── recreated host user, group, and home path
-├── mounted project, common Git directory, and read-only .gitconfig
+├── mounted project, writable common Git state, read-only worktree registry, and read-only .gitconfig
 ├── explicitly configured host directories mounted read-write at the same paths
 └── private Docker daemon using crun
              │
@@ -113,6 +114,14 @@ Commands in the container talk to the private nested daemon instead.
 
 `TestSysboxAgentsSafeBash` starts `agents-safe bash -c ...` without a separator and verifies that Bash runs in the
 selected project before the idle lifecycle removes the container.
+
+`TestSysboxWorktreeMetadataGuard` starts a primary-checkout session before `.git/worktrees` exists and proves cold
+launch materializes the read-only guard. It then creates two worktrees on the host, keeps sibling roots hidden, and
+attempts ordinary prune, elevated admin-directory deletion, and detached worktree creation from both primary and linked
+sessions. Host worktree state, target paths, and sibling usability must survive unchanged, while status, add, commit,
+shared-ref updates, and host ownership remain functional in each selected checkout. Docker inspection verifies common
+`.git` `rw`, registry `ro`, a linked-only active-GitDir `rw` override, and no sibling-root bind. Explicit `-b` is not the
+clean rejection probe because Git may create that ordinary branch ref before its guarded registry write fails.
 
 `TestSysboxAgentsSafeWithoutCodexHome` omits the fixture `.codex` directory and verifies that the real container
 has no Codex-home bind mount, carries the `absent` compatibility label, and does not pass `CODEX_HOME` to the command.
@@ -173,8 +182,9 @@ immediately and includes the command's captured stdout and stderr instead of wai
 | Git config | The synthetic host `.gitconfig` is visible globally, mounted read-only, and unchanged after the run. |
 | Terminal | UTF-8, Cyrillic round-trip, 256 colors, the colored prompt, and the color-aware `ls` alias work. |
 | Tools | `less`, `make`, `rg`, Docker Compose, and Make completion are available independently. |
-| Worktree | Git works from a linked worktree; a file can be staged; the common Git directory is writable. |
-| Mount policy | The primary checkout is read-only; the linked worktree and common Git directory are writable. |
+| Worktree | Git works from both checkout kinds; files can be committed and shared refs updated. |
+| Metadata guard | Hidden siblings survive prune and elevated deletion; in-session worktree creation fails cleanly. |
+| Mount policy | Common Git state is writable, the registry is read-only, and only the active linked GitDir is overridden writable. |
 | Configured mount | An explicitly configured external directory is mounted read-write at the same absolute path. |
 | Mount isolation | Mounts use `rprivate`; no source or destination is the host Docker socket. |
 | Container | It uses `sysbox-runc`, is not privileged, preserves its working directory, and has exact labels. |

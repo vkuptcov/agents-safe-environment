@@ -197,8 +197,11 @@ preflight.
 
 ### 3. Mount Plan
 
-All mounts use explicit `--mount` syntax. Each source must already exist, and source and target paths are canonicalized.
-The launcher never creates a missing source directory as a side effect of a typo.
+All mounts use explicit `--mount` syntax. Configured sources must already exist. The launcher-derived
+`<CommonGitDir>/worktrees` guard is the sole bind-source exception: it is part of every resolved plan and a cold-create
+path materializes it when absent, after active-session reuse has been ruled out. Existing symlinks or non-directory
+entries fail closed. Configured source spelling is preserved after symlink-aware validation; container targets are
+never rewritten through host symlink resolution.
 
 Host bind mounts keep `rprivate` propagation. A mount created by the nested Docker daemon must not propagate back into
 the host mount namespace.
@@ -206,6 +209,7 @@ the host mount namespace.
 #### Regular checkout
 
 - The active working-tree root is mounted read-write at the same absolute path.
+- `<root>/.git/worktrees` is mounted read-only at the same absolute path, even before the first linked worktree exists.
 - The container starts in the absolute equivalent of the original current directory.
 
 #### Linked worktree
@@ -213,14 +217,28 @@ the host mount namespace.
 - The active worktree root is mounted read-write at the same absolute path.
 - The primary checkout root is mounted read-only at the same absolute path.
 - The primary checkout's common Git directory is a separate read-write mount at the same absolute path.
-- The nested read-write Git-directory mount takes precedence over the primary checkout's read-only mount.
+- `<CommonGitDir>/worktrees` is mounted read-only.
+- The selected worktree's canonical GitDir must be a direct registry child and receives a narrower read-write override.
 
 Preserving absolute paths is mandatory. A linked worktree's `.git` file normally points to an absolute location inside
 the common Git directory. Mounting only the project at `/workspace` would break that reference. The same path mapping
 also lets the nested Docker daemon resolve absolute bind paths from Compose configuration correctly.
 
 The primary checkout is read-only so the agent cannot accidentally modify a second working copy. The common Git
-directory stays read-write because commits, refs, the linked-worktree index, and Git lock files must persist.
+directory stays read-write because commits, refs, objects, Git lock files, and selected-worktree state must persist.
+The nested registry guard prevents Git or container root from deleting hidden sibling administration while the active
+GitDir override preserves the selected linked worktree's index and logs.
+
+`git worktree add`, `remove`, `move`, and destructive `prune` operations that need registry writes are unsupported in
+every session and must run on the host. A blocked command may report a Git-version-specific status, so preservation of
+the host worktree list, registry entries, and sibling usability is the stable contract. Shared refs and objects remain
+writable by design; this guard prevents accidental topology damage and is not isolation between mutually untrusted
+repositories. Consequently, `git worktree add -b <branch> ...` may leave the newly created ordinary branch ref before
+the registry write fails; detached add leaves no such ref and is the clean topology-rejection probe.
+
+The unconditional registry bind is creation-fingerprint input regardless of directory existence or entry count. Every
+session created before this guard receives a one-time mismatch, while later host-side worktree creation or pruning does
+not change identity. Cold creation uses the same guarded mount after materializing an absent registry source.
 
 #### Project Python virtual environments
 
@@ -269,11 +287,14 @@ separately configured [host-backed uv cache](host-backed-dependency-caches.md), 
 
 #### Path overlaps
 
-The launcher builds the complete mount plan before launch and removes exact duplicates. For nested targets, it mounts
-the broadest read-only directory first and then applies narrower read-write mounts.
+The launcher builds the complete mount plan before launch and removes exact duplicates. For a nested candidate it
+compares access with the nearest retained ancestor, so an intermediate mode change remains effective. The linked Git
+chain is primary `ro` -> common `.git` `rw` -> worktree registry `ro` -> active GitDir `rw`; parents precede children.
 
 If a target requires incompatible sources or modes that this rule cannot resolve, preflight fails. The launcher never
-silently broadens read-write access.
+silently broadens read-write access. Configured bind and dependency-cache sources are symlink-resolved for protected
+registry overlap checks only, while their recorded source and fingerprint spelling remains unchanged. Configured
+tmpfs targets that would cover any part of the registry are rejected.
 
 #### Shared user mounts
 
@@ -769,6 +790,12 @@ target, and absolute project bind paths inside nested Docker would differ from h
 - Modify an existing file and create a new one in a regular checkout, then verify host content and ownership.
 - Run `git status`, `git add`, `git commit`, and ref reads in a linked worktree.
 - Prove that a primary-checkout file is immutable while linked-worktree Git metadata changes.
+- Start a primary session before the registry exists, create two worktrees on the host, and prove prune plus elevated
+  deletion attempts from primary and linked sessions preserve hidden sibling metadata and usability.
+- Prove detached in-session worktree creation fails without a target or registry entry, while each selected checkout
+  can still commit and update shared refs; document the possible standalone branch side effect of explicit `-b`.
+- Inspect registry `ro` in both checkout kinds and the active-GitDir `rw` override only in a linked session; prove no
+  sibling worktree root is mounted.
 - Start a nested container with a project bind mount and verify bidirectional changes.
 - Create a nested image, container, network, and volume and prove they are absent from host Docker.
 - Prove that host containers and `/var/run/docker.sock` are inaccessible from both the Sysbox container and nested

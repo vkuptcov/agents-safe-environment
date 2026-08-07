@@ -36,6 +36,13 @@ func requireMount(t *testing.T, inspection container.InspectResponse, source, de
 	t.Fatalf("required mount %q -> %q was not found", source, destination)
 }
 
+func requireNoMountSource(t *testing.T, inspection container.InspectResponse, source, message string) {
+	t.Helper()
+	for _, mount := range inspection.Mounts {
+		require.NotEqual(t, source, mount.Source, message)
+	}
+}
+
 func requireVolumeMount(t *testing.T, inspection container.InspectResponse, name, destination string, writable bool) {
 	t.Helper()
 	for _, mount := range inspection.Mounts {
