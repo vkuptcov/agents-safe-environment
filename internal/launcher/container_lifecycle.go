@@ -79,6 +79,9 @@ func (attempt *launchAttempt) acquireContainer(
 	if err := attempt.resolveHostMCPImage(ctx); err != nil {
 		return "", err
 	}
+	if err := materializeWorktreeRegistry(attempt.plan.WorktreeRegistryDir); err != nil {
+		return "", err
+	}
 	if err := materializeTmpfsTargets(attempt.plan.TmpfsMounts); err != nil {
 		return "", err
 	}
@@ -120,6 +123,26 @@ func (attempt *launchAttempt) acquireContainer(
 	return "", fmt.Errorf(
 		"container name %q was not released after a concurrent create", attempt.containerName,
 	)
+}
+
+// materializeWorktreeRegistry creates the source of the unconditional read-only guard only after
+// active-container reuse has been ruled out. Git discovery guarantees that the common Git directory
+// already exists, so a single-directory create also fails closed when the expected topology changes.
+func materializeWorktreeRegistry(registry string) error {
+	if registry == "" {
+		return nil
+	}
+	if err := os.Mkdir(registry, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("create protected worktree registry %q: %w", registry, err)
+	}
+	info, err := os.Lstat(registry)
+	if err != nil {
+		return fmt.Errorf("inspect protected worktree registry %q: %w", registry, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("protected worktree registry %q is not a directory", registry)
+	}
+	return nil
 }
 
 // materializeTmpfsTargets creates only heuristic-selected mountpoints and only on the cold-create path.

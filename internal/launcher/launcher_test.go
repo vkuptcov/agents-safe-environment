@@ -108,6 +108,115 @@ func TestDockerLaunchDoesNotMaterializeProactiveTmpfsTargetWhenReusing(t *testin
 	}
 }
 
+func TestDockerLaunchMaterializesWorktreeRegistryOnlyForColdCreate(t *testing.T) {
+	containerID := strings.Repeat("4", 64)
+	root := t.TempDir()
+	registry := filepath.Join(root, ".git", "worktrees")
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan := projectOnlyPlan(root)
+	plan.WorktreeRegistryDir = registry
+	plan.Mounts = append(plan.Mounts, launchplan.BindMount{Source: registry, Target: registry, ReadOnly: true})
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+		{output: []byte(containerID + "\n")},
+	}}
+
+	if err := testDocker(runner).Launch(
+		context.Background(), plan, "image", []string{"true"}, launchplan.Options{},
+	); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	info, err := os.Lstat(registry)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("worktree registry = %#v, %v, want host directory", info, err)
+	}
+}
+
+func TestDockerLaunchDoesNotMaterializeWorktreeRegistryWhenReusing(t *testing.T) {
+	containerID := strings.Repeat("3", 64)
+	root := t.TempDir()
+	registry := filepath.Join(root, ".git", "worktrees")
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan := projectOnlyPlan(root)
+	plan.WorktreeRegistryDir = registry
+	plan.Mounts = append(plan.Mounts, launchplan.BindMount{Source: registry, Target: registry, ReadOnly: true})
+	runner := &fakeCommandRunner{outputs: []commandResult{{
+		output: inspectionJSON(t, containerID, true, "running", matchingLabels(t, plan, 1000)),
+	}}}
+
+	if err := testDocker(runner).Launch(
+		context.Background(), plan, "image", []string{"true"}, launchplan.Options{},
+	); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if _, err := os.Lstat(registry); !os.IsNotExist(err) {
+		t.Fatalf("reuse materialized worktree registry %q: %v", registry, err)
+	}
+}
+
+func TestMaterializeWorktreeRegistryRejectsSymlinkAndNonDirectory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	tests := []struct {
+		name  string
+		setup func(string) error
+	}{
+		{
+			name: "symlink",
+			setup: func(path string) error {
+				return os.Symlink(t.TempDir(), path)
+			},
+		},
+		{
+			name: "regular file",
+			setup: func(path string) error {
+				return os.WriteFile(path, nil, 0o600)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(root, strings.ReplaceAll(test.name, " ", "-"))
+			if err := test.setup(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := materializeWorktreeRegistry(path); err == nil ||
+				!strings.Contains(err.Error(), "not a directory") {
+				t.Fatalf("materializeWorktreeRegistry() error = %v, want non-directory rejection", err)
+			}
+		})
+	}
+}
+
+func TestDockerLaunchReportsWorktreeRegistryCreationFailureBeforeCreate(t *testing.T) {
+	root := t.TempDir()
+	commonGit := filepath.Join(root, ".git")
+	if err := os.WriteFile(commonGit, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := projectOnlyPlan(root)
+	plan.WorktreeRegistryDir = filepath.Join(commonGit, "worktrees")
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+	}}
+
+	err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{})
+	if err == nil || !strings.Contains(err.Error(), "create protected worktree registry") {
+		t.Fatalf("Launch() error = %v, want actionable registry creation failure", err)
+	}
+	if len(runner.combinedCalls) != 3 {
+		t.Fatalf("Docker calls = %#v, want failure before container create", runner.combinedCalls)
+	}
+}
+
 func TestMaterializeTmpfsTargetsRejectsSymlinkRace(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

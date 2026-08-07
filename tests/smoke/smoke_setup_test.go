@@ -27,6 +27,14 @@ type projectLayout struct {
 }
 
 func newProjectLayout(t *testing.T, createCodexHome bool) projectLayout {
+	return newProjectLayoutWithWorktree(t, createCodexHome, true)
+}
+
+func newPrimaryProjectLayout(t *testing.T, createCodexHome bool) projectLayout {
+	return newProjectLayoutWithWorktree(t, createCodexHome, false)
+}
+
+func newProjectLayoutWithWorktree(t *testing.T, createCodexHome bool, createWorktree bool) projectLayout {
 	t.Helper()
 	root := t.TempDir()
 	layout := projectLayout{
@@ -42,8 +50,10 @@ func newProjectLayout(t *testing.T, createCodexHome bool) projectLayout {
 	layout.claudeConfig = filepath.Join(layout.hostHome, ".claude.json")
 
 	initGitProject(t, layout.primary)
-	runInDir(t, layout.primary, "git", "worktree", "add", "-b", "smoke/feature", layout.worktree)
-	require.NoError(t, os.MkdirAll(layout.nested, 0o755), "nested project directory must be created")
+	if createWorktree {
+		runInDir(t, layout.primary, "git", "worktree", "add", "-b", "smoke/feature", layout.worktree)
+		require.NoError(t, os.MkdirAll(layout.nested, 0o755), "nested project directory must be created")
+	}
 	require.NoError(t, os.MkdirAll(layout.hostHome, 0o755), "temporary host home must be created")
 	if createCodexHome {
 		require.NoError(t, os.MkdirAll(layout.codexHome, 0o755), "temporary Codex home must be created")

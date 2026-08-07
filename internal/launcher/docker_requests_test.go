@@ -59,6 +59,27 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 	}
 }
 
+func TestCreateRequestPreservesGuardedGitMountOrder(t *testing.T) {
+	t.Parallel()
+	plan := testPlan()
+	plan.Mounts = []launchplan.BindMount{
+		{Source: "/repo", Target: "/repo", ReadOnly: true},
+		{Source: "/repo/.git", Target: "/repo/.git"},
+		{Source: "/feature", Target: "/feature"},
+		{Source: "/repo/.git/worktrees", Target: "/repo/.git/worktrees", ReadOnly: true},
+		{Source: "/repo/.git/worktrees/feature", Target: "/repo/.git/worktrees/feature"},
+	}
+	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := dockerMounts(plan.Mounts); !reflect.DeepEqual(request.Mounts, want) {
+		t.Fatalf("mounts = %#v, want ordered guarded plan %#v", request.Mounts, want)
+	}
+}
+
 func TestCreateRequestLabelsResolvedUVCache(t *testing.T) {
 	t.Parallel()
 	plan := testPlan()

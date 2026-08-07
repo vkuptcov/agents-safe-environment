@@ -52,6 +52,23 @@ func newSmokeFixtureWithCodexHome(t *testing.T, createCodexHome bool) *smokeFixt
 	return fixture
 }
 
+func newPrimaryOnlySmokeFixture(t *testing.T) *smokeFixture {
+	t.Helper()
+	project := newPrimaryProjectLayout(t, true)
+	host := newHostIdentity(t, project)
+	fixture := &smokeFixture{
+		t:        t,
+		project:  project,
+		host:     host,
+		files:    newSmokeArtifacts(project),
+		launcher: newLauncherHarness(t, project.hostHome),
+		docker:   newDockerHarness(t, project),
+	}
+	fixture.docker.selectProject(project.primary)
+	t.Cleanup(fixture.docker.close)
+	return fixture
+}
+
 func (fixture *smokeFixture) startEnvironmentProbe() *launcherProcess {
 	fixture.t.Helper()
 	probe := fixture.files.environment
