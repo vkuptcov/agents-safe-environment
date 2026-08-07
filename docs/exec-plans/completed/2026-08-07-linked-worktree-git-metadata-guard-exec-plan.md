@@ -1,6 +1,6 @@
 # Linked Worktree Git Metadata Guard
 
-Status: review
+Status: completed
 Created: 2026-08-07
 Design: [Safe environment](../../design-docs/agents-safe.md)
 Scope:
