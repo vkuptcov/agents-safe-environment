@@ -509,6 +509,8 @@ func validateDependencyCache(
 		)
 	}
 	for _, mount := range logical {
+		// Launcher-derived mounts carry no role and cannot be canonicalized here; the registry check
+		// above already covers them, because both of them are the registry or nested inside it.
 		if mount.role == "" || mount.role == projectenv.RoleHostMCPChannel {
 			continue
 		}
@@ -605,6 +607,9 @@ func validateWorktreeTopology(project gitproject.Project) (string, error) {
 
 func validateConfiguredMountProtection(mount projectenv.MountConfig, worktreeRegistry string) error {
 	switch mount.Role {
+	// These three overlap the registry by Git topology alone, and validateProjectRoles has already
+	// pinned each of them to the discovered path, so they cannot be aimed at the registry from
+	// configuration. Every other mount is denied any overlap, ancestors included.
 	case projectenv.RolePrimaryCheckout, projectenv.RoleCommonGitDir, projectenv.RoleWorktree:
 		return nil
 	}
@@ -625,7 +630,10 @@ func validateConfiguredMountProtection(mount projectenv.MountConfig, worktreeReg
 
 type logicalMount struct {
 	mount BindMount
-	role  projectenv.MountRole
+	// role is empty exactly for launcher-derived mounts. That is load-bearing beyond provenance:
+	// a derived source may not exist on the host yet at resolution time, so callers that canonicalize
+	// sources must skip these entries and cover them by a path check against the derived path itself.
+	role projectenv.MountRole
 }
 
 func validateExistingMount(mount projectenv.MountConfig) error {
@@ -680,13 +688,16 @@ func normalizeLogicalMounts(logical []logicalMount) ([]BindMount, []MountProvena
 	merged = orderMountParentsFirst(merged)
 	retained := make([]MountProvenance, 0, len(merged))
 	for _, candidate := range merged {
+		// Every retained container of one candidate is nested in the previous one, and
+		// orderMountParentsFirst already placed parents before children, so the last match in this
+		// forward scan is the nearest effective ancestor. Only that one may absorb the candidate:
+		// absorbing into a farther ancestor would discard a mount that deliberately punches a
+		// different access mode through an intervening one.
 		nearestAncestor := -1
 		for index := range retained {
 			existing := &retained[index]
 			if mountContains(existing.Mount, candidate.Mount) {
-				if nearestAncestor == -1 || mountContains(retained[nearestAncestor].Mount, existing.Mount) {
-					nearestAncestor = index
-				}
+				nearestAncestor = index
 				continue
 			}
 			if PathsOverlap(existing.Mount.Source, candidate.Mount.Source) ||

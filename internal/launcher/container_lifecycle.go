@@ -125,6 +125,23 @@ func (attempt *launchAttempt) acquireContainer(
 	)
 }
 
+// materializeHostDirectory creates one cold-create host path and fails closed on anything that is not
+// already a real directory. Lstat rather than Stat is deliberate: a symlink standing where the launcher
+// expects a directory would redirect the mount, so it must be rejected instead of followed.
+func materializeHostDirectory(label, path string) error {
+	if err := os.Mkdir(path, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("create %s %q: %w", label, path, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect %s %q: %w", label, path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s %q is not a directory", label, path)
+	}
+	return nil
+}
+
 // materializeWorktreeRegistry creates the source of the unconditional read-only guard only after
 // active-container reuse has been ruled out. Git discovery guarantees that the common Git directory
 // already exists, so a single-directory create also fails closed when the expected topology changes.
@@ -132,17 +149,7 @@ func materializeWorktreeRegistry(registry string) error {
 	if registry == "" {
 		return nil
 	}
-	if err := os.Mkdir(registry, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
-		return fmt.Errorf("create protected worktree registry %q: %w", registry, err)
-	}
-	info, err := os.Lstat(registry)
-	if err != nil {
-		return fmt.Errorf("inspect protected worktree registry %q: %w", registry, err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("protected worktree registry %q is not a directory", registry)
-	}
-	return nil
+	return materializeHostDirectory("protected worktree registry", registry)
 }
 
 // materializeTmpfsTargets creates only heuristic-selected mountpoints and only on the cold-create path.
@@ -152,15 +159,8 @@ func materializeTmpfsTargets(mounts []launchplan.TmpfsMount) error {
 		if !mount.CreateTarget {
 			continue
 		}
-		if err := os.Mkdir(mount.Target, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("create proactive tmpfs target %q: %w", mount.Target, err)
-		}
-		info, err := os.Lstat(mount.Target)
-		if err != nil {
-			return fmt.Errorf("inspect proactive tmpfs target %q: %w", mount.Target, err)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("proactive tmpfs target %q is not a directory", mount.Target)
+		if err := materializeHostDirectory("proactive tmpfs target", mount.Target); err != nil {
+			return err
 		}
 	}
 	return nil

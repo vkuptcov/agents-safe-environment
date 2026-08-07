@@ -38,33 +38,28 @@ func newSmokeFixture(t *testing.T) *smokeFixture {
 
 func newSmokeFixtureWithCodexHome(t *testing.T, createCodexHome bool) *smokeFixture {
 	t.Helper()
-	project := newProjectLayout(t, createCodexHome)
-	host := newHostIdentity(t, project)
-	fixture := &smokeFixture{
-		t:        t,
-		project:  project,
-		host:     host,
-		files:    newSmokeArtifacts(project),
-		launcher: newLauncherHarness(t, project.hostHome),
-		docker:   newDockerHarness(t, project),
-	}
-	t.Cleanup(fixture.docker.close)
+	return newSmokeFixtureFromLayout(t, newProjectLayout(t, createCodexHome))
+}
+
+// newPrimaryOnlySmokeFixture builds a repository with no linked worktree and points the harness at the
+// primary checkout, so assertions that must hold for primary sessions run against the same fixture shape.
+func newPrimaryOnlySmokeFixture(t *testing.T) *smokeFixture {
+	t.Helper()
+	fixture := newSmokeFixtureFromLayout(t, newPrimaryProjectLayout(t, true))
+	fixture.docker.selectProject(fixture.project.primary)
 	return fixture
 }
 
-func newPrimaryOnlySmokeFixture(t *testing.T) *smokeFixture {
+func newSmokeFixtureFromLayout(t *testing.T, project projectLayout) *smokeFixture {
 	t.Helper()
-	project := newPrimaryProjectLayout(t, true)
-	host := newHostIdentity(t, project)
 	fixture := &smokeFixture{
 		t:        t,
 		project:  project,
-		host:     host,
+		host:     newHostIdentity(t, project),
 		files:    newSmokeArtifacts(project),
 		launcher: newLauncherHarness(t, project.hostHome),
 		docker:   newDockerHarness(t, project),
 	}
-	fixture.docker.selectProject(project.primary)
 	t.Cleanup(fixture.docker.close)
 	return fixture
 }
