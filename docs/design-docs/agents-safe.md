@@ -669,7 +669,8 @@ documented procedure finds resources through the `codex-safe` labels and removes
 `--rm`. Everything else about creation, readiness, registration, and idle shutdown is unchanged: the manager still
 stops the nested daemon and exits, and Docker leaves the container in the `exited` state instead of removing it. The
 container's writable layer, including the nested daemon's `/var/lib/docker`, installed packages, and the recreated
-container-local home, therefore survives until the container is removed. Session tmpfs masks are recreated empty on
+container-local home, therefore survives until the container is removed. Bootstrap seeds the image `.bashrc` only
+into a home that has none, so shell configuration added inside a persistent container is kept across restarts. Session tmpfs masks are recreated empty on
 every start, so masked virtual environments do not persist.
 
 The option is creation-only and is deliberately not a fingerprint input. Whether an existing container persists is
@@ -683,7 +684,10 @@ container and the `docker rm` command that discards it, rebuilds the host MCP re
 launch forwards endpoints (the recorded generation directory is recreated under this project's runtime parent, then the
 sidecar is ensured from the stopped session's own image ID), runs `docker start`, and then continues through the
 ordinary readiness and host MCP reuse steps. A fingerprint mismatch fails with the usual mismatch error extended by
-the `docker rm` hint. A persistent session that shuts down under an exec is restarted and the command retried once,
+the `docker rm` hint. Under `--force-exec` the stopped container is still restarted with its own creation-time
+contract, and because bootstrap cannot complete without a relay to lease from, its relay is rebuilt from the endpoint
+set recorded in `agents-safe.host-mcp`, never from the current launch's resolution, which may differ or forward
+nothing. A persistent session that shuts down under an exec is restarted and the command retried once,
 exactly as an auto-remove session is replaced. Two launchers racing to restart one container both succeed, because
 `docker start` on a running container is a no-op.
 

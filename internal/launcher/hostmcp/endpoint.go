@@ -183,3 +183,43 @@ func isLoopbackHost(host string) bool {
 	address := net.ParseIP(host)
 	return address != nil && address.IsLoopback()
 }
+
+// ParseLabel restores the endpoint set a session container recorded in its agents-safe.host-mcp
+// label. It exists for restarting a stopped persistent session whose creation contract the current
+// launch does not reproduce: the container still expects exactly these endpoints, in this order,
+// so its relay must be rebuilt from the record rather than from the current resolution.
+//
+// Server names are not recorded, so restored endpoints carry none; only banner lines use them. The
+// label order is the sorted order the socket indices depend on, so it is preserved, and the same
+// loopback and collision rules that governed creation are re-applied.
+func ParseLabel(label string) (Set, error) {
+	label = strings.TrimSpace(label)
+	if label == "" || label == AbsentLabel {
+		return Set{}, nil
+	}
+	var endpoints []Endpoint
+	for _, address := range strings.Split(label, ",") {
+		host, portText, err := net.SplitHostPort(address)
+		if err != nil {
+			return Set{}, fmt.Errorf("recorded host MCP endpoint %q: %w", address, err)
+		}
+		port, err := strconv.Atoi(portText)
+		if err != nil || port < 1 || port > 65535 {
+			return Set{}, fmt.Errorf("recorded host MCP endpoint %q has an invalid port", address)
+		}
+		host = strings.ToLower(host)
+		if !isLoopbackHost(host) {
+			return Set{}, fmt.Errorf("recorded host MCP endpoint %q is not loopback", address)
+		}
+		endpoints = append(endpoints, Endpoint{Host: host, Port: port})
+	}
+	sorted := append([]Endpoint(nil), endpoints...)
+	sortEndpoints(sorted)
+	if !slices.EqualFunc(sorted, endpoints, func(a, b Endpoint) bool { return a.Address() == b.Address() }) {
+		return Set{}, fmt.Errorf("recorded host MCP endpoints %q are not in canonical order", label)
+	}
+	if err := rejectCollisions(endpoints); err != nil {
+		return Set{}, err
+	}
+	return Set{Endpoints: endpoints}, nil
+}

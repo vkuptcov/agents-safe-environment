@@ -380,7 +380,8 @@ the Go entrypoint and reap adopted processes.
 
 `--rm` remains the default. A container created with `keep_container` is retained after this shutdown and restarted by
 the launcher on the next launch; bootstrap is idempotent for that restart because it reconciles the existing account,
-removes stale manager runtime state, and reuses the nested daemon's data root. See
+seeds `.bashrc` only when the retained home has none, removes stale manager runtime state, and reuses the nested
+daemon's data root. See
 [Persistent session containers](agents-safe.md#persistent-session-containers).
 
 ### 7. Concurrency and Race Handling

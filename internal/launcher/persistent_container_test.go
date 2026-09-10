@@ -208,3 +208,46 @@ func TestDockerLaunchRestartsPersistentContainerWhenExecFindsItStopped(t *testin
 		t.Fatalf("last call = %#v, want docker start", last)
 	}
 }
+
+// --force-exec restarts a stopped session whose fingerprint differs, but the container still needs
+// its own recorded relay to bootstrap: the sidecar is rebuilt from the recorded endpoints, not from
+// the current launch's resolution, which may forward nothing at all.
+func TestPrepareHostMCPRestartRebuildsRecordedRelayForForcedMismatch(t *testing.T) {
+	runtimeDir, err := os.MkdirTemp("", "cs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(runtimeDir) })
+	generation := filepath.Join(runtimeDir, "agents-safe", "key", "g-abc123")
+
+	runner := &fakeCommandRunner{outputs: []commandResult{
+		{output: []byte(strings.Repeat("b", 64) + "\n")}, // sidecar create
+	}}
+	attempt := attemptWith(runner)
+	attempt.docker.LookupEnv = func(name string) (string, bool) {
+		if name == "XDG_RUNTIME_DIR" {
+			return runtimeDir, true
+		}
+		return "", false
+	}
+	attempt.forceExec = true
+	attempt.launchFingerprint = "requested"
+	// The current launch forwards nothing; only the container's record says what it needs.
+	attempt.hostMCP = hostMCPPlan{}
+	inspection := dockercli.ContainerInspection{ID: strings.Repeat("a", 64), Image: "sha256:" + strings.Repeat("2", 64)}
+	inspection.Config.Labels = map[string]string{
+		launchConfigLabel:   "stale",
+		hostMCPLabel:        "127.0.0.1:64342",
+		hostMCPChannelLabel: generation,
+	}
+
+	if err := attempt.prepareHostMCPRestart(context.Background(), inspection); err != nil {
+		t.Fatalf("prepareHostMCPRestart() error = %v", err)
+	}
+	if _, err := os.Stat(generation); err != nil {
+		t.Fatalf("generation directory must be recreated: %v", err)
+	}
+	if len(runner.combinedCalls) != 1 || !containsSequence(runner.combinedCalls[0], "--endpoint", "127.0.0.1:64342") {
+		t.Fatalf("calls = %#v, want one sidecar create relaying the recorded endpoint", runner.combinedCalls)
+	}
+}

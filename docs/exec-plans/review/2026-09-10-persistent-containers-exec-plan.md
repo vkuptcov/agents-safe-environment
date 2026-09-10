@@ -123,3 +123,5 @@ Done when: docs describe the option and a smoke test restarts a kept container.
   `TestSysboxKeptContainerRestarts` is written but not executed: the implementing host registers no `sysbox-runc`
   runtime and has no local `agents-safe-mvp:local` image, so `make test-smoke-go` must run on a Sysbox host before
   acceptance.
+- 2026-09-10: implementation review F-001 (forced restart must rebuild the recorded relay) and F-002 (`.bashrc`
+  overwritten on restart) fixed test-first; see the review report for responses.

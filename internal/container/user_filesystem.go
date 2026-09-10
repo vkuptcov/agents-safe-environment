@@ -2,7 +2,9 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -30,18 +32,8 @@ func prepareContainerUserFilesystem(
 		return fmt.Errorf("set container-local home mode: %w", err)
 	}
 
-	bashRC, err := os.ReadFile(paths.bashRCSource)
-	if err != nil {
-		return fmt.Errorf("read image Bash configuration: %w", err)
-	}
-	if err := writeAtomicOwned(
-		filepath.Join(config.HostHome, ".bashrc"),
-		bashRC,
-		bashRCMode,
-		config.HostUID,
-		config.HostGID,
-	); err != nil {
-		return fmt.Errorf("install user Bash configuration: %w", err)
+	if err := seedBashRC(config, paths); err != nil {
+		return err
 	}
 
 	sudoers := []byte(fmt.Sprintf("%s ALL=(ALL:ALL) NOPASSWD: ALL\n", config.HostUser))
@@ -112,4 +104,24 @@ func writeAtomicOwned(path string, contents []byte, mode os.FileMode, uid int, g
 		return err
 	}
 	return os.Rename(temporaryPath, path)
+}
+
+// seedBashRC installs the image's Bash configuration only when the user has none. A persistent
+// container reruns bootstrap against its retained home, and shell setup added there by the user or
+// by an installer is that user's state, not the image's to overwrite.
+func seedBashRC(config Config, paths containerPaths) error {
+	target := filepath.Join(config.HostHome, ".bashrc")
+	if _, err := os.Lstat(target); err == nil {
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("inspect user Bash configuration: %w", err)
+	}
+	bashRC, err := os.ReadFile(paths.bashRCSource)
+	if err != nil {
+		return fmt.Errorf("read image Bash configuration: %w", err)
+	}
+	if err := writeAtomicOwned(target, bashRC, bashRCMode, config.HostUID, config.HostGID); err != nil {
+		return fmt.Errorf("install user Bash configuration: %w", err)
+	}
+	return nil
 }

@@ -122,3 +122,41 @@ func assertFile(t *testing.T, path string, mode os.FileMode, uid int, gid int, c
 		t.Fatalf("%q contents = %q, want %q", path, data, contents)
 	}
 }
+
+// A persistent container reruns bootstrap against its retained home. Shell configuration the user
+// or an installer added there must survive; the image template only seeds a missing file.
+func TestPrepareContainerUserFilesystemPreservesExistingBashRC(t *testing.T) {
+	root := t.TempDir()
+	config := testConfig(t)
+	config.HostUID = os.Getuid()
+	config.HostGID = os.Getgid()
+	config.HostHome = filepath.Join(root, "home", "alex")
+	if err := os.MkdirAll(filepath.Dir(config.HostHome), 0o755); err != nil {
+		t.Fatalf("create home parent: %v", err)
+	}
+	bashRCSource := filepath.Join(root, "bashrc")
+	if err := os.WriteFile(bashRCSource, []byte("complete -r\n"), 0o644); err != nil {
+		t.Fatalf("write Bash source: %v", err)
+	}
+	sudoersDirectory := filepath.Join(root, "sudoers.d")
+	if err := os.Mkdir(sudoersDirectory, 0o755); err != nil {
+		t.Fatalf("create sudoers directory: %v", err)
+	}
+	paths := defaultContainerPaths()
+	paths.bashRCSource = bashRCSource
+	paths.sudoersFile = filepath.Join(sudoersDirectory, "codex-safe-host")
+	commands := &recordingSuccessRunner{}
+
+	if err := prepareContainerUserFilesystem(context.Background(), config, paths, commands); err != nil {
+		t.Fatalf("first bootstrap error = %v", err)
+	}
+	bashRC := filepath.Join(config.HostHome, ".bashrc")
+	customized := "complete -r\nexport PATH=\"$HOME/.local/bin:$PATH\"\n"
+	if err := os.WriteFile(bashRC, []byte(customized), 0o644); err != nil {
+		t.Fatalf("customize .bashrc: %v", err)
+	}
+	if err := prepareContainerUserFilesystem(context.Background(), config, paths, commands); err != nil {
+		t.Fatalf("second bootstrap error = %v", err)
+	}
+	assertFile(t, bashRC, bashRCMode, config.HostUID, config.HostGID, customized)
+}
