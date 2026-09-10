@@ -80,18 +80,8 @@ func NewChannel(lookupEnv func(string) (string, bool), projectKey string, endpoi
 	if err := channel.validateSocketPaths(endpoints); err != nil {
 		return Channel{}, err
 	}
-	if err := os.MkdirAll(channel.Parent, directoryMode); err != nil {
-		return Channel{}, fmt.Errorf("create host MCP runtime parent %q: %w", channel.Parent, err)
-	}
-	if err := os.Mkdir(channel.Generation, directoryMode); err != nil {
-		return Channel{}, fmt.Errorf("create host MCP generation %q: %w", channel.Generation, err)
-	}
-	// MkdirAll and Mkdir both honour the umask, so the mode this channel relies on is applied rather
-	// than assumed. If that fails, remove the directory before returning: the caller never receives a
-	// Channel for a failed allocation, so its own candidate cleanup could not find this one.
-	if err := os.Chmod(channel.Generation, directoryMode); err != nil {
-		_ = os.RemoveAll(channel.Generation)
-		return Channel{}, fmt.Errorf("set host MCP generation mode %q: %w", channel.Generation, err)
+	if err := channel.materialize(false); err != nil {
+		return Channel{}, err
 	}
 	return channel, nil
 }
@@ -136,16 +126,38 @@ func EnsureChannel(lookupEnv func(string) (string, bool), projectKey string, gen
 		return Channel{}, fmt.Errorf(
 			"recorded host MCP channel %q is outside this project's runtime parent %q", generation, want)
 	}
-	if err := os.MkdirAll(channel.Parent, directoryMode); err != nil {
-		return Channel{}, fmt.Errorf("create host MCP runtime parent %q: %w", channel.Parent, err)
-	}
-	if err := os.Mkdir(channel.Generation, directoryMode); err != nil && !errors.Is(err, fs.ErrExist) {
-		return Channel{}, fmt.Errorf("recreate host MCP generation %q: %w", channel.Generation, err)
-	}
-	if err := os.Chmod(channel.Generation, directoryMode); err != nil {
-		return Channel{}, fmt.Errorf("set host MCP generation mode %q: %w", channel.Generation, err)
+	if err := channel.materialize(true); err != nil {
+		return Channel{}, err
 	}
 	return channel, nil
+}
+
+// materialize creates the channel's directories with the private mode. An existing generation is an
+// error unless existingOK, which the restart path passes because a stopped session's directory may
+// still be present.
+//
+// MkdirAll and Mkdir both honour the umask, so the mode this channel relies on is applied rather
+// than assumed. If that fails on a directory this call created, it is removed before returning: the
+// caller never receives a Channel for a failed allocation, so its own candidate cleanup could not
+// find this one.
+func (channel Channel) materialize(existingOK bool) error {
+	if err := os.MkdirAll(channel.Parent, directoryMode); err != nil {
+		return fmt.Errorf("create host MCP runtime parent %q: %w", channel.Parent, err)
+	}
+	created := true
+	if err := os.Mkdir(channel.Generation, directoryMode); err != nil {
+		if !existingOK || !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("create host MCP generation %q: %w", channel.Generation, err)
+		}
+		created = false
+	}
+	if err := os.Chmod(channel.Generation, directoryMode); err != nil {
+		if created {
+			_ = os.RemoveAll(channel.Generation)
+		}
+		return fmt.Errorf("set host MCP generation mode %q: %w", channel.Generation, err)
+	}
+	return nil
 }
 
 // Remove deletes a candidate generation this attempt allocated.

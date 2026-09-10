@@ -324,23 +324,8 @@ func (attempt *launchAttempt) reuseHostMCP(ctx context.Context, inspection docke
 	if err != nil {
 		return err
 	}
-	// The candidate this attempt allocated is not the one the running session uses.
-	if err := attempt.hostMCP.removeCandidate(); err != nil {
-		return err
-	}
-	attempt.hostMCP.channel = adopted
-	attempt.hostMCP.candidate = false
-
-	// Recovery uses the running session's own image, not the reference this later launcher was given,
-	// which may name a tag that has moved since.
-	imageID := inspection.Image
-	if imageID == "" {
-		return errors.New("the running session records no image ID")
-	}
-	attempt.hostMCPImageID = imageID
-
-	name := sidecarName(attempt.projectKey, adopted)
-	if err := attempt.ensureSidecar(ctx, name, imageID, adopted, attempt.hostMCP.set); err != nil {
+	name, err := attempt.adoptChannelAndEnsureSidecar(ctx, inspection, adopted, attempt.hostMCP.set)
+	if err != nil {
 		return err
 	}
 	if err := attempt.awaitChannelReady(ctx, adopted, name, inspection.ID); err != nil {
@@ -383,19 +368,36 @@ func (attempt *launchAttempt) prepareHostMCPRestart(
 	if err != nil {
 		return err
 	}
+	_, err = attempt.adoptChannelAndEnsureSidecar(ctx, inspection, channel, set)
+	return err
+}
+
+// adoptChannelAndEnsureSidecar makes the session's own channel this attempt's, discarding the
+// candidate it allocated, and ensures a relay sidecar for that channel pinned to the session's own
+// image: not the reference this later launcher was given, which may name a tag that has moved since.
+// It returns the sidecar name.
+func (attempt *launchAttempt) adoptChannelAndEnsureSidecar(
+	ctx context.Context,
+	inspection dockercli.ContainerInspection,
+	channel hostmcp.Channel,
+	set hostmcp.Set,
+) (string, error) {
 	if err := attempt.hostMCP.removeCandidate(); err != nil {
-		return err
+		return "", err
 	}
 	attempt.hostMCP.channel = channel
 	attempt.hostMCP.candidate = false
 
 	imageID := inspection.Image
 	if imageID == "" {
-		return errors.New("the stopped session records no image ID")
+		return "", errors.New("the session records no image ID")
 	}
 	attempt.hostMCPImageID = imageID
 	name := sidecarName(attempt.projectKey, channel)
-	return attempt.ensureSidecar(ctx, name, imageID, channel, set)
+	if err := attempt.ensureSidecar(ctx, name, imageID, channel, set); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 // buildSidecarRequest encodes the relay sidecar's create request.

@@ -82,7 +82,8 @@ Purpose: reuse a stopped persistent container.
 Status: done
 Done when: launcher unit tests cover restart, mismatch, auto-remove wait, and host MCP recreation.
 
-1. In `acquireContainer` and `waitForReusableOrReleased`, branch on `AutoRemove` for stopped owned containers.
+1. In `waitForReusableOrReleased`, branch on `AutoRemove` for stopped owned containers; `acquireContainer` and
+   `containerStoppedAfterExec` reach it through their existing paths.
 2. Add `restartContainer`: validate fingerprint, adopt and recreate the channel, ensure the sidecar, `Start`,
    await readiness and channel, print notice and banner.
 3. Add `hostmcp.Channel.Ensure` with the runtime-dir containment check.
@@ -125,3 +126,7 @@ Done when: docs describe the option and a smoke test restarts a kept container.
   acceptance.
 - 2026-09-10: implementation review F-001 (forced restart must rebuild the recorded relay) and F-002 (`.bashrc`
   overwritten on restart) fixed test-first; see the review report for responses.
+- 2026-09-10: simplification pass. The `AutoRemove` decision lives only in `waitForReusableOrReleased` (one extra
+  `docker inspect` on the restart path); `reuseHostMCP` and `prepareHostMCPRestart` share
+  `adoptChannelAndEnsureSidecar`; `NewChannel` and `EnsureChannel` share `Channel.materialize`; `ParseLabel` reuses
+  the discovery port check and the endpoint comparator. Gates re-run and pass.

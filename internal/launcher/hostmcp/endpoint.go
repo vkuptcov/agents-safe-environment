@@ -99,12 +99,14 @@ func (set Set) BannerLines() []string {
 // sortEndpoints puts the set in its canonical order. The order is load-bearing: it fixes the socket
 // index each endpoint is served on, and both containers must agree on it.
 func sortEndpoints(endpoints []Endpoint) {
-	slices.SortFunc(endpoints, func(first, second Endpoint) int {
-		if host := strings.Compare(first.Host, second.Host); host != 0 {
-			return host
-		}
-		return first.Port - second.Port
-	})
+	slices.SortFunc(endpoints, compareEndpoints)
+}
+
+func compareEndpoints(first, second Endpoint) int {
+	if host := strings.Compare(first.Host, second.Host); host != 0 {
+		return host
+	}
+	return first.Port - second.Port
 }
 
 // mergeSets forms one canonical endpoint set from independently parsed product configurations.
@@ -203,8 +205,8 @@ func ParseLabel(label string) (Set, error) {
 		if err != nil {
 			return Set{}, fmt.Errorf("recorded host MCP endpoint %q: %w", address, err)
 		}
-		port, err := strconv.Atoi(portText)
-		if err != nil || port < 1 || port > 65535 {
+		port, ok := parsePort(portText)
+		if !ok {
 			return Set{}, fmt.Errorf("recorded host MCP endpoint %q has an invalid port", address)
 		}
 		host = strings.ToLower(host)
@@ -213,9 +215,7 @@ func ParseLabel(label string) (Set, error) {
 		}
 		endpoints = append(endpoints, Endpoint{Host: host, Port: port})
 	}
-	sorted := append([]Endpoint(nil), endpoints...)
-	sortEndpoints(sorted)
-	if !slices.EqualFunc(sorted, endpoints, func(a, b Endpoint) bool { return a.Address() == b.Address() }) {
+	if !slices.IsSortedFunc(endpoints, compareEndpoints) {
 		return Set{}, fmt.Errorf("recorded host MCP endpoints %q are not in canonical order", label)
 	}
 	if err := rejectCollisions(endpoints); err != nil {

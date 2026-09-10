@@ -58,12 +58,9 @@ func (attempt *launchAttempt) acquireContainer(
 			}
 			return inspection.ID, nil
 		}
-		var containerID string
-		if inspection.HostConfig.AutoRemove {
-			containerID, err = attempt.waitForReusableOrReleased(ctx)
-		} else {
-			containerID, err = attempt.restartContainer(ctx, inspection)
-		}
+		// A found container that is not running is either being removed by Docker or is a stopped
+		// persistent session; waitForReusableOrReleased resolves both from its own inspection.
+		containerID, err := attempt.waitForReusableOrReleased(ctx)
 		if err != nil {
 			return "", err
 		}

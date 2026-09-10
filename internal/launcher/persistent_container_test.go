@@ -14,6 +14,16 @@ import (
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
+// runtimeDirLookup is an environment that names runtimeDir as XDG_RUNTIME_DIR and nothing else.
+func runtimeDirLookup(runtimeDir string) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		if name == "XDG_RUNTIME_DIR" {
+			return runtimeDir, true
+		}
+		return "", false
+	}
+}
+
 // stoppedInspectionJSON encodes an exited container whose removal policy is autoRemove.
 func stoppedInspectionJSON(t *testing.T, containerID string, autoRemove bool, labels map[string]string) []byte {
 	t.Helper()
@@ -33,6 +43,7 @@ func TestDockerLaunchRestartsStoppedPersistentContainer(t *testing.T) {
 	plan := simplePlan()
 	runner := &fakeCommandRunner{outputs: []commandResult{
 		{output: stoppedInspectionJSON(t, containerID, false, matchingLabels(t, plan, 1000))},
+		{output: stoppedInspectionJSON(t, containerID, false, matchingLabels(t, plan, 1000))},
 		{output: []byte("name\n")}, // docker start
 	}}
 	docker := testDocker(runner)
@@ -43,6 +54,7 @@ func TestDockerLaunchRestartsStoppedPersistentContainer(t *testing.T) {
 	}
 	containerName := mustContainerName(t, docker.HostUID, plan.ProjectRoot)
 	wantCalls := [][]string{
+		{"docker", "container", "inspect", containerName},
 		{"docker", "container", "inspect", containerName},
 		{"docker", "start", containerName},
 	}
@@ -62,13 +74,16 @@ func TestDockerLaunchRejectsStoppedPersistentContainerOnFingerprintMismatch(t *t
 	labels[launchConfigLabel] = "stale"
 	runner := &fakeCommandRunner{outputs: []commandResult{
 		{output: stoppedInspectionJSON(t, strings.Repeat("e", 64), false, labels)},
+		{output: stoppedInspectionJSON(t, strings.Repeat("e", 64), false, labels)},
 	}}
 	err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{})
 	if err == nil || !strings.Contains(err.Error(), "creation fingerprint") || !strings.Contains(err.Error(), "docker rm") {
 		t.Fatalf("Launch() error = %v, want fingerprint mismatch with a removal hint", err)
 	}
-	if len(runner.combinedCalls) != 1 {
-		t.Fatalf("CombinedOutput calls = %#v, want inspect only, never start", runner.combinedCalls)
+	for _, call := range runner.combinedCalls {
+		if call[1] != "container" {
+			t.Fatalf("CombinedOutput calls = %#v, want inspections only, never start", runner.combinedCalls)
+		}
 	}
 }
 
@@ -78,6 +93,7 @@ func TestDockerLaunchForceExecRestartsStoppedPersistentContainerDespiteMismatch(
 	labels := matchingLabels(t, plan, 1000)
 	labels[launchConfigLabel] = "stale"
 	runner := &fakeCommandRunner{outputs: []commandResult{
+		{output: stoppedInspectionJSON(t, containerID, false, labels)},
 		{output: stoppedInspectionJSON(t, containerID, false, labels)},
 		{output: []byte("name\n")},
 		{output: inspectionJSON(t, containerID, true, "running", labels)}, // post-wait force-exec warning
@@ -134,11 +150,7 @@ func TestDockerLaunchCreatesWithoutAutoRemoveWhenKeepContainerIsSet(t *testing.T
 // removed it. Restart must recreate that directory and the sidecar before the session starts, or the
 // session's bind mount has no source.
 func TestPrepareHostMCPRestartRecreatesGenerationAndSidecar(t *testing.T) {
-	runtimeDir, err := os.MkdirTemp("", "cs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(runtimeDir) })
+	runtimeDir := t.TempDir()
 	generation := filepath.Join(runtimeDir, "agents-safe", "key", "g-abc123")
 	sessionImage := "sha256:" + strings.Repeat("2", 64)
 
@@ -146,12 +158,7 @@ func TestPrepareHostMCPRestartRecreatesGenerationAndSidecar(t *testing.T) {
 		{output: []byte(strings.Repeat("b", 64) + "\n")}, // sidecar create
 	}}
 	attempt := attemptWith(runner)
-	attempt.docker.LookupEnv = func(name string) (string, bool) {
-		if name == "XDG_RUNTIME_DIR" {
-			return runtimeDir, true
-		}
-		return "", false
-	}
+	attempt.docker.LookupEnv = runtimeDirLookup(runtimeDir)
 	attempt.hostMCP = hostMCPPlan{set: oneEndpointSet(t)}
 	inspection := dockercli.ContainerInspection{ID: strings.Repeat("a", 64), Image: sessionImage}
 	inspection.Config.Labels = map[string]string{hostMCPChannelLabel: generation}
@@ -193,6 +200,7 @@ func TestDockerLaunchRestartsPersistentContainerWhenExecFindsItStopped(t *testin
 			{output: inspectionJSON(t, containerID, true, "running", labels)},
 			{output: stoppedInspectionJSON(t, containerID, false, labels)}, // after the failed exec
 			{output: stoppedInspectionJSON(t, containerID, false, labels)}, // replacement acquisition
+			{output: stoppedInspectionJSON(t, containerID, false, labels)}, // replacement acquisition
 			{output: []byte("name\n")},                                     // docker start
 		},
 		runErrors: []error{nil, sessionGoneError{}},
@@ -213,23 +221,14 @@ func TestDockerLaunchRestartsPersistentContainerWhenExecFindsItStopped(t *testin
 // its own recorded relay to bootstrap: the sidecar is rebuilt from the recorded endpoints, not from
 // the current launch's resolution, which may forward nothing at all.
 func TestPrepareHostMCPRestartRebuildsRecordedRelayForForcedMismatch(t *testing.T) {
-	runtimeDir, err := os.MkdirTemp("", "cs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(runtimeDir) })
+	runtimeDir := t.TempDir()
 	generation := filepath.Join(runtimeDir, "agents-safe", "key", "g-abc123")
 
 	runner := &fakeCommandRunner{outputs: []commandResult{
 		{output: []byte(strings.Repeat("b", 64) + "\n")}, // sidecar create
 	}}
 	attempt := attemptWith(runner)
-	attempt.docker.LookupEnv = func(name string) (string, bool) {
-		if name == "XDG_RUNTIME_DIR" {
-			return runtimeDir, true
-		}
-		return "", false
-	}
+	attempt.docker.LookupEnv = runtimeDirLookup(runtimeDir)
 	attempt.forceExec = true
 	attempt.launchFingerprint = "requested"
 	// The current launch forwards nothing; only the container's record says what it needs.
