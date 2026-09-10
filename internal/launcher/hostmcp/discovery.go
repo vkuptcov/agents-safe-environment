@@ -248,9 +248,15 @@ func endpointPort(parsed *url.URL) (int, error) {
 		}
 	}
 	// url.Parse already rejects a non-numeric port, so only the range is left to check.
-	port, err := strconv.Atoi(raw)
-	if err != nil || port < 1 || port > 65535 {
+	port, ok := parsePort(raw)
+	if !ok {
 		return 0, fmt.Errorf("url %q names a loopback host with an invalid port %q", parsed.Redacted(), raw)
 	}
 	return port, nil
+}
+
+// parsePort accepts a decimal TCP port in the valid range.
+func parsePort(raw string) (int, bool) {
+	port, err := strconv.Atoi(raw)
+	return port, err == nil && port >= 1 && port <= 65535
 }

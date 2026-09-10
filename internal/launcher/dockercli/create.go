@@ -40,7 +40,11 @@ func BuildCreateArgs(request CreateRequest) ([]string, error) {
 	if request.Name == "" {
 		return nil, errors.New("container name is required")
 	}
-	return buildRunArgs([]string{"run", "--detach", "--rm"}, request)
+	head := []string{"run", "--detach"}
+	if !request.KeepContainer {
+		head = append(head, "--rm")
+	}
+	return buildRunArgs(head, request)
 }
 
 // BuildRunAttachedArgs encodes a typed create request as foreground `docker run` argv, used by the
@@ -116,6 +120,16 @@ func (client *Client) Stop(ctx context.Context, name string, timeout time.Durati
 			return nil
 		}
 		return commandFailure(fmt.Sprintf("stop container %q", name), output, err)
+	}
+	return nil
+}
+
+// Start starts a stopped container. Docker treats starting an already-running container as success,
+// so two launchers racing to restart one persistent session cannot fail each other here.
+func (client *Client) Start(ctx context.Context, name string) error {
+	output, err := client.combinedOutput(ctx, "start", name)
+	if err != nil {
+		return commandFailure(fmt.Sprintf("start container %q", name), output, err)
 	}
 	return nil
 }

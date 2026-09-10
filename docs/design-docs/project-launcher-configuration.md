@@ -43,6 +43,7 @@ resolution begins.
 | Common | `image = "agents-safe-mvp:local"` | Base or direct session image. |
 | Common | `no_host_mcp = false` | Forward eligible host MCP servers. |
 | Common | `use_host_python_venv = false` | Mask discovered project-local Python virtual environments. |
+| Common | `keep_container = false` | Remove the session container after idle shutdown; `true` keeps and restarts it. |
 | Common | resolved logical mount snapshot | Complete project/Git topology and available host integrations. |
 | Codex | `arguments = ['--sandbox', 'danger-full-access']` | Use the Sysbox container as the sandbox boundary. |
 | Claude | `arguments = ['--permission-mode', 'auto']` | Delegate permission decisions to Claude Code's automatic mode. |
@@ -99,6 +100,7 @@ For this repository, `agents-safe init` generates:
 image = "agents-safe-mvp:local"
 no_host_mcp = false
 use_host_python_venv = false
+keep_container = false
 
 [[common.mounts]]
 role = "host_git_config"
@@ -270,6 +272,7 @@ type CommonConfig struct {
 	Image             string                  `toml:"image"`
 	NoHostMCP         bool                    `toml:"no_host_mcp"`
 	UseHostPythonVenv bool                    `toml:"use_host_python_venv"`
+	KeepContainer     bool                    `toml:"keep_container"`
 	Mounts            []MountConfig           `toml:"mounts"`
 	TmpfsMounts       []TmpfsMountConfig      `toml:"tmpfs_mounts"`
 	DependencyCaches  []DependencyCacheConfig `toml:"dependency_caches"`
@@ -294,6 +297,12 @@ Duplicate and overlapping targets fail before Docker access. Each configured tar
 privileged container bootstrap reapplies the mask; otherwise startup fails closed. The proactive root `.venv`
 reservation below is the only target the launcher may materialize. Comments are serialized documentation and do not
 affect creation.
+
+`keep_container` defaults to `false` and selects whether the session container is created with Docker's `--rm`. It
+is creation-only and excluded from the fingerprint: an existing container's persistence is read from its own Docker
+state, so toggling the value never makes an otherwise matching container unusable. The explicit `--keep-container`
+flag overrides the file for one launch. The restart contract is owned by
+[Safe environment](agents-safe.md#persistent-session-containers).
 
 `use_host_python_venv` is a creation-time policy and defaults to `false`. After TOML and explicit CLI overrides are
 applied, the safe default first checks regular root Python-project markers. A match reserves `<worktree>/.venv` with
@@ -354,6 +363,7 @@ The creation-time fingerprint is the SHA-256 digest of one versioned canonical s
 | `mounts` | Ordered physical binds with validated `source`, absolute `target`, and `read_only`. |
 | `no_host_mcp` | Resolved boolean after defaults, TOML, and explicit CLI overrides. |
 | `use_host_python_venv` | Resolved host-virtual-environment policy after TOML and explicit CLI overrides. |
+| `keep_container` | Not a fingerprint field: persistence is read from the container, never compared. |
 | `host_mcp_endpoints` | Eligible endpoints as canonical `host:port` strings, sorted by host and then port. |
 
 The host-backed dependency-cache implementation increments `schema_version` to `2` and appends one field after

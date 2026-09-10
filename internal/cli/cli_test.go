@@ -38,7 +38,7 @@ func TestRunResolvesExplicitFlagsBeforeLaunch(t *testing.T) {
 	var gotHostHome string
 	exit := cli.Run(context.Background(), testConfig(),
 		[]string{"--project", "/project/nested", "--image", "override:image", "--no-host-mcp=false",
-			"--use-host-python-venv", "--force-exec", "cmd"},
+			"--use-host-python-venv", "--keep-container", "--force-exec", "cmd"},
 		new(bytes.Buffer), new(bytes.Buffer), cli.Dependencies{
 			Discover: func(_ context.Context, path string) (gitproject.Project, error) {
 				if path != "/project/nested" {
@@ -69,6 +69,7 @@ func TestRunResolvesExplicitFlagsBeforeLaunch(t *testing.T) {
 	if want := (launchplan.Overrides{
 		Image: "override:image", ImageOverride: true, NoHostMCPOverride: true,
 		UseHostPythonVenv: true, UseHostPythonVenvOverride: true,
+		KeepContainer: true, KeepContainerOverride: true,
 	}); gotOverrides != want {
 		t.Fatalf("overrides = %#v, want %#v", gotOverrides, want)
 	}

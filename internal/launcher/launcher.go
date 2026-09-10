@@ -65,6 +65,8 @@ type launchAttempt struct {
 	// running container is being force-adopted is derived from its inspection, so no per-inspection
 	// state is retained across the polled fingerprint predicate.
 	forceExec bool
+	// keepContainer creates the session without Docker's automatic removal. It affects creation only.
+	keepContainer bool
 	// launchFingerprint is the resolved immutable creation contract, computed before any container
 	// adoption, image preparation, sidecar allocation, or create request.
 	launchFingerprint string
@@ -145,6 +147,7 @@ func (docker *DockerLauncher) Launch(
 		projectKey:    ProjectKey(docker.HostUID, plan.ProjectRoot),
 		noHostMCP:     options.NoHostMCP,
 		forceExec:     options.ForceExec,
+		keepContainer: options.KeepContainer,
 	}
 	// Discovery runs during preflight, before a container is created or reused, and its channel must
 	// exist before either container because it is a bind mount.

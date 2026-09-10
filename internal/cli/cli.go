@@ -81,6 +81,8 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		"disable host MCP forwarding: no product config read, no forwarders, no relay, no mount")
 	useHostPythonVenv := flags.Bool("use-host-python-venv", false,
 		"use project-local host Python virtual environments instead of masking them")
+	keepContainer := flags.Bool("keep-container", false,
+		"keep the session container after it stops so a later launch restarts it instead of creating a new one")
 	forceExec := flags.Bool("force-exec", false,
 		"execute in an owned running container even when its creation fingerprint differs")
 
@@ -115,6 +117,8 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		NoHostMCPOverride:         flags.Changed("no-host-mcp"),
 		UseHostPythonVenv:         *useHostPythonVenv,
 		UseHostPythonVenvOverride: flags.Changed("use-host-python-venv"),
+		KeepContainer:             *keepContainer,
+		KeepContainerOverride:     flags.Changed("keep-container"),
 	}
 	resolved, err := dependencies.ResolveConfig(project, cfg.DefaultImage, overrides)
 	if err != nil {

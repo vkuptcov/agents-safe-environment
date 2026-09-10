@@ -324,23 +324,8 @@ func (attempt *launchAttempt) reuseHostMCP(ctx context.Context, inspection docke
 	if err != nil {
 		return err
 	}
-	// The candidate this attempt allocated is not the one the running session uses.
-	if err := attempt.hostMCP.removeCandidate(); err != nil {
-		return err
-	}
-	attempt.hostMCP.channel = adopted
-	attempt.hostMCP.candidate = false
-
-	// Recovery uses the running session's own image, not the reference this later launcher was given,
-	// which may name a tag that has moved since.
-	imageID := inspection.Image
-	if imageID == "" {
-		return errors.New("the running session records no image ID")
-	}
-	attempt.hostMCPImageID = imageID
-
-	name := sidecarName(attempt.projectKey, adopted)
-	if err := attempt.ensureSidecar(ctx, name, imageID, adopted, attempt.hostMCP.set); err != nil {
+	name, err := attempt.adoptChannelAndEnsureSidecar(ctx, inspection, adopted, attempt.hostMCP.set)
+	if err != nil {
 		return err
 	}
 	if err := attempt.awaitChannelReady(ctx, adopted, name, inspection.ID); err != nil {
@@ -348,6 +333,71 @@ func (attempt *launchAttempt) reuseHostMCP(ctx context.Context, inspection docke
 	}
 	attempt.printForwardedEndpoints()
 	return nil
+}
+
+// prepareHostMCPRestart rebuilds the forwarding resources a stopped persistent session needs before
+// it can be started again, in the cold-create order: the generation directory, then the sidecar.
+// Channel readiness is awaited by the caller's ordinary post-wait reuse step once the session runs.
+//
+// The stopped session still bind-mounts the generation it recorded, but its sidecar removed that
+// directory on lease EOF, so the directory must exist again before `docker start`, and bootstrap
+// will not complete without a relay to lease from. Unlike a running session, a stopped one therefore
+// cannot be force-adopted "as is": under --force-exec the relay is rebuilt from the endpoints the
+// container recorded, never from the current launch's resolution, which may differ or forward
+// nothing. A container that recorded no forwarding needs nothing.
+func (attempt *launchAttempt) prepareHostMCPRestart(
+	ctx context.Context,
+	inspection dockercli.ContainerInspection,
+) error {
+	set := attempt.hostMCP.set
+	if attempt.forcedFingerprintMismatch(inspection) {
+		recorded, err := hostmcp.ParseLabel(inspection.Config.Labels[hostMCPLabel])
+		if err != nil {
+			return err
+		}
+		set = recorded
+	}
+	if set.Empty() {
+		return nil
+	}
+	generation := inspection.Config.Labels[hostMCPChannelLabel]
+	if generation == "" {
+		return errors.New("the stopped session records no host MCP channel")
+	}
+	channel, err := hostmcp.EnsureChannel(attempt.docker.lookupEnv(), attempt.projectKey, generation)
+	if err != nil {
+		return err
+	}
+	_, err = attempt.adoptChannelAndEnsureSidecar(ctx, inspection, channel, set)
+	return err
+}
+
+// adoptChannelAndEnsureSidecar makes the session's own channel this attempt's, discarding the
+// candidate it allocated, and ensures a relay sidecar for that channel pinned to the session's own
+// image: not the reference this later launcher was given, which may name a tag that has moved since.
+// It returns the sidecar name.
+func (attempt *launchAttempt) adoptChannelAndEnsureSidecar(
+	ctx context.Context,
+	inspection dockercli.ContainerInspection,
+	channel hostmcp.Channel,
+	set hostmcp.Set,
+) (string, error) {
+	if err := attempt.hostMCP.removeCandidate(); err != nil {
+		return "", err
+	}
+	attempt.hostMCP.channel = channel
+	attempt.hostMCP.candidate = false
+
+	imageID := inspection.Image
+	if imageID == "" {
+		return "", errors.New("the session records no image ID")
+	}
+	attempt.hostMCPImageID = imageID
+	name := sidecarName(attempt.projectKey, channel)
+	if err := attempt.ensureSidecar(ctx, name, imageID, channel, set); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 // buildSidecarRequest encodes the relay sidecar's create request.

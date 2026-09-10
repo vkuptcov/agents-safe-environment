@@ -30,6 +30,7 @@ None.
 
 ## Completed
 
+- [Persistent Session Containers](completed/2026-09-10-persistent-containers-exec-plan.md)
 - [Linked Worktree Git Metadata Guard](completed/2026-08-07-linked-worktree-git-metadata-guard-exec-plan.md)
 - [GolangCI-Lint Integration](completed/2026-07-17-golangci-lint-exec-plan.md)
 - [Host MCP Relay Sidecar Linux/Sysbox Spike](completed/2026-07-17-host-mcp-sidecar-spike-exec-plan.md)

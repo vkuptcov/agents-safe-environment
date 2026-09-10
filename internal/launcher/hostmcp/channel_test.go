@@ -148,3 +148,33 @@ func endpointArgs(command []string) []string {
 	}
 	return endpoints
 }
+
+func TestEnsureChannelRecreatesARecordedGeneration(t *testing.T) {
+	runtimeDir, lookup := shortRuntimeDir(t)
+	generation := filepath.Join(runtimeDir, "agents-safe", "key", "g-abc123")
+
+	channel, err := hostmcp.EnsureChannel(lookup, "key", generation)
+	require.NoError(t, err, "a recorded generation under the runtime directory must be recreatable")
+	require.Equal(t, generation, channel.Generation)
+	require.Equal(t, "g-abc123", channel.Name)
+	info, err := os.Stat(generation)
+	require.NoError(t, err, "the generation directory must exist again")
+	require.Equal(t, os.FileMode(0o700), info.Mode().Perm(), "the recreated generation stays private")
+
+	again, err := hostmcp.EnsureChannel(lookup, "key", generation)
+	require.NoError(t, err, "an existing generation is accepted as is")
+	require.Equal(t, channel, again)
+}
+
+func TestEnsureChannelRejectsAGenerationOutsideTheProjectRuntimeDir(t *testing.T) {
+	runtimeDir, lookup := shortRuntimeDir(t)
+	for name, generation := range map[string]string{
+		"other project": filepath.Join(runtimeDir, "agents-safe", "other", "g-abc123"),
+		"outside":       filepath.Join(os.TempDir(), "g-abc123"),
+		"relative":      "g-abc123",
+	} {
+		_, err := hostmcp.EnsureChannel(lookup, "key", generation)
+		require.Error(t, err, "%s: a generation outside this project's runtime parent must be refused", name)
+		require.NoDirExists(t, generation, "%s: nothing may be created for a refused path", name)
+	}
+}

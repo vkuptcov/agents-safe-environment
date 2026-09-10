@@ -276,6 +276,7 @@ func TestResolveProjectConfigAppliesOnlyExplicitOverridesAfterTOML(t *testing.T)
 image = "configured:image"
 no_host_mcp = true
 use_host_python_venv = true
+keep_container = true
 `
 	if err := os.WriteFile(filepath.Join(projectRoot, projectenv.Directory, projectenv.ConfigName), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -287,18 +288,19 @@ use_host_python_venv = true
 		t.Fatal(err)
 	}
 	if withoutFlags.Config.Common.Image != "configured:image" || !withoutFlags.Options.NoHostMCP ||
-		!withoutFlags.Options.UseHostPythonVenv || withoutFlags.Options.ImageOverride {
+		!withoutFlags.Options.UseHostPythonVenv || !withoutFlags.Options.KeepContainer || withoutFlags.Options.ImageOverride {
 		t.Fatalf("file resolution = %#v", withoutFlags)
 	}
 
 	withFlags, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{
 		Image: "flag:image", ImageOverride: true, NoHostMCPOverride: true, UseHostPythonVenvOverride: true,
+		KeepContainerOverride: true,
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if withFlags.Config.Common.Image != "flag:image" || withFlags.Options.NoHostMCP || withFlags.Options.UseHostPythonVenv ||
-		!withFlags.Options.ImageOverride {
+		withFlags.Options.KeepContainer || !withFlags.Options.ImageOverride {
 		t.Fatalf("explicit resolution = %#v", withFlags)
 	}
 	if data, err := os.ReadFile(filepath.Join(projectRoot, projectenv.Directory, projectenv.ConfigName)); err != nil || string(data) != config {

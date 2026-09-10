@@ -259,6 +259,12 @@ By default, detected project Python virtual environments are masked, preventing 
 `.venv`. Set `use_host_python_venv = true` in the config, or pass `--use-host-python-venv`, only when you deliberately
 want to use it.
 
+By default the session container is removed when it stops after the idle timeout. Set `keep_container = true` in the
+config, or pass `--keep-container`, to keep it: the next launch restarts the stopped container instead of creating a
+new one, so nested Docker images, installed packages, and other changes to the container filesystem survive. Masked
+`.venv` directories still live on tmpfs and are recreated on every start. A kept container stays until you remove it
+with `docker rm`; the launcher prints a notice whenever it restarts one.
+
 For all config fields and precedence rules, see
 [Project launcher configuration](docs/design-docs/project-launcher-configuration.md).
 
@@ -272,7 +278,8 @@ For all config fields and precedence rules, see
 - Personal skills in `~/.agents/skills`, when present, are mounted read-only.
 - The host home, Docker socket, and host namespaces are not mounted. Host keychain-only credentials are not
   available.
-- Nested Docker images, containers, and storage live only for the active session.
+- Nested Docker images, containers, and storage live only for the active session unless `keep_container` is set,
+  in which case they persist in the stopped container between sessions.
 
 An active environment has a fixed creation contract. If you change its image or mount setup while it is running,
 finish the active commands and start again. `--force-exec` is an emergency way to run a command in the compatible

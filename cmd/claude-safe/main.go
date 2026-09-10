@@ -17,7 +17,7 @@ import (
 const defaultImage = "agents-safe-mvp:local"
 
 const usage = `Usage: claude-safe update
-       claude-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [--force-exec] [-- CLAUDE ARG...]
+       claude-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [--keep-container] [--force-exec] [-- CLAUDE ARG...]
 
 Run interactive Claude Code for the current Git project inside the shared ephemeral Sysbox container.
 Arguments after -- are forwarded to Claude Code; the launcher never runs another executable.
@@ -27,6 +27,7 @@ The update command updates the Linux Claude Code installation shared by managed 
   --no-host-mcp  Do not forward host MCP servers into the container. By default eligible loopback
                  servers from Codex and Claude host configuration use one confined relay.
   --use-host-python-venv Expose project-local host Python virtual environments instead of masking them.
+  --keep-container Keep the session container after it stops; the next launch restarts it instead of creating a new one.
   --force-exec   Execute in the owned running container despite a creation fingerprint mismatch.
   --image        Explicitly select an image and bypass automatic .agents-safe/Dockerfile selection.`
 

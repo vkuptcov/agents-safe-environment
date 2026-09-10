@@ -70,6 +70,9 @@ type CreateRequest struct {
 	Entrypoint string
 	// Command replaces the image's default command. Empty preserves it.
 	Command []string
+	// KeepContainer creates the container without Docker's automatic `--rm` removal, so it remains
+	// after it stops and a later launch can start it again.
+	KeepContainer bool
 }
 
 // ExecRequest contains the Docker-specific inputs for one command in an existing container.
@@ -114,6 +117,11 @@ type ContainerInspection struct {
 	Config struct {
 		Labels map[string]string `json:"Labels"`
 	} `json:"Config"`
+	// HostConfig.AutoRemove is the creation-time removal policy. A stopped container with it set is
+	// Docker's asynchronous removal in progress; without it, the container persists until removed.
+	HostConfig struct {
+		AutoRemove bool `json:"AutoRemove"`
+	} `json:"HostConfig"`
 	State struct {
 		Running bool   `json:"Running"`
 		Status  string `json:"Status"`

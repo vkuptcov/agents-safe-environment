@@ -99,12 +99,14 @@ func (set Set) BannerLines() []string {
 // sortEndpoints puts the set in its canonical order. The order is load-bearing: it fixes the socket
 // index each endpoint is served on, and both containers must agree on it.
 func sortEndpoints(endpoints []Endpoint) {
-	slices.SortFunc(endpoints, func(first, second Endpoint) int {
-		if host := strings.Compare(first.Host, second.Host); host != 0 {
-			return host
-		}
-		return first.Port - second.Port
-	})
+	slices.SortFunc(endpoints, compareEndpoints)
+}
+
+func compareEndpoints(first, second Endpoint) int {
+	if host := strings.Compare(first.Host, second.Host); host != 0 {
+		return host
+	}
+	return first.Port - second.Port
 }
 
 // mergeSets forms one canonical endpoint set from independently parsed product configurations.
@@ -182,4 +184,42 @@ func isLoopbackHost(host string) bool {
 	}
 	address := net.ParseIP(host)
 	return address != nil && address.IsLoopback()
+}
+
+// ParseLabel restores the endpoint set a session container recorded in its agents-safe.host-mcp
+// label. It exists for restarting a stopped persistent session whose creation contract the current
+// launch does not reproduce: the container still expects exactly these endpoints, in this order,
+// so its relay must be rebuilt from the record rather than from the current resolution.
+//
+// Server names are not recorded, so restored endpoints carry none; only banner lines use them. The
+// label order is the sorted order the socket indices depend on, so it is preserved, and the same
+// loopback and collision rules that governed creation are re-applied.
+func ParseLabel(label string) (Set, error) {
+	label = strings.TrimSpace(label)
+	if label == "" || label == AbsentLabel {
+		return Set{}, nil
+	}
+	var endpoints []Endpoint
+	for _, address := range strings.Split(label, ",") {
+		host, portText, err := net.SplitHostPort(address)
+		if err != nil {
+			return Set{}, fmt.Errorf("recorded host MCP endpoint %q: %w", address, err)
+		}
+		port, ok := parsePort(portText)
+		if !ok {
+			return Set{}, fmt.Errorf("recorded host MCP endpoint %q has an invalid port", address)
+		}
+		host = strings.ToLower(host)
+		if !isLoopbackHost(host) {
+			return Set{}, fmt.Errorf("recorded host MCP endpoint %q is not loopback", address)
+		}
+		endpoints = append(endpoints, Endpoint{Host: host, Port: port})
+	}
+	if !slices.IsSortedFunc(endpoints, compareEndpoints) {
+		return Set{}, fmt.Errorf("recorded host MCP endpoints %q are not in canonical order", label)
+	}
+	if err := rejectCollisions(endpoints); err != nil {
+		return Set{}, err
+	}
+	return Set{Endpoints: endpoints}, nil
 }
