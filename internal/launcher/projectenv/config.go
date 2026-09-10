@@ -47,6 +47,7 @@ type CommonConfig struct {
 	Image             string                  `toml:"image"`
 	NoHostMCP         bool                    `toml:"no_host_mcp"`
 	UseHostPythonVenv bool                    `toml:"use_host_python_venv"`
+	KeepContainer     bool                    `toml:"keep_container"`
 	Mounts            []MountConfig           `toml:"mounts"`
 	TmpfsMounts       []TmpfsMountConfig      `toml:"tmpfs_mounts"`
 	DependencyCaches  []DependencyCacheConfig `toml:"dependency_caches"`
@@ -116,6 +117,7 @@ type commonOverlay struct {
 	Image             *string                  `toml:"image"`
 	NoHostMCP         *bool                    `toml:"no_host_mcp"`
 	UseHostPythonVenv *bool                    `toml:"use_host_python_venv"`
+	KeepContainer     *bool                    `toml:"keep_container"`
 	Mounts            *[]MountConfig           `toml:"mounts"`
 	TmpfsMounts       *[]TmpfsMountConfig      `toml:"tmpfs_mounts"`
 	DependencyCaches  *[]DependencyCacheConfig `toml:"dependency_caches"`
@@ -264,6 +266,9 @@ func applyOverlay(config *ProjectConfig, overlay configOverlay) {
 		}
 		if overlay.Common.UseHostPythonVenv != nil {
 			config.Common.UseHostPythonVenv = *overlay.Common.UseHostPythonVenv
+		}
+		if overlay.Common.KeepContainer != nil {
+			config.Common.KeepContainer = *overlay.Common.KeepContainer
 		}
 		if overlay.Common.Mounts != nil {
 			config.Common.Mounts = make([]MountConfig, len(*overlay.Common.Mounts))

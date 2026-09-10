@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -111,6 +113,39 @@ func AdoptChannel(generation string) (Channel, error) {
 		Generation: generation,
 		Name:       name,
 	}, nil
+}
+
+// EnsureChannel recreates the generation directory a stopped persistent session recorded, so the
+// session's bind mount has a source again before it is started.
+//
+// The departed sidecar removed that directory after lease EOF, and a logout may have cleared the
+// runtime directory entirely, so the path is recreated rather than assumed. The recorded path is
+// trusted only within this project's own runtime parent: anything else fails closed before any
+// directory is created, so a mislabelled container cannot make the launcher create directories
+// elsewhere.
+func EnsureChannel(lookupEnv func(string) (string, bool), projectKey string, generation string) (Channel, error) {
+	runtimeDir, err := validatedRuntimeDir(lookupEnv)
+	if err != nil {
+		return Channel{}, err
+	}
+	channel, err := AdoptChannel(generation)
+	if err != nil {
+		return Channel{}, err
+	}
+	if want := filepath.Join(runtimeDir, channelRoot, projectKey); channel.Parent != want {
+		return Channel{}, fmt.Errorf(
+			"recorded host MCP channel %q is outside this project's runtime parent %q", generation, want)
+	}
+	if err := os.MkdirAll(channel.Parent, directoryMode); err != nil {
+		return Channel{}, fmt.Errorf("create host MCP runtime parent %q: %w", channel.Parent, err)
+	}
+	if err := os.Mkdir(channel.Generation, directoryMode); err != nil && !errors.Is(err, fs.ErrExist) {
+		return Channel{}, fmt.Errorf("recreate host MCP generation %q: %w", channel.Generation, err)
+	}
+	if err := os.Chmod(channel.Generation, directoryMode); err != nil {
+		return Channel{}, fmt.Errorf("set host MCP generation mode %q: %w", channel.Generation, err)
+	}
+	return channel, nil
 }
 
 // Remove deletes a candidate generation this attempt allocated.

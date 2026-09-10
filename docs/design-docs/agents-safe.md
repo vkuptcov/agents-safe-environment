@@ -577,8 +577,9 @@ The product-state and `agents-safe.personal-skills` labels each contain the cano
 already covered by `agents-safe.launch-config`. `agents-safe.host-mcp` is also diagnostic metadata owned by
 [`host-mcp-forwarding.md`](host-mcp-forwarding.md). That design sets `agents-safe.host-mcp-channel`, which locates a
 running container's MCP channel and is read rather than compared. A compatible running container receives the new
-command through `docker exec`; an absent name is created with detached `docker run --rm`. Different worktrees continue
-to use distinct Docker daemons and writable layers.
+command through `docker exec`; an absent name is created with detached `docker run --rm`, or without `--rm` when
+`common.keep_container` or `--keep-container` is set. Different worktrees continue to use distinct Docker daemons and
+writable layers.
 
 Creation-time parameters are fixed when the container is created and cannot be changed by `docker exec`. A fingerprint
 mismatch prevents reuse. The launcher reports the running and requested fingerprints and asks the user to finish the
@@ -647,21 +648,44 @@ sequenceDiagram
         Manager-->>Container: Exit after idle timeout
         Container->>InnerDocker: Graceful daemon shutdown
         Container-->>HostDocker: Stop
-        HostDocker->>HostDocker: Remove stopped container
+        HostDocker->>HostDocker: Remove stopped container unless kept
     end
 ```
 
 The wrapper passes Docker exec streams to its child, forwards termination signals, and returns the child's exit status.
 Normal exit or Ctrl-C finishes only that managed command. The container, nested daemon, and nested containers
 stop after the final registered command finishes and the manager's idle timeout expires. The container is
-automatically removed after it stops.
+automatically removed after it stops unless it was created as a persistent container (below).
 
 If a launcher or terminal disappears while its command continues inside the container, the wrapper keeps that real
 command registered until it exits. If the wrapper or command dies, the local connection closes and the manager releases
-it. A host Docker daemon or machine failure can still leave a stopped or running container record. Only a
-running, protocol-compatible container is eligible for reuse; stopped containers are not restarted. A separate
-diagnostic command or documented procedure finds resources through the `codex-safe` labels and removes only confirmed
-stale sessions.
+it. A host Docker daemon or machine failure can still leave a stopped or running container record. A stopped
+auto-remove container is Docker's removal in progress and is awaited, never restarted. A separate diagnostic command or
+documented procedure finds resources through the `codex-safe` labels and removes only confirmed stale sessions.
+
+#### Persistent session containers
+
+`common.keep_container = true`, or the invocation flag `--keep-container`, creates the session container without
+`--rm`. Everything else about creation, readiness, registration, and idle shutdown is unchanged: the manager still
+stops the nested daemon and exits, and Docker leaves the container in the `exited` state instead of removing it. The
+container's writable layer, including the nested daemon's `/var/lib/docker`, installed packages, and the recreated
+container-local home, therefore survives until the container is removed. Session tmpfs masks are recreated empty on
+every start, so masked virtual environments do not persist.
+
+The option is creation-only and is deliberately not a fingerprint input. Whether an existing container persists is
+read from its inspected `HostConfig.AutoRemove`, so a one-off `--keep-container` does not make later plain launches
+fail, and a `keep_container = false` launch that finds a stopped persistent container restarts it rather than creating
+a duplicate name. The relay sidecar keeps `--rm`; it is transient by construction and is recreated on restart.
+
+A launch that finds a stopped, owned, non-auto-remove container applies the same ownership, protocol, and creation
+fingerprint predicates as running-container reuse, including `--force-exec`. On a match it prints a notice naming the
+container and the `docker rm` command that discards it, rebuilds the host MCP resources in cold-create order when the
+launch forwards endpoints (the recorded generation directory is recreated under this project's runtime parent, then the
+sidecar is ensured from the stopped session's own image ID), runs `docker start`, and then continues through the
+ordinary readiness and host MCP reuse steps. A fingerprint mismatch fails with the usual mismatch error extended by
+the `docker rm` hint. A persistent session that shuts down under an exec is restarted and the command retried once,
+exactly as an auto-remove session is replaced. Two launchers racing to restart one container both succeed, because
+`docker start` on a running container is a no-op.
 
 ### 11. Preflight and Failure Behavior
 

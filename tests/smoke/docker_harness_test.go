@@ -132,6 +132,23 @@ func (docker *dockerHarness) waitForContainer() {
 	docker.t.Fatal("timed out waiting for the deterministic managed container")
 }
 
+// waitForContainerStop waits for the managed container to leave the running state while still existing,
+// which is the resting state of a persistent session after idle shutdown.
+func (docker *dockerHarness) waitForContainerStop() container.InspectResponse {
+	docker.t.Helper()
+	deadline := time.Now().Add(idleRemovalTimeout)
+	for time.Now().Before(deadline) {
+		inspection, err := docker.client.ContainerInspect(docker.ctx, docker.names.managed)
+		require.NoError(docker.t, err, "a persistent session must still exist while waiting for idle stop")
+		if !inspection.State.Running {
+			return inspection
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	docker.t.Fatal("timed out waiting for the persistent session to stop")
+	return container.InspectResponse{}
+}
+
 func (docker *dockerHarness) waitForContainerRemoval() {
 	docker.t.Helper()
 	deadline := time.Now().Add(idleRemovalTimeout)

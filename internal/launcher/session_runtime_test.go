@@ -19,6 +19,7 @@ func TestSessionCreateRequestAlwaysCarriesExplicitSysboxRuntime(t *testing.T) {
 		"agents-safe-aba8b4ca4ff345d5d0443c0c",
 		hostMCPPlan{},
 		"fingerprint",
+		false,
 	)
 	if err != nil {
 		t.Fatalf("buildCreateRequest() error = %v", err)

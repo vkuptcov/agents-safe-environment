@@ -128,14 +128,24 @@ type launchConfigMismatchError struct {
 	projectRoot   string
 	running       string
 	requested     string
+	// persistent marks a stopped container that Docker will not remove, so the hint can name the
+	// command that discards it and lets the next launch create a fresh one.
+	persistent bool
 }
 
 func (err *launchConfigMismatchError) Error() string {
-	return fmt.Sprintf(
+	message := fmt.Sprintf(
 		"managed session container %q (ID %q) for worktree %q has creation fingerprint %q, "+
 			"but this launch resolved %q; "+
 			"finish the active session before retrying, then relaunch, or pass --force-exec "+
 			"to execute in the existing container with its current creation-time configuration",
 		err.containerName, err.containerID, err.projectRoot, err.running, err.requested,
 	)
+	if err.persistent {
+		message += fmt.Sprintf(
+			"; the container is stopped and persistent, so `docker rm %s` discards it and lets this launch create a new one",
+			err.containerName,
+		)
+	}
+	return message
 }

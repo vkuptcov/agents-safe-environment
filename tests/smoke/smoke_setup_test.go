@@ -188,10 +188,26 @@ func (launcher *launcherHarness) startBinaryWithImageOverride(
 	command ...string,
 ) *launcherProcess {
 	launcher.t.Helper()
+	return launcher.startBinaryWithFlags(binary, project, imageOverride, nil, separator, hostEnv, command...)
+}
+
+// startBinaryWithFlags is the one place launcher argv is assembled; flags are launcher options placed
+// after --image and before the separator.
+func (launcher *launcherHarness) startBinaryWithFlags(
+	binary string,
+	project string,
+	imageOverride bool,
+	flags []string,
+	separator bool,
+	hostEnv []string,
+	command ...string,
+) *launcherProcess {
+	launcher.t.Helper()
 	arguments := []string{"--project", project}
 	if imageOverride {
 		arguments = append(arguments, "--image", goSmokeImage)
 	}
+	arguments = append(arguments, flags...)
 	if separator {
 		arguments = append(arguments, "--")
 	}
@@ -225,6 +241,12 @@ func (launcher *launcherHarness) startDefault(project string, command ...string)
 func (launcher *launcherHarness) startAgents(project string, command ...string) *launcherProcess {
 	launcher.t.Helper()
 	return launcher.startBinary(launcher.agentsBinary, project, false, nil, command...)
+}
+
+// startKept invokes the generic launcher with --keep-container, so the session container survives idle shutdown.
+func (launcher *launcherHarness) startKept(project string, command ...string) *launcherProcess {
+	launcher.t.Helper()
+	return launcher.startBinaryWithFlags(launcher.agentsBinary, project, true, []string{"--keep-container"}, true, nil, command...)
 }
 
 func (launcher *launcherHarness) startWithEnvironment(project string, environment []string, command ...string) *launcherProcess {

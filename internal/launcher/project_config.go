@@ -75,6 +75,9 @@ func ResolveProjectConfig(
 	if overrides.UseHostPythonVenvOverride {
 		config.Common.UseHostPythonVenv = overrides.UseHostPythonVenv
 	}
+	if overrides.KeepContainerOverride {
+		config.Common.KeepContainer = overrides.KeepContainer
+	}
 	resolution, err := launchplan.ResolveWithHostHome(project, defaults, config, host.HomeDir)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
@@ -89,6 +92,7 @@ func ResolveProjectConfig(
 			ImageOverride:     overrides.ImageOverride,
 			NoHostMCP:         config.Common.NoHostMCP,
 			UseHostPythonVenv: config.Common.UseHostPythonVenv,
+			KeepContainer:     config.Common.KeepContainer,
 		},
 		DefaultCodexHomeSet:  defaultCodexHomeSet,
 		DefaultClaudeHomeSet: defaultClaudeHomeSet,

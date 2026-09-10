@@ -28,6 +28,10 @@ type Options struct {
 	// UseHostPythonVenv exposes project-local host Python virtual environments instead of masking them.
 	// It selects creation-time state and must match for active-container reuse.
 	UseHostPythonVenv bool
+	// KeepContainer creates the session container without Docker's automatic removal, so it persists
+	// after idle shutdown and a later launch restarts it. It selects creation-time behavior only:
+	// whether an existing container persists is read from its own Docker state, not from this option.
+	KeepContainer bool
 }
 
 // Overrides records only launcher flags explicitly present in argv. The resolver applies these after loading the
@@ -39,6 +43,8 @@ type Overrides struct {
 	NoHostMCPOverride         bool
 	UseHostPythonVenv         bool
 	UseHostPythonVenvOverride bool
+	KeepContainer             bool
+	KeepContainerOverride     bool
 }
 
 // BindMount describes one host path exposed to the Sysbox container through a Docker bind mount.

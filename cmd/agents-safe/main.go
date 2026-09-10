@@ -21,7 +21,7 @@ import (
 const defaultImage = "agents-safe-mvp:local"
 
 const usage = `Usage: agents-safe init [--project PATH]
-       agents-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [--force-exec] [--] COMMAND [ARG...]
+       agents-safe [--project PATH] [--image REF] [--no-host-mcp] [--use-host-python-venv] [--keep-container] [--force-exec] [--] COMMAND [ARG...]
 
 Run a command for the current Git project inside an ephemeral Sysbox container.
 Options must appear before COMMAND; COMMAND is executed directly without a shell.
@@ -32,6 +32,7 @@ Use agents-safe -- init to execute a container command named init.
   --no-host-mcp  Do not forward host MCP servers into the container. By default eligible loopback
                  servers from Codex and Claude host configuration use one confined relay.
   --use-host-python-venv Expose project-local host Python virtual environments instead of masking them.
+  --keep-container Keep the session container after it stops; the next launch restarts it instead of creating a new one.
   --force-exec   Execute in the owned running container despite a creation fingerprint mismatch.
   --image        Explicitly select an image and bypass automatic .agents-safe/Dockerfile selection.`
 

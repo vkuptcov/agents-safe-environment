@@ -15,7 +15,7 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 	t.Parallel()
 	plan := testPlan()
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint", false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestCreateRequestPreservesGuardedGitMountOrder(t *testing.T) {
 		{Source: "/repo/.git/worktrees/feature", Target: "/repo/.git/worktrees/feature"},
 	}
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint", false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestCreateRequestLabelsResolvedUVCache(t *testing.T) {
 		Kind: projectenv.DependencyCacheUV, Source: "/physical/uv-cache", Target: "/host/cache/uv",
 	}}
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint", false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +109,7 @@ func TestCreateRequestMasksDiscoveredPythonVirtualEnvironments(t *testing.T) {
 		{Target: filepath.Join(plan.ProjectRoot, "venvs", "python311"), Mode: projectenv.DefaultTmpfsMode},
 	}
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint", false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestCreateRequestMakesOnlyVirtualEnvironmentMasksExecutable(t *testing.T) {
 		{Target: filepath.Join(plan.ProjectRoot, "scratch"), Mode: projectenv.DefaultTmpfsMode},
 	}
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint", false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestCreateRequestOmitsTmpfsWhenHostVirtualEnvironmentsAreUsed(t *testing.T)
 	plan := testPlan()
 	plan.TmpfsMounts = nil
 	request, err := hostLauncher(1000, 1001, "/home/developer", "").buildCreateRequest(
-		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint",
+		plan, "image", "codex-safe-test", hostMCPPlan{}, "fingerprint", false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -260,4 +260,23 @@ func containsKeyValue(values []dockercli.KeyValue, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestCreateRequestCarriesKeepContainer(t *testing.T) {
+	t.Parallel()
+	launcher := hostLauncher(1000, 1001, "/home/developer", "")
+	kept, err := launcher.buildCreateRequest(testPlan(), "image", "codex-safe-test", hostMCPPlan{}, "fingerprint", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !kept.KeepContainer {
+		t.Fatal("KeepContainer = false, want the option forwarded to Docker create")
+	}
+	removed, err := launcher.buildCreateRequest(testPlan(), "image", "codex-safe-test", hostMCPPlan{}, "fingerprint", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.KeepContainer {
+		t.Fatal("KeepContainer = true, want default auto-removal")
+	}
 }

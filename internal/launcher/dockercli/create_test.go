@@ -90,3 +90,17 @@ func TestBuildCreateArgsPreservesOrderedInputs(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildCreateArgsOmitsAutoRemoveForKeptContainer(t *testing.T) {
+	t.Parallel()
+	got, err := BuildCreateArgs(CreateRequest{
+		Image: "image", Name: "managed-container", Runtime: "sysbox-runc", KeepContainer: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildCreateArgs() error = %v", err)
+	}
+	want := []string{"run", "--detach", "--runtime=sysbox-runc", "--name", "managed-container", "image"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildCreateArgs() = %q, want %q", got, want)
+	}
+}

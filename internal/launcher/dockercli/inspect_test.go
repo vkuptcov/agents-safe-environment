@@ -60,13 +60,16 @@ func TestProcessErrorContractCarriesExitAndStderr(t *testing.T) {
 type fakeRunner struct {
 	output []byte
 	err    error
+	// args records the argv of the most recent CombinedOutput call.
+	args []string
 }
 
 func (runner *fakeRunner) CombinedOutput(
 	_ context.Context,
 	_ string,
-	_ ...string,
+	args ...string,
 ) ([]byte, error) {
+	runner.args = args
 	return runner.output, runner.err
 }
 

@@ -350,6 +350,44 @@ func (attempt *launchAttempt) reuseHostMCP(ctx context.Context, inspection docke
 	return nil
 }
 
+// prepareHostMCPRestart rebuilds the forwarding resources a stopped persistent session needs before
+// it can be started again, in the cold-create order: the generation directory, then the sidecar.
+// Channel readiness is awaited by the caller's ordinary post-wait reuse step once the session runs.
+//
+// The stopped session still bind-mounts the generation it recorded, but its sidecar removed that
+// directory on lease EOF, so the directory must exist again before `docker start`. A launch that
+// forwards nothing, or that force-adopts a mismatched container, prepares nothing: the container's
+// own creation-time contract stays in effect either way.
+func (attempt *launchAttempt) prepareHostMCPRestart(
+	ctx context.Context,
+	inspection dockercli.ContainerInspection,
+) error {
+	if attempt.hostMCP.set.Empty() || attempt.forcedFingerprintMismatch(inspection) {
+		return nil
+	}
+	generation := inspection.Config.Labels[hostMCPChannelLabel]
+	if generation == "" {
+		return errors.New("the stopped session records no host MCP channel")
+	}
+	channel, err := hostmcp.EnsureChannel(attempt.docker.lookupEnv(), attempt.projectKey, generation)
+	if err != nil {
+		return err
+	}
+	if err := attempt.hostMCP.removeCandidate(); err != nil {
+		return err
+	}
+	attempt.hostMCP.channel = channel
+	attempt.hostMCP.candidate = false
+
+	imageID := inspection.Image
+	if imageID == "" {
+		return errors.New("the stopped session records no image ID")
+	}
+	attempt.hostMCPImageID = imageID
+	name := sidecarName(attempt.projectKey, channel)
+	return attempt.ensureSidecar(ctx, name, imageID, channel, attempt.hostMCP.set)
+}
+
 // buildSidecarRequest encodes the relay sidecar's create request.
 //
 // Every confinement here is load-bearing. The sidecar gains exactly one thing over the session

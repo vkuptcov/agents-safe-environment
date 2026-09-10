@@ -371,13 +371,17 @@ Normal idle shutdown proceeds in this order:
 1. the manager observes zero active commands for the full idle timeout and commits shutdown;
 2. it closes the listener, sends SIGTERM to dockerd, and waits for bounded graceful shutdown;
 3. the Go entrypoint exits successfully;
-4. Docker stops remaining namespace processes and removes the container.
+4. Docker stops remaining namespace processes and removes the container, unless it was created as a persistent
+   container, in which case it stays `exited` for the launcher to restart.
 
 If dockerd exits while the manager is active, `serve` stops accepting commands and exits nonzero. On SIGINT or
 SIGTERM, it closes the listener, terminates dockerd, and waits for it. Tini remains PID 1 only to forward signals to
 the Go entrypoint and reap adopted processes.
 
-`--rm` remains enabled. The design intentionally reaches a stopped container instead of retaining one for restart.
+`--rm` remains the default. A container created with `keep_container` is retained after this shutdown and restarted by
+the launcher on the next launch; bootstrap is idempotent for that restart because it reconciles the existing account,
+removes stale manager runtime state, and reuses the nested daemon's data root. See
+[Persistent session containers](agents-safe.md#persistent-session-containers).
 
 ### 7. Concurrency and Race Handling
 
@@ -394,7 +398,8 @@ the timer or the connection closes without acknowledgement.
 #### New command after shutdown commits
 
 `docker exec` or wrapper registration fails because the old container is stopping. The launcher waits for the
-deterministic name to be released, creates one replacement container, and retries the command once.
+deterministic name to be released, creates one replacement container, and retries the command once. A persistent
+container is restarted instead of replaced.
 
 #### Legacy random-name containers
 

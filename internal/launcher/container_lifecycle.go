@@ -58,7 +58,12 @@ func (attempt *launchAttempt) acquireContainer(
 			}
 			return inspection.ID, nil
 		}
-		containerID, err := attempt.waitForReusableOrReleased(ctx)
+		var containerID string
+		if inspection.HostConfig.AutoRemove {
+			containerID, err = attempt.waitForReusableOrReleased(ctx)
+		} else {
+			containerID, err = attempt.restartContainer(ctx, inspection)
+		}
 		if err != nil {
 			return "", err
 		}
@@ -186,6 +191,7 @@ func (attempt *launchAttempt) createContainer(
 ) (string, bool, error) {
 	request, err := attempt.docker.buildCreateRequest(
 		attempt.plan, attempt.image, attempt.containerName, attempt.hostMCP, attempt.launchFingerprint,
+		attempt.keepContainer,
 	)
 	if err != nil {
 		return "", false, err
@@ -250,6 +256,7 @@ func (attempt *launchAttempt) validateRunningFingerprint(inspection dockercli.Co
 		projectRoot:   attempt.plan.ProjectRoot,
 		running:       inspection.Config.Labels[launchConfigLabel],
 		requested:     attempt.launchFingerprint,
+		persistent:    !inspection.State.Running && !inspection.HostConfig.AutoRemove,
 	}
 }
 
@@ -284,6 +291,12 @@ func (attempt *launchAttempt) waitForReusableOrReleased(
 			}
 			return inspection.ID, nil
 		}
+		if !inspection.HostConfig.AutoRemove {
+			// A stopped container without auto-removal is not Docker's removal in progress: it is a
+			// persistent session that stays stopped until something starts it. Waiting would only
+			// time out, so it is restarted here and handed back as a running container.
+			return attempt.restartContainer(ctx, inspection)
+		}
 		select {
 		case <-waitContext.Done():
 			return "", fmt.Errorf(
@@ -313,6 +326,40 @@ func (attempt *launchAttempt) containerStoppedAfterExec(
 		}
 		return false, nil
 	}
+	if !inspection.HostConfig.AutoRemove {
+		// The persistent session shut down under the exec. The replacement acquisition restarts it.
+		return true, nil
+	}
 	containerID, err := attempt.waitForReusableOrReleased(ctx)
 	return containerID == "" && err == nil, err
+}
+
+// restartContainer starts a stopped persistent session after the same ownership and fingerprint
+// checks a running one passes, and returns it as a running container for the caller's readiness
+// and host-MCP reuse steps. Forwarding resources are rebuilt first, in cold-create order, because
+// the session's channel bind mount must have a source before Docker starts it.
+//
+// The restart is driven by the container's own removal policy, not by this launch's option: a
+// container created with keep_container persists until removed, and the notice names the command
+// that discards it.
+func (attempt *launchAttempt) restartContainer(
+	ctx context.Context,
+	inspection dockercli.ContainerInspection,
+) (string, error) {
+	if err := attempt.validateRunningFingerprint(inspection); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(
+		attempt.docker.Stderr,
+		"restarting persistent session container %q (ID %q); it was created with keep_container and "+
+			"persists until `docker rm %s`\n",
+		attempt.containerName, inspection.ID, attempt.containerName,
+	)
+	if err := attempt.prepareHostMCPRestart(ctx, inspection); err != nil {
+		return "", err
+	}
+	if err := attempt.cli.Start(ctx, attempt.containerName); err != nil {
+		return "", err
+	}
+	return inspection.ID, nil
 }

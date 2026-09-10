@@ -39,6 +39,7 @@ func (docker *DockerLauncher) buildCreateRequest(
 	containerName string,
 	forwarding hostMCPPlan,
 	launchFingerprint string,
+	keepContainer bool,
 ) (dockercli.CreateRequest, error) {
 	if strings.TrimSpace(image) == "" {
 		return dockercli.CreateRequest{}, errors.New("container image is required")
@@ -122,7 +123,8 @@ func (docker *DockerLauncher) buildCreateRequest(
 				ReadOnly: true,
 			},
 		},
-		Tmpfs: dockerTmpfsMounts(plan.TmpfsMounts),
+		Tmpfs:         dockerTmpfsMounts(plan.TmpfsMounts),
+		KeepContainer: keepContainer,
 	}, nil
 }
 

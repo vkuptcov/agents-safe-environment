@@ -18,6 +18,7 @@ func TestLoadTypedConfigOverlaysPresentValues(t *testing.T) {
 image = "configured:image"
 no_host_mcp = false
 use_host_python_venv = true
+keep_container = true
 
 [codex]
 arguments = ["exec", "--model", "gpt-5"]
@@ -38,6 +39,9 @@ arguments = ["--model", "opus"]
 	}
 	if !config.Common.UseHostPythonVenv {
 		t.Error("use_host_python_venv = false, want explicit true")
+	}
+	if !config.Common.KeepContainer {
+		t.Error("keep_container = false, want explicit true")
 	}
 	if !reflect.DeepEqual(config.Common.Mounts, defaults.Common.Mounts) {
 		t.Errorf("mounts = %#v, want omitted default %#v", config.Common.Mounts, defaults.Common.Mounts)
