@@ -1,6 +1,6 @@
 # Persistent Session Containers
 
-Status: in review
+Status: completed
 Created: 2026-09-10
 Design: [Safe environment](../../design-docs/agents-safe.md)
 Scope:
@@ -32,7 +32,8 @@ default.
   ensured before `docker start`, and the channel is ready before the command runs.
 - The relay sidecar keeps `--rm`; the session manager and bootstrap are unchanged.
 - Design docs and configuration docs describe the option, its restart path, and what still does not persist.
-- `gofmt`, `make lint`, `make test`, `make check-docs` pass; `make test-smoke-go` proves a real restart on a Sysbox host.
+- `gofmt`, `make lint`, `make test`, and `make check-docs` pass.
+- `make test-smoke-go` proves a real restart on a Sysbox host.
 
 ## Current Baseline
 
@@ -130,3 +131,4 @@ Done when: docs describe the option and a smoke test restarts a kept container.
   `docker inspect` on the restart path); `reuseHostMCP` and `prepareHostMCPRestart` share
   `adoptChannelAndEnsureSidecar`; `NewChannel` and `EnsureChannel` share `Channel.materialize`; `ParseLabel` reuses
   the discovery port check and the endpoint comparator. Gates re-run and pass.
+- 2026-09-10: owner accepted the implementation and its review findings; plan moved to `completed`.

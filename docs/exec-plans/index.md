@@ -8,7 +8,6 @@ None.
 
 ## Review
 
-- [Persistent Session Containers](review/2026-09-10-persistent-containers-exec-plan.md)
 - [Config-less Launch Cache Parity](review/2026-07-24-config-less-launch-cache-parity-exec-plan.md)
 - [Venv tmpfs exec permission](review/2026-07-23-venv-tmpfs-exec-permission-exec-plan.md)
 - [Forced Exec into an Active Session](review/2026-07-23-force-exec-fingerprint-override-exec-plan.md)
@@ -31,6 +30,7 @@ None.
 
 ## Completed
 
+- [Persistent Session Containers](completed/2026-09-10-persistent-containers-exec-plan.md)
 - [Linked Worktree Git Metadata Guard](completed/2026-08-07-linked-worktree-git-metadata-guard-exec-plan.md)
 - [GolangCI-Lint Integration](completed/2026-07-17-golangci-lint-exec-plan.md)
 - [Host MCP Relay Sidecar Linux/Sysbox Spike](completed/2026-07-17-host-mcp-sidecar-spike-exec-plan.md)
