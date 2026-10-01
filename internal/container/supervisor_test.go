@@ -94,6 +94,43 @@ func TestSupervisorRequiresRoot(t *testing.T) {
 	}
 }
 
+func TestSupervisorConfiguresServiceAccessBeforeManager(t *testing.T) {
+	harness := newSupervisorHarness(t, &fakeSessionManager{serve: func(context.Context) error { return nil }})
+	harness.process.finishOnSignal = true
+	configured := false
+	harness.supervisor.serviceAccess = func(context.Context) error {
+		configured = true
+		return nil
+	}
+	previousFactory := harness.supervisor.newManager
+	harness.supervisor.newManager = func(config session.ManagerConfig) (sessionManager, error) {
+		if !configured {
+			t.Fatal("manager created before service access rules")
+		}
+		return previousFactory(config)
+	}
+	if err := harness.supervisor.Serve(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSupervisorFailsStartupWhenServiceAccessFails(t *testing.T) {
+	harness := newSupervisorHarness(t, &fakeSessionManager{})
+	harness.process.finishOnSignal = true
+	harness.supervisor.serviceAccess = func(context.Context) error { return errors.New("route_localnet disabled") }
+	harness.supervisor.newManager = func(session.ManagerConfig) (sessionManager, error) {
+		t.Fatal("manager created after network configuration failure")
+		return nil, nil
+	}
+	err := harness.supervisor.Serve(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "route_localnet disabled") {
+		t.Fatalf("Serve() error = %v, want network configuration failure", err)
+	}
+	if len(harness.process.recordedSignals()) != 1 {
+		t.Fatalf("dockerd signals = %#v, want shutdown after network failure", harness.process.recordedSignals())
+	}
+}
+
 type supervisorHarness struct {
 	supervisor    *Supervisor
 	process       *fakeDaemonProcess
@@ -136,6 +173,7 @@ func newSupervisorHarness(t *testing.T, manager sessionManager) *supervisorHarne
 		return manager, nil
 	}
 	supervisor.effectiveUID = func() int { return 0 }
+	supervisor.serviceAccess = func(context.Context) error { return nil }
 	return harness
 }
 
