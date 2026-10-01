@@ -13,11 +13,8 @@ import (
 
 const (
 	launchConfigLabel = "agents-safe.launch-config"
-	// Version 6 makes virtual-environment tmpfs masks executable and adds Owned to each canonical
-	// tmpfs entry. The bump recreates sessions still holding noexec masks; the new field keeps later
-	// transitions honest, because a target that becomes a virtual environment changes its container
-	// contract without changing its target or mode.
-	launchConfigSchemaVersion = 6
+	// Version 7 enables endpoint-local route_localnet. Old sessions must not be reused without it.
+	launchConfigSchemaVersion = 7
 )
 
 // launchFingerprintInput is deliberately an ordered struct: maps and TOML bytes would make an

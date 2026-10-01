@@ -52,8 +52,8 @@ type CreateRequest struct {
 	WorkingDir string
 	// User is the numeric uid:gid the container process runs as. Empty keeps the image's user.
 	User string
-	// NetworkMode is empty for the session container's own namespace, or "host" for the relay
-	// sidecar, whose only reason to exist is reaching host loopback.
+	// NetworkMode is a Docker network attachment spec for the session's bridge endpoint,
+	// "host" for the relay sidecar, or empty for maintenance containers.
 	NetworkMode string
 	// ReadOnlyRootfs makes the container's root filesystem read-only.
 	ReadOnlyRootfs bool

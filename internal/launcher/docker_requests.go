@@ -18,6 +18,7 @@ import (
 const (
 	mountAbsent            = "absent"
 	tmpfsMountsEnvironment = "AGENTS_SAFE_TMPFS_MOUNTS"
+	sessionNetwork         = "name=bridge,driver-opt=com.docker.network.endpoint.sysctls=net.ipv4.conf.IFNAME.route_localnet=1"
 )
 
 type bootstrapTmpfsMount struct {
@@ -107,6 +108,7 @@ func (docker *DockerLauncher) buildCreateRequest(
 		Image:       image,
 		Name:        containerName,
 		Runtime:     sysboxRuntime,
+		NetworkMode: sessionNetwork,
 		WorkingDir:  plan.WorkingDir,
 		Labels:      labels,
 		Environment: environment,
