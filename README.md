@@ -26,6 +26,18 @@ Published ports do not conflict with the host or another project session, so two
 It helps to simultaneously test the same project in different worktrees.
 Containers inside the same project session still share one private daemon and must use distinct published ports.
 
+To view a service from the developer host, find the running session container and its bridge IP:
+
+```bash
+docker ps --filter label=agents-safe.managed=true --format '{{.Names}}'
+docker inspect -f '{{with index .NetworkSettings.Networks "bridge"}}{{.IPAddress}}{{end}}' <container-name>
+```
+
+Connect to `<session-IP>:<service-port>`. This works for TCP services listening on `127.0.0.1` or `0.0.0.0` in
+the session, without publishing a host port. Nested containers must still publish their own ports with `-p` or
+Compose `ports:`. The service sees the host connection as coming from `127.0.0.1`; do not rely on loopback-only
+trust rules for authentication inside a session. See [Host Access to Session Services](docs/design-docs/session-service-access.md).
+
 It is deliberately isolated from the host:
 
 - no host Docker socket;

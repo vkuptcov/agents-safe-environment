@@ -504,8 +504,9 @@ A bind source passed to inner `docker run -v` is resolved against the container'
 therefore be passed to a nested container at its preserved absolute path, while unavailable host paths outside the
 allowed mount set cannot be obtained this way.
 
-Publishing a port through nested Docker exposes it in the container's network namespace, not on the host.
-Explicit host publication of nested ports is outside the first contract.
+Publishing a port through nested Docker exposes it in the session container's network namespace, not as a host
+port mapping. The developer host can reach that published TCP port through the session's bridge IP under
+[`session-service-access.md`](session-service-access.md). Unpublished nested ports remain private.
 
 ### 7. File Ownership
 

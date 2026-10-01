@@ -4,6 +4,12 @@ The project reduces the blast radius of local agent execution; it is not a compl
 boundary. The durable runtime contract lives in [Architecture](../ARCHITECTURE.md) and the
 [safe-environment design](design-docs/agents-safe.md).
 
+The developer host can connect to any TCP service bound to session loopback through the session's bridge IP. The
+service sees `127.0.0.1` as the peer, so loopback-based trust (including database and debug endpoints) is not
+authentication against users of that host. The translation matches the bridge gateway as the packet source, which
+covers every connection the host presents with that address, including traffic it forwards or masquerades from
+elsewhere. See [Host Access to Session Services](design-docs/session-service-access.md).
+
 ## Credential Rules
 
 - Never commit credentials, tokens, private keys, cookies, or populated environment files.
