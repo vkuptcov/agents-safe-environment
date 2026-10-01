@@ -90,6 +90,46 @@ func TestStartDockerDaemonReportsEarlyExitAndDiagnostics(t *testing.T) {
 	}
 }
 
+func TestStartDockerDaemonClearsStaleDaemonRuntime(t *testing.T) {
+	root := t.TempDir()
+	paths := testContainerPaths(root)
+	config := testConfig(t)
+	config.HostUID = os.Getuid()
+	config.HostGID = os.Getgid()
+	config.DockerReadyTimeout = time.Second
+	staleContainerdPID := filepath.Join(paths.dockerRunDirectory, "containerd", "containerd.pid")
+	writeStaleRuntimeFile(t, staleContainerdPID)
+	writeStaleRuntimeFile(t, paths.dockerdPIDFile)
+	writeStaleRuntimeFile(t, paths.dockerSocket)
+
+	process := newFakeDaemonProcess()
+	starter := &fakeDaemonProcessStarter{
+		process:   process,
+		observing: []string{staleContainerdPID, paths.dockerdPIDFile, paths.dockerSocket},
+	}
+
+	daemon, err := startDockerDaemon(
+		context.Background(),
+		config,
+		paths,
+		starter,
+		func(_ context.Context, socketPath string) error {
+			return os.WriteFile(socketPath, nil, 0o666)
+		},
+		log.New(io.Discard, "", 0),
+	)
+	if err != nil {
+		t.Fatalf("startDockerDaemon() error = %v", err)
+	}
+	if len(starter.observed) != 0 {
+		t.Fatalf("stale runtime state present at dockerd start: %#v", starter.observed)
+	}
+	process.finish(nil)
+	if err := daemon.Err(); err != nil {
+		t.Fatalf("daemon wait error = %v", err)
+	}
+}
+
 func TestDockerDaemonStopSendsTermAndWaits(t *testing.T) {
 	process := newFakeDaemonProcess()
 	process.finishOnSignal = true
@@ -127,6 +167,9 @@ type fakeDaemonProcessStarter struct {
 	name        string
 	arguments   []string
 	logContents string
+	// observing lists paths whose presence at Start time is recorded in observed.
+	observing []string
+	observed  []string
 }
 
 func (starter *fakeDaemonProcessStarter) Start(
@@ -137,6 +180,11 @@ func (starter *fakeDaemonProcessStarter) Start(
 ) (daemonProcess, error) {
 	starter.name = name
 	starter.arguments = append([]string{}, arguments...)
+	for _, path := range starter.observing {
+		if _, err := os.Lstat(path); err == nil {
+			starter.observed = append(starter.observed, path)
+		}
+	}
 	if starter.logContents != "" {
 		_, _ = io.WriteString(stdout, starter.logContents)
 	}
@@ -202,8 +250,19 @@ func testContainerPaths(root string) containerPaths {
 	paths.dockerdLog = filepath.Join(root, "dockerd.log")
 	paths.crunBinary = filepath.Join(root, "crun")
 	paths.dockerdCommand = filepath.Join(root, "dockerd")
+	paths.dockerdPIDFile = filepath.Join(root, "run", "docker.pid")
 	paths.sessionSocket = filepath.Join(root, "run", "codex-safe", "session.sock")
 	return paths
+}
+
+func writeStaleRuntimeFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create stale runtime directory: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("1\n"), 0o644); err != nil {
+		t.Fatalf("write stale runtime file: %v", err)
+	}
 }
 
 func stringsContainAll(value string, parts ...string) bool {

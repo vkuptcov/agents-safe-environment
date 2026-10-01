@@ -12,6 +12,7 @@ type containerPaths struct {
 	dockerRunDirectory string
 	dockerDataRoot     string
 	dockerSocket       string
+	dockerdPIDFile     string
 	dockerdLog         string
 	crunBinary         string
 	sessionSocket      string
@@ -25,6 +26,7 @@ func defaultContainerPaths() containerPaths {
 		dockerRunDirectory: "/run/docker",
 		dockerDataRoot:     "/var/lib/docker",
 		dockerSocket:       "/var/run/docker.sock",
+		dockerdPIDFile:     "/var/run/docker.pid",
 		dockerdLog:         "/tmp/agents-safe-dockerd.log",
 		crunBinary:         "/usr/local/bin/crun",
 		sessionSocket:      session.DefaultSocketPath,
