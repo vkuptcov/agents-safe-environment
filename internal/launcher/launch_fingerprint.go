@@ -13,22 +13,24 @@ import (
 
 const (
 	launchConfigLabel = "agents-safe.launch-config"
-	// Version 7 enables endpoint-local route_localnet. Old sessions must not be reused without it.
-	launchConfigSchemaVersion = 7
+	// Version 8 persists nested Docker storage in the selected named volume.
+	launchConfigSchemaVersion = 8
 )
 
 // launchFingerprintInput is deliberately an ordered struct: maps and TOML bytes would make an
 // otherwise-identical creation contract depend on incidental encoding details.
 type launchFingerprintInput struct {
-	SchemaVersion     int                          `json:"schema_version"`
-	ImageReference    string                       `json:"image_reference"`
-	ImageOverride     bool                         `json:"image_override"`
-	Mounts            []fingerprintMount           `json:"mounts"`
-	NoHostMCP         bool                         `json:"no_host_mcp"`
-	UseHostPythonVenv bool                         `json:"use_host_python_venv"`
-	HostMCPEndpoints  []string                     `json:"host_mcp_endpoints"`
-	DependencyCaches  []fingerprintDependencyCache `json:"dependency_caches"`
-	TmpfsMounts       []fingerprintTmpfsMount      `json:"tmpfs_mounts"`
+	DockerStorage       string                       `json:"docker_storage"`
+	DockerStorageVolume string                       `json:"docker_storage_volume"`
+	SchemaVersion       int                          `json:"schema_version"`
+	ImageReference      string                       `json:"image_reference"`
+	ImageOverride       bool                         `json:"image_override"`
+	Mounts              []fingerprintMount           `json:"mounts"`
+	NoHostMCP           bool                         `json:"no_host_mcp"`
+	UseHostPythonVenv   bool                         `json:"use_host_python_venv"`
+	HostMCPEndpoints    []string                     `json:"host_mcp_endpoints"`
+	DependencyCaches    []fingerprintDependencyCache `json:"dependency_caches"`
+	TmpfsMounts         []fingerprintTmpfsMount      `json:"tmpfs_mounts"`
 }
 
 type fingerprintTmpfsMount struct {
@@ -102,6 +104,7 @@ func creationFingerprint(
 	}
 
 	encoded, err := json.Marshal(launchFingerprintInput{
+		DockerStorage: plan.DockerStorage, DockerStorageVolume: plan.DockerStorageVolume,
 		SchemaVersion:     launchConfigSchemaVersion,
 		ImageReference:    image,
 		ImageOverride:     imageOverride,

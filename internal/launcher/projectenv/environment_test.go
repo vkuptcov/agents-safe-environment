@@ -183,7 +183,7 @@ func TestInitializeRejectsSymlinkContext(t *testing.T) {
 func initializationConfig(t *testing.T) ProjectConfig {
 	t.Helper()
 	source := t.TempDir()
-	return ProjectConfig{Common: CommonConfig{
+	return ProjectConfig{Common: CommonConfig{DockerStorage: "branch",
 		Image:  "test:image",
 		Mounts: []MountConfig{{Role: RoleAdditional, Source: source, Target: source}},
 	}}

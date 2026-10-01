@@ -182,3 +182,29 @@ func mustCanonical(t *testing.T, path string) string {
 	}
 	return canonical
 }
+
+func TestDiscoverBranchIdentity(t *testing.T) {
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "unborn/branch")
+	project, err := Discover(context.Background(), root)
+	if err != nil || project.Branch != "unborn/branch" {
+		t.Fatalf("unborn = %#v, %v", project, err)
+	}
+	runGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial")
+	runGit(t, root, "checkout", "--detach", "HEAD")
+	project, err = Discover(context.Background(), root)
+	if err != nil || !strings.HasPrefix(project.Branch, "detached-") || len(project.Branch) != 49 {
+		t.Fatalf("detached = %#v, %v", project, err)
+	}
+}
+
+func TestDiscoverBranchIdentityIgnoresSameNamedTag(t *testing.T) {
+	root := t.TempDir()
+	initRepository(t, root)
+	runGit(t, root, "checkout", "-b", "feature/tag-collision")
+	runGit(t, root, "tag", "feature/tag-collision")
+	project, err := Discover(context.Background(), root)
+	if err != nil || project.Branch != "feature/tag-collision" {
+		t.Fatalf("branch with same-named tag = %#v, %v", project, err)
+	}
+}

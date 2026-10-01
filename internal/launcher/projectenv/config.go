@@ -44,6 +44,7 @@ type ProjectConfig struct {
 
 // CommonConfig contains settings that affect every public launcher.
 type CommonConfig struct {
+	DockerStorage     string                  `toml:"docker_storage"`
 	Image             string                  `toml:"image"`
 	NoHostMCP         bool                    `toml:"no_host_mcp"`
 	UseHostPythonVenv bool                    `toml:"use_host_python_venv"`
@@ -114,6 +115,7 @@ type configOverlay struct {
 }
 
 type commonOverlay struct {
+	DockerStorage     *string                  `toml:"docker_storage"`
 	Image             *string                  `toml:"image"`
 	NoHostMCP         *bool                    `toml:"no_host_mcp"`
 	UseHostPythonVenv *bool                    `toml:"use_host_python_venv"`
@@ -212,6 +214,9 @@ func Encode(config ProjectConfig, writer io.Writer) error {
 // Validate checks typed configuration without reading host paths. The mount resolver owns path existence, role identity,
 // mode, and overlap validation after defaults and CLI overrides are known.
 func Validate(config ProjectConfig) error {
+	if err := ValidateDockerStorage(config.Common.DockerStorage); err != nil {
+		return err
+	}
 	if config.Common.Image == "" || strings.TrimSpace(config.Common.Image) != config.Common.Image {
 		return errors.New("common.image must be a non-empty trimmed image reference")
 	}
@@ -258,6 +263,9 @@ func Validate(config ProjectConfig) error {
 
 func applyOverlay(config *ProjectConfig, overlay configOverlay) {
 	if overlay.Common != nil {
+		if overlay.Common.DockerStorage != nil {
+			config.Common.DockerStorage = *overlay.Common.DockerStorage
+		}
 		if overlay.Common.Image != nil {
 			config.Common.Image = *overlay.Common.Image
 		}
@@ -365,4 +373,14 @@ func ValidatePath(label string, path string, source bool) error {
 		return fmt.Errorf("%s cannot be the filesystem root", label)
 	}
 	return nil
+}
+
+// ValidateDockerStorage checks the three supported nested-daemon storage scopes.
+func ValidateDockerStorage(mode string) error {
+	switch mode {
+	case "branch", "project", "shared":
+		return nil
+	default:
+		return fmt.Errorf("common.docker_storage must be branch, project, or shared; got %q", mode)
+	}
 }

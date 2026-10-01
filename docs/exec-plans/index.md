@@ -8,6 +8,7 @@ None.
 
 ## Review
 
+- [Persistent Nested Docker Storage](review/2026-10-01-docker-storage-exec-plan.md)
 - [Host Access to Session Services](review/2026-09-25-session-service-access-exec-plan.md)
 - [Config-less Launch Cache Parity](review/2026-07-24-config-less-launch-cache-parity-exec-plan.md)
 - [Venv tmpfs exec permission](review/2026-07-23-venv-tmpfs-exec-permission-exec-plan.md)

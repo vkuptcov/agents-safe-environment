@@ -83,6 +83,7 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		"use project-local host Python virtual environments instead of masking them")
 	keepContainer := flags.Bool("keep-container", false,
 		"keep the session container after it stops so a later launch restarts it instead of creating a new one")
+	dockerStorage := flags.String("docker-storage", "branch", "nested Docker storage scope: branch, project, or shared")
 	forceExec := flags.Bool("force-exec", false,
 		"execute in an owned running container even when its creation fingerprint differs")
 
@@ -111,6 +112,8 @@ func Run(ctx context.Context, cfg Config, args []string, stdout, stderr io.Write
 		return 1
 	}
 	overrides := launchplan.Overrides{
+		DockerStorage:             *dockerStorage,
+		DockerStorageOverride:     flags.Changed("docker-storage"),
 		Image:                     *image,
 		ImageOverride:             flags.Changed("image"),
 		NoHostMCP:                 *noHostMCP,

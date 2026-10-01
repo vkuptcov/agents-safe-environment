@@ -124,6 +124,7 @@ func (docker *DockerLauncher) buildCreateRequest(
 				Target:   ClaudeInstallationRoot,
 				ReadOnly: true,
 			},
+			{Source: plan.DockerStorageVolume, Target: "/var/lib/docker"},
 		},
 		Tmpfs:         dockerTmpfsMounts(plan.TmpfsMounts),
 		KeepContainer: keepContainer,

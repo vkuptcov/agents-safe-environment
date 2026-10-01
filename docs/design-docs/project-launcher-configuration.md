@@ -43,6 +43,7 @@ resolution begins.
 | Common | `image = "agents-safe-mvp:local"` | Base or direct session image. |
 | Common | `no_host_mcp = false` | Forward eligible host MCP servers. |
 | Common | `use_host_python_venv = false` | Mask discovered project-local Python virtual environments. |
+| Common | `docker_storage = "branch"` | Nested Docker named-volume scope: `branch`, `project`, or `shared`. |
 | Common | `keep_container = false` | Remove the session container after idle shutdown; `true` keeps and restarts it. |
 | Common | resolved logical mount snapshot | Complete project/Git topology and available host integrations. |
 | Codex | `arguments = ['--sandbox', 'danger-full-access']` | Use the Sysbox container as the sandbox boundary. |
@@ -101,6 +102,7 @@ image = "agents-safe-mvp:local"
 no_host_mcp = false
 use_host_python_venv = false
 keep_container = false
+docker_storage = "branch"
 
 [[common.mounts]]
 role = "host_git_config"
@@ -233,6 +235,7 @@ type ProjectConfig struct {
 }
 
 type CommonConfig struct {
+ DockerStorage     string                  `toml:"docker_storage"`
 	Image     string        `toml:"image"`
 	NoHostMCP bool          `toml:"no_host_mcp"`
 	Mounts    []MountConfig `toml:"mounts"`
@@ -269,6 +272,7 @@ The implemented Go and uv cache contract of [Host-Backed Dependency Caches](host
 
 ```go
 type CommonConfig struct {
+ DockerStorage     string                  `toml:"docker_storage"`
 	Image             string                  `toml:"image"`
 	NoHostMCP         bool                    `toml:"no_host_mcp"`
 	UseHostPythonVenv bool                    `toml:"use_host_python_venv"`
@@ -297,6 +301,13 @@ Duplicate and overlapping targets fail before Docker access. Each configured tar
 privileged container bootstrap reapplies the mask; otherwise startup fails closed. The proactive root `.venv`
 reservation below is the only target the launcher may materialize. Comments are serialized documentation and do not
 affect creation.
+
+`docker_storage` defaults to `"branch"` and accepts only `"branch"`, `"project"`, and `"shared"`. Explicit
+`--docker-storage MODE` overrides TOML for all three public launchers; omitted config retains the default.
+`agents-safe init` writes this default explicitly. Empty and unknown values fail configuration validation before
+Docker access. The selection is resolved dynamically on launch, so changing branch affects branch storage even
+when the config file is unchanged. Both scope and volume name are creation-time fingerprint inputs in schema 8.
+See [Inner Docker contract](agents-safe.md#6-inner-docker-contract) for names, persistence, and concurrency risks.
 
 `keep_container` defaults to `false` and selects whether the session container is created with Docker's `--rm`. It
 is creation-only and excluded from the fingerprint: an existing container's persistence is read from its own Docker
@@ -357,12 +368,14 @@ The creation-time fingerprint is the SHA-256 digest of one versioned canonical s
 
 | Field | Canonical value |
 | --- | --- |
-| `schema_version` | Integer `6`; incremented whenever encoding or implicit creation behavior changes. |
+| `schema_version` | Integer `8`; incremented whenever encoding or implicit creation behavior changes. |
 | `image_reference` | Resolved requested image reference, before resolving or building an immutable image ID. |
 | `image_override` | Explicit `--image` bypasses the project Dockerfile, even when its reference is unchanged. |
 | `mounts` | Ordered physical binds with validated `source`, absolute `target`, and `read_only`. |
 | `no_host_mcp` | Resolved boolean after defaults, TOML, and explicit CLI overrides. |
 | `use_host_python_venv` | Resolved host-virtual-environment policy after TOML and explicit CLI overrides. |
+| `docker_storage` | Resolved scope: `branch`, `project`, or `shared`; default `branch`. |
+| `docker_storage_volume` | Deterministic named volume derived from project and optional branch identity. |
 | `keep_container` | Not a fingerprint field: persistence is read from the container, never compared. |
 | `host_mcp_endpoints` | Eligible endpoints as canonical `host:port` strings, sorted by host and then port. |
 
@@ -403,6 +416,10 @@ unaffected project's creation contract is unchanged.
 | Field | Canonical value |
 | --- | --- |
 | `tmpfs_mounts` | Ordered target/mode/owned entries from config, proactive root reservation, and `pyvenv.cfg` discovery. |
+
+Schema version 8 adds persistent nested Docker scope and named-volume identity; schema 7 introduced endpoint-local
+`route_localnet`. Older saved sessions require recreation to gain the storage mount; force reuse keeps their original
+resources and does not migrate storage.
 
 Schema version 6 makes virtual-environment tmpfs masks executable and adds `owned` to each canonical `tmpfs_mounts`
 entry. The version bump prevents reuse of a version 5 session whose masks are still `noexec`, and `owned` keeps the

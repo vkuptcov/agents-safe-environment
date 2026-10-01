@@ -427,6 +427,7 @@ func simplePlan() launchplan.Plan {
 func projectOnlyPlan(root string) launchplan.Plan {
 	worktree := launchplan.BindMount{Source: root, Target: root}
 	return launchplan.Plan{
+		DockerStorage: "branch", DockerStorageVolume: "agents-safe-docker-test",
 		ProjectRoot: root,
 		WorkingDir:  root,
 		Mounts:      []launchplan.BindMount{worktree},
@@ -440,6 +441,7 @@ func planWithCodex(root, workingDir, codexHome string) launchplan.Plan {
 	worktree := launchplan.BindMount{Source: root, Target: root}
 	codex := launchplan.BindMount{Source: codexHome, Target: "/home/developer/.codex"}
 	return launchplan.Plan{
+		DockerStorage: "branch", DockerStorageVolume: "agents-safe-docker-test",
 		ProjectRoot: root,
 		WorkingDir:  workingDir,
 		Mounts:      []launchplan.BindMount{primary, commonGit, worktree, codex},

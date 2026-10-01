@@ -91,7 +91,8 @@ both the module paths and document links.
 - The session container shares no host namespace. The optional relay sidecar in
   [Host MCP Access](docs/design-docs/host-mcp-forwarding.md) shares the host network namespace only, runs no agent
   code, and exists only while a session forwards host MCP endpoints.
-- Nested Docker state belongs to the private daemon and disappears with the container.
+- Nested Docker state is persisted in a writable named volume at `/var/lib/docker`. Branch scope is the default;
+  project and host-wide scopes explicitly share state and accept concurrent-daemon conflicts.
 - Passwordless sudo grants root only inside the Sysbox container, not on the host.
 
 ## Change Boundaries
