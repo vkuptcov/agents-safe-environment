@@ -94,3 +94,8 @@ Done when: the smoke probe covers direct and nested published services, and the 
   `docs/security.md`, and the design status is `Implemented`. Review findings F-001, F-004, and the sibling-isolation
   part of F-005 are accepted as debt (TD-6, TD-7); the rest are fixed or rejected on real-host evidence. Moving to
   review for owner acceptance.
+- 2026-10-01: Second review found that `route_localnet` reaches session loopback without the NAT rules
+  (CVE-2020-8558 pattern), reproduced it from a sibling container on this host, and fixed it with a filter `INPUT`
+  guard installed ahead of the translation rules. Re-verified after the fix: the sibling's packets are dropped, the
+  session shows no half-open connection, and host access still works. Three minor findings are fixed as well. All
+  gates rerun green, including `make test-smoke-go`.

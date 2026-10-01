@@ -8,7 +8,9 @@ The developer host can connect to any TCP service bound to session loopback thro
 service sees `127.0.0.1` as the peer, so loopback-based trust (including database and debug endpoints) is not
 authentication against users of that host. The translation matches the bridge gateway as the packet source, which
 covers every connection the host presents with that address, including traffic it forwards or masquerades from
-elsewhere. See [Host Access to Session Services](design-docs/session-service-access.md).
+elsewhere. Another container on the host's bridge, including a second project session, is dropped before it reaches
+session loopback, so one agent's session cannot reach another's services this way. See
+[Host Access to Session Services](design-docs/session-service-access.md).
 
 ## Credential Rules
 

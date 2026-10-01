@@ -40,10 +40,20 @@ see `127.0.0.1`, preserving local-client checks such as PostgreSQL host rules. N
 ports, so an application can bind `0.0.0.0:8000` after the session starts.
 
 The launcher enables `route_localnet` for the session's ingress interface at container creation. The privileged
-session supervisor resolves that interface and its bridge gateway from the default route, then installs the two NAT
-rules after nested Docker is ready and before accepting commands. The PREROUTING rule is appended after Docker's jump
+session supervisor resolves that interface and its bridge gateway from the default route, then installs one filter
+guard and the two NAT rules after nested Docker is ready and before accepting commands. The PREROUTING rule is appended after Docker's jump
 and matches only TCP traffic from the bridge gateway to a session-local address. INPUT source translation applies
 only to that gateway's TCP traffic already DNATed to loopback.
+
+`route_localnet` is what makes the destination translation deliverable, and it is also the setting that needs
+containing. It disables the martian-destination check on that interface, so the kernel accepts any frame arriving
+there for `127.0.0.0/8` and delivers it to a loopback-only listener. That acceptance does not involve the NAT rules
+at all: without a guard, any container sharing the host's bridge could reach the session's loopback services,
+including its host MCP listeners, by addressing `127.0.0.1` to the session's MAC. The supervisor therefore installs
+a filter `INPUT` rule, ahead of the translation rules, that drops traffic to `127.0.0.0/8` on the ingress device
+from any source other than the bridge gateway. The host flow survives it because conntrack presents that flow with
+the gateway source. A caller able to spoof the gateway address on the bridge defeats the source match; that limit is
+the same one the translation rule has, and is stated below.
 
 This is a local development convenience. The host, not a remote LAN client, is the intended caller. The source-IP
 match is a routing filter, not authentication against a process able to spoof packets on the bridge.
@@ -76,7 +86,8 @@ match is a routing filter, not authentication against a process able to spoof pa
   launcher does not silently run a session whose loopback access differs from this contract.
 - The supervisor installs network rules once per container start; command reuse does not reinstall them.
 - Existing host MCP loopback listeners become reachable from the host through the session IP. This is intentional.
-  Other containers on the default bridge are not intended callers of the translation rule.
+  Another container on the default bridge, including an agent's session, is not: the filter guard drops its traffic
+  to the session's loopback range, so one session cannot reach another session's loopback services.
 
 ## Boundaries and Non-Goals
 
@@ -101,7 +112,8 @@ match is a routing filter, not authentication against a process able to spoof pa
 - Start a wildcard-bound service after session readiness and prove it can bind and answer through the session IP.
 - Start nested containers after readiness with both loopback and all-interface published ports, and prove the host
   receives the applications' responses. Prove an unpublished nested port remains outside the session-IP path.
-- Check that a sibling session does not receive the host-only translation for another session's loopback service.
+- Prove the session installs the filter guard that drops non-gateway traffic to its loopback range, and that a
+  container on the host bridge cannot reach a session's loopback listener.
 - Inspect the session and host network configuration to prove no host namespace, host sysctl, or host port mapping
   was added.
 

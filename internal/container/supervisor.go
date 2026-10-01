@@ -43,7 +43,7 @@ func NewSupervisor(config Config, logger *log.Logger) (*Supervisor, error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	return &Supervisor{
+	supervisor := &Supervisor{
 		config:       config,
 		paths:        defaultContainerPaths(),
 		log:          logger,
@@ -52,10 +52,13 @@ func NewSupervisor(config Config, logger *log.Logger) (*Supervisor, error) {
 		ping:         pingDockerDaemon,
 		newManager:   defaultManagerFactory,
 		effectiveUID: os.Geteuid,
-		serviceAccess: func(ctx context.Context) error {
-			return configureSessionServiceAccess(ctx, execSystemCommandRunner{}, os.ReadFile)
-		},
-	}, nil
+	}
+	// Reading commands at call time keeps this step on the same seam as every other privileged
+	// bootstrap command, so a test that substitutes the runner cannot reach real netfilter.
+	supervisor.serviceAccess = func(ctx context.Context) error {
+		return configureSessionServiceAccess(ctx, supervisor.commands, os.ReadFile)
+	}
+	return supervisor, nil
 }
 
 // NewSupervisorFromEnvironment parses the Docker environment and constructs

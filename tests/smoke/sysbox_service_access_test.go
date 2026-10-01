@@ -21,24 +21,26 @@ func TestSysboxSessionServiceAccess(t *testing.T) {
 	}
 	fixture := newSmokeFixture(t)
 	ready := filepath.Join(fixture.project.worktree, "service-access.ready")
+	ruleset := filepath.Join(fixture.project.worktree, "service-access.input-rules")
 	release := filepath.Join(fixture.project.worktree, "service-access.release")
 	nestedLoopback := "service-access-loopback"
 	nestedWildcard := "service-access-wildcard"
 	nestedPrivate := "service-access-private"
 
 	script := `set -euo pipefail
-ready=$1; release=$2; image=$3; loopback_name=$4; wildcard_name=$5; private_name=$6
+ready=$1; release=$2; image=$3; loopback_name=$4; wildcard_name=$5; private_name=$6; ruleset=$7
 node -e 'const net=require("net"); for (const [host,port] of [["127.0.0.1",18080],["0.0.0.0",18081]]) net.createServer(s=>s.end(s.remoteAddress)).listen(port,host)' &
 node_pid=$!
 trap 'docker rm -f "$loopback_name" "$wildcard_name" "$private_name" >/dev/null 2>&1 || true; kill "$node_pid" 2>/dev/null || true' EXIT
 docker run -d --rm --name "$loopback_name" --hostname "$loopback_name" -p 127.0.0.1:18082:80 "$image" nc -lk -p 80 -e /bin/hostname >/dev/null
 docker run -d --rm --name "$wildcard_name" --hostname "$wildcard_name" -p 0.0.0.0:18083:80 "$image" nc -lk -p 80 -e /bin/hostname >/dev/null
 docker run -d --rm --name "$private_name" --hostname "$private_name" "$image" nc -lk -p 18084 -e /bin/hostname >/dev/null
+sudo iptables -t filter -S INPUT > "$ruleset"
 : > "$ready"
 while [[ ! -e "$release" ]]; do sleep 1; done`
 	process := fixture.launcher.start(
 		fixture.project.worktree, "bash", "-c", script, "bash",
-		ready, release, nestedImage, nestedLoopback, nestedWildcard, nestedPrivate,
+		ready, release, nestedImage, nestedLoopback, nestedWildcard, nestedPrivate, ruleset,
 	)
 	fixture.waitForFile(ready, process)
 	defer fixture.release(release, process, "service access command")
@@ -79,6 +81,14 @@ while [[ ! -e "$release" ]]; do sleep 1; done`
 		_ = connection.Close()
 		t.Fatalf("unpublished nested port answered at %s", private)
 	}
+
+	// route_localnet makes the kernel deliver anything addressed to 127.0.0.0/8 on the ingress
+	// device, whatever the NAT rules say, so the filter guard is the only thing keeping a sibling
+	// container on the host bridge out of this session's loopback services.
+	inputRules, err := os.ReadFile(ruleset)
+	require.NoError(t, err, "the session must record its filter INPUT chain")
+	require.Regexp(t, `-A INPUT ! -s [0-9.]+/32 -d 127\.0\.0\.0/8 -i \w+ -j DROP`, string(inputRules),
+		"the session must drop non-gateway traffic to its loopback range\n%s", inputRules)
 
 	require.Empty(t, inspection.NetworkSettings.Ports, "the session must not publish any host port")
 	require.Empty(t, inspection.HostConfig.PortBindings, "the session must not request any host port binding")

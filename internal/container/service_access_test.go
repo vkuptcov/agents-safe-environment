@@ -43,8 +43,11 @@ func TestServiceAccessInstallsHostScopedRules(t *testing.T) {
 	if err := configureSessionServiceAccess(context.Background(), runner, readFile); err != nil {
 		t.Fatal(err)
 	}
+	// The order is part of the contract: route_localnet acceptance does not depend on the NAT rules,
+	// so a session holding only those is reachable from every container on the host bridge.
 	want := []string{
 		"ip -j -4 route show default",
+		"iptables -w 2 -t filter -I INPUT 1 -i eth0 ! -s 172.17.0.1/32 -d 127.0.0.0/8 -j DROP",
 		"iptables -w 2 -t nat -A INPUT -i eth0 -s 172.17.0.1/32 -d 127.0.0.1/32 -p tcp -m conntrack --ctstate DNAT -j SNAT --to-source 127.0.0.1",
 		"iptables -w 2 -t nat -A PREROUTING -i eth0 -s 172.17.0.1/32 -m addrtype --dst-type LOCAL -p tcp -j DNAT --to-destination 127.0.0.1",
 	}
