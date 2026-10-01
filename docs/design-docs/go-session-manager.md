@@ -259,7 +259,8 @@ The Go `serve` process starts as root and performs the existing privileged boots
 2. create the host-matching account and group;
 3. create the container-local home and install shell configuration;
 4. configure passwordless container-local sudo;
-5. start the nested Docker daemon and wait for it to become ready;
+5. discard the previous run's dockerd runtime state and start the nested Docker daemon, then wait for it to become
+   ready;
 6. create `/run/agents-safe` for the recreated host user;
 7. create the manager listener owned by that user.
 
@@ -270,6 +271,13 @@ dynamic loader must map with `PROT_EXEC` — and checks the effective filesystem
 compensates for Sysbox 0.7 attaching a broader idmapped worktree bind over Docker's earlier tmpfs; the mount exists
 only in the container namespace. Empty configuration keeps bootstrap's
 previous zero-mount path.
+
+Step 5 starts by deleting the dockerd pid file, the daemon socket, and the daemon runtime directory. A persistent
+container restarts with its `/run` contents intact, and both dockerd and its managed containerd read their own pid
+files as proof that an instance is already running. Those PIDs belong to the dead run, so when the restarted container
+namespace reuses one, dockerd either refuses to start or waits out its containerd timeout on a socket that never
+appears, and `serve` exits before readiness. The supervisor is the only owner of that state, so it is cleared
+unconditionally rather than probed for liveness.
 
 The Go process remains root because it owns the root-started dockerd child and must stop it cleanly. It never executes
 user commands. Each `docker exec` explicitly runs `agents-safe-session run` and its child with the recreated host UID
@@ -380,8 +388,8 @@ the Go entrypoint and reap adopted processes.
 
 `--rm` remains the default. A container created with `keep_container` is retained after this shutdown and restarted by
 the launcher on the next launch; bootstrap is idempotent for that restart because it reconciles the existing account,
-seeds `.bashrc` only when the retained home has none, removes stale manager runtime state, and reuses the nested
-daemon's data root. See
+seeds `.bashrc` only when the retained home has none, removes stale manager and nested-daemon runtime state, and
+reuses the nested daemon's data root. See
 [Persistent session containers](agents-safe.md#persistent-session-containers).
 
 ### 7. Concurrency and Race Handling
@@ -505,6 +513,7 @@ endpoint for listing all exec instances. Polling would also introduce missed-eve
 - Validate required identity, home, and daemon-readiness inputs before making changes.
 - Cover account reuse, rename, conflict, home, sudoers, directory ownership, and file modes without a shell.
 - Prove dockerd readiness through its private Unix socket and retain diagnostics on timeout or early exit.
+- Prove the dockerd pid file, the daemon socket, and the daemon runtime directory are cleared before dockerd starts.
 - Stop dockerd on manager idle exit and external signals; stop accepting commands when dockerd exits unexpectedly.
 - Prove the root `serve` process never receives or executes user command argv.
 

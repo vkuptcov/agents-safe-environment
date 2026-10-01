@@ -673,6 +673,11 @@ container-local home, therefore survives until the container is removed. Bootstr
 into a home that has none, so shell configuration added inside a persistent container is kept across restarts. Session tmpfs masks are recreated empty on
 every start, so masked virtual environments do not persist.
 
+The container's `/run` is part of that writable layer, so the stopped session's daemon runtime state survives too.
+Bootstrap therefore discards the previous run's dockerd pid file, daemon socket, and daemon runtime directory before
+starting the nested daemon; see
+[Go entrypoint supervision and shutdown](go-session-manager.md#6-go-entrypoint-supervision-and-shutdown).
+
 The option is creation-only and is deliberately not a fingerprint input. Whether an existing container persists is
 read from its inspected `HostConfig.AutoRemove`, so a one-off `--keep-container` does not make later plain launches
 fail, and a `keep_container = false` launch that finds a stopped persistent container restarts it rather than creating
