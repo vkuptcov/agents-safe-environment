@@ -26,11 +26,12 @@ type Supervisor struct {
 	paths  containerPaths
 	log    *log.Logger
 
-	commands     systemCommandRunner
-	processes    daemonProcessStarter
-	ping         func(context.Context, string) error
-	newManager   sessionManagerFactory
-	effectiveUID func() int
+	commands      systemCommandRunner
+	processes     daemonProcessStarter
+	ping          func(context.Context, string) error
+	newManager    sessionManagerFactory
+	effectiveUID  func() int
+	serviceAccess func(context.Context) error
 }
 
 // NewSupervisor constructs the production container lifecycle. It does not
@@ -42,7 +43,7 @@ func NewSupervisor(config Config, logger *log.Logger) (*Supervisor, error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	return &Supervisor{
+	supervisor := &Supervisor{
 		config:       config,
 		paths:        defaultContainerPaths(),
 		log:          logger,
@@ -51,7 +52,13 @@ func NewSupervisor(config Config, logger *log.Logger) (*Supervisor, error) {
 		ping:         pingDockerDaemon,
 		newManager:   defaultManagerFactory,
 		effectiveUID: os.Geteuid,
-	}, nil
+	}
+	// Reading commands at call time keeps this step on the same seam as every other privileged
+	// bootstrap command, so a test that substitutes the runner cannot reach real netfilter.
+	supervisor.serviceAccess = func(ctx context.Context) error {
+		return configureSessionServiceAccess(ctx, supervisor.commands, os.ReadFile)
+	}
+	return supervisor, nil
 }
 
 // NewSupervisorFromEnvironment parses the Docker environment and constructs
@@ -116,6 +123,10 @@ func (supervisor *Supervisor) Serve(ctx context.Context) error {
 	)
 	if err != nil {
 		return err
+	}
+	if err := supervisor.serviceAccess(ctx); err != nil {
+		stopErr := daemon.Stop(supervisor.config.DockerShutdownTimeout)
+		return errors.Join(fmt.Errorf("configure host access to session services: %w", err), stopErr)
 	}
 
 	manager, err := supervisor.newManager(session.ManagerConfig{

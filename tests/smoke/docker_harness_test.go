@@ -1,8 +1,11 @@
 package smoke_test
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"os"
+	"path"
 	"strconv"
 	"testing"
 	"time"
@@ -118,6 +121,25 @@ func (docker *dockerHarness) containersNamed(name string) []container.Summary {
 	})
 	require.NoError(docker.t, err, "Moby client must list containers named %q", name)
 	return items
+}
+
+// writeContainerFile places one file in the managed container's writable layer. The persistent-restart
+// test uses it to plant the daemon runtime state a crashed run leaves behind.
+func (docker *dockerHarness) writeContainerFile(target string, contents string) {
+	docker.t.Helper()
+	archive := &bytes.Buffer{}
+	writer := tar.NewWriter(archive)
+	require.NoError(docker.t, writer.WriteHeader(&tar.Header{
+		Name: path.Base(target),
+		Mode: 0o644,
+		Size: int64(len(contents)),
+	}), "tar header for %q must encode", target)
+	_, err := writer.Write([]byte(contents))
+	require.NoError(docker.t, err, "tar contents for %q must encode", target)
+	require.NoError(docker.t, writer.Close(), "tar archive for %q must close", target)
+	require.NoError(docker.t, docker.client.CopyToContainer(
+		docker.ctx, docker.names.managed, path.Dir(target), archive, container.CopyToContainerOptions{},
+	), "Moby client must write %q into the managed container", target)
 }
 
 func (docker *dockerHarness) waitForContainer() {

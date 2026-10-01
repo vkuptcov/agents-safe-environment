@@ -1,0 +1,124 @@
+# Host Access to Session Services
+
+Status: Implemented (IPv4 TCP; verified on a real Sysbox host)
+Scope: TCP access from the developer's Linux host to services in the project session, including published nested
+Docker ports.
+
+## Purpose and Intent
+
+### Problem
+
+A developer can open an application or database bound to `127.0.0.1` when running it directly on the host. In an
+`agents-safe` session, that loopback address belongs to the session container. The host can reach the session's
+Docker bridge address, but a loopback-only service does not accept a connection to that address.
+
+### Worked Example
+
+Before:
+
+```text
+Session: app listens on 127.0.0.1:8000
+Host:    connect to <session-IP>:8000 -> connection refused
+```
+
+After:
+
+```text
+Session: app listens on 127.0.0.1:8000
+Host:    connect to <session-IP>:8000 -> app accepts, sees client 127.0.0.1
+```
+
+The same host-side connection works when an agent starts a nested container later and publishes its port on the
+session's `127.0.0.1`. The nested application's view of the client still follows Docker's own port-publishing path.
+A nested container that publishes no port remains outside this contract.
+
+### Chosen Shape
+
+The session's network namespace translates incoming IPv4 TCP connections from the Docker host to the same port on
+`127.0.0.1`. Destination translation makes loopback-only listeners reachable. Source translation makes the service
+see `127.0.0.1`, preserving local-client checks such as PostgreSQL host rules. No process listens on application
+ports, so an application can bind `0.0.0.0:8000` after the session starts.
+
+The launcher enables `route_localnet` for the session's ingress interface at container creation. The privileged
+session supervisor resolves that interface and its bridge gateway from the default route, then installs one filter
+guard and the two NAT rules after nested Docker is ready and before accepting commands. The PREROUTING rule is appended after Docker's jump
+and matches only TCP traffic from the bridge gateway to a session-local address. INPUT source translation applies
+only to that gateway's TCP traffic already DNATed to loopback.
+
+`route_localnet` is what makes the destination translation deliverable, and it is also the setting that needs
+containing. It disables the martian-destination check on that interface, so the kernel accepts any frame arriving
+there for `127.0.0.0/8` and delivers it to a loopback-only listener. That acceptance does not involve the NAT rules
+at all: without a guard, any container sharing the host's bridge could reach the session's loopback services,
+including its host MCP listeners, by addressing `127.0.0.1` to the session's MAC. The supervisor therefore installs
+a filter `INPUT` rule, ahead of the translation rules, that drops traffic to `127.0.0.0/8` on the ingress device
+from any source other than the bridge gateway. The host flow survives it because conntrack presents that flow with
+the gateway source. A caller able to spoof the gateway address on the bridge defeats the source match; that limit is
+the same one the translation rule has, and is stated below.
+
+This is a local development convenience. The host, not a remote LAN client, is the intended caller. The source-IP
+match is a routing filter, not authentication against a process able to spoof packets on the bridge.
+
+## Contract
+
+### 1. Automatic Access
+
+- Every IPv4 TCP port bound to session loopback is reachable from the host at `<session-IP>:<same-port>` while the
+  session is running. The service sees a `127.0.0.1` peer.
+- A service bound to `0.0.0.0` can start later and bind its chosen port. It remains reachable from the host at the
+  session IP and sees a `127.0.0.1` peer through this path.
+- No per-port registration, port reservation, host port publication, or session restart is required.
+- The session's IP can change when a new session container is created. The launcher does not promise a stable IP.
+
+### 2. Nested Docker
+
+- A nested container may start at any time. Its port is reachable through the session IP when it publishes that port
+  into the session namespace with Docker `-p` or Compose `ports:`.
+- Publication on the session's `127.0.0.1` uses the loopback translation. Publication on all session interfaces
+  retains Docker's normal routing. The session does not discover or publish ports of nested containers.
+- The outer translation makes Docker's session-side published endpoint see a loopback peer. The application inside
+  the nested container sees whichever source address nested Docker normally supplies for a published port.
+- A nested container without a published port remains inaccessible through the session IP.
+
+### 3. Startup and Lifetime
+
+- `route_localnet` is enabled only in the session container's network namespace, not on the host.
+- Failure to configure or verify the network translation fails session startup with an actionable diagnostic. The
+  launcher does not silently run a session whose loopback access differs from this contract.
+- The supervisor installs network rules once per container start; command reuse does not reinstall them.
+- Existing host MCP loopback listeners become reachable from the host through the session IP. This is intentional.
+  Another container on the default bridge, including an agent's session, is not: the filter guard drops its traffic
+  to the session's loopback range, so one session cannot reach another session's loopback services.
+
+## Boundaries and Non-Goals
+
+- This contract covers IPv4 TCP. UDP and IPv6 loopback access are separate work.
+- The host uses the session IP. This feature does not publish ports on host `127.0.0.1` or a LAN interface.
+- Password checks and other application authentication remain the application's responsibility. The translated
+  connection satisfies any rule that trusts loopback clients, including PostgreSQL `pg_hba.conf` local-host rules;
+  do not treat session loopback as a security boundary against users of the developer host.
+- A service bound only to the session's non-loopback IP becomes unreachable from the host: the translation rewrites
+  every host-originated session-local destination to `127.0.0.1`, where that service does not listen. Binding
+  `0.0.0.0` or `127.0.0.1` is the supported shape.
+- A nested container must publish its own port; automatic discovery of its private IP and unpublished ports is out
+  of scope.
+
+## Test Plan
+
+- Unit-test the Docker create request's session-local `route_localnet` setting and ensure relay and maintenance
+  containers do not receive it.
+- Unit-test the session rule selection, installation order, and failure diagnostics.
+- On a compatible Linux host with Sysbox, prove a loopback-bound TCP service is unreachable before translation and
+  reachable through the session IP after startup, with the service observing a `127.0.0.1` peer.
+- Start a wildcard-bound service after session readiness and prove it can bind and answer through the session IP.
+- Start nested containers after readiness with both loopback and all-interface published ports, and prove the host
+  receives the applications' responses. Prove an unpublished nested port remains outside the session-IP path.
+- Prove the session installs the filter guard that drops non-gateway traffic to its loopback range, and that a
+  container on the host bridge cannot reach a session's loopback listener.
+- Inspect the session and host network configuration to prove no host namespace, host sysctl, or host port mapping
+  was added.
+
+## Where the Code Lives
+
+- `internal/launcher/docker_requests.go` and `internal/launcher/dockercli/`: session create request and Docker argv.
+- `internal/container/`: supervisor startup, network rule installation, and diagnostics.
+- `tests/smoke/`: real Sysbox and nested-Docker boundary checks.

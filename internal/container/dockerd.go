@@ -97,6 +97,9 @@ func startDockerDaemon(
 	ping func(context.Context, string) error,
 	logger *log.Logger,
 ) (*dockerDaemon, error) {
+	if err := clearStaleDaemonRuntime(paths); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(paths.dockerRunDirectory, 0o755); err != nil {
 		return nil, fmt.Errorf("create Docker runtime directory: %w", err)
 	}
@@ -136,6 +139,24 @@ func startDockerDaemon(
 	}
 	logger.Printf("nested Docker daemon is ready")
 	return daemon, nil
+}
+
+// clearStaleDaemonRuntime discards the previous run's dockerd runtime state. A container created
+// with keep_container restarts with its /run contents intact, and both dockerd and its managed
+// containerd read their own pid files as proof that an instance is already running. The recorded
+// PIDs belong to the dead run, so whenever the new container namespace reuses one, dockerd either
+// refuses to start or waits out its containerd timeout on a socket that never appears. The
+// supervisor is the only owner of this state, so clearing it needs no liveness check.
+func clearStaleDaemonRuntime(paths containerPaths) error {
+	if err := os.RemoveAll(paths.dockerRunDirectory); err != nil {
+		return fmt.Errorf("clear stale Docker runtime directory: %w", err)
+	}
+	for _, path := range []string{paths.dockerdPIDFile, paths.dockerSocket} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("clear stale Docker runtime file %q: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func dockerDaemonArguments(paths containerPaths) []string {

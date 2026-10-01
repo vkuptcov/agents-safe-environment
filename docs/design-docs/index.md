@@ -6,6 +6,8 @@ Use [README.md](README.md) for design-doc format and maintenance rules.
 
 - [Safe Environment for Running Agents](agents-safe.md): host launcher, product CLI and state integration,
   Sysbox boundary, mounts, identity, nested Docker, and lifecycle contract.
+- [Host Access to Session Services](session-service-access.md): automatic host access to session loopback services
+  and published nested-Docker TCP ports.
 - [Safe Claude Code Integration](claude-safe.md): Claude product launcher, host state, managed installation and updates,
   and coexistence with Codex in one project container.
 - [Go Session Manager for Shared Agent Containers](go-session-manager.md): container-local registration,

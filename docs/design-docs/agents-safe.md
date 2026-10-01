@@ -504,8 +504,9 @@ A bind source passed to inner `docker run -v` is resolved against the container'
 therefore be passed to a nested container at its preserved absolute path, while unavailable host paths outside the
 allowed mount set cannot be obtained this way.
 
-Publishing a port through nested Docker exposes it in the container's network namespace, not on the host.
-Explicit host publication of nested ports is outside the first contract.
+Publishing a port through nested Docker exposes it in the session container's network namespace, not as a host
+port mapping. The developer host can reach that published TCP port through the session's bridge IP under
+[`session-service-access.md`](session-service-access.md). Unpublished nested ports remain private.
 
 ### 7. File Ownership
 
@@ -672,6 +673,11 @@ container's writable layer, including the nested daemon's `/var/lib/docker`, ins
 container-local home, therefore survives until the container is removed. Bootstrap seeds the image `.bashrc` only
 into a home that has none, so shell configuration added inside a persistent container is kept across restarts. Session tmpfs masks are recreated empty on
 every start, so masked virtual environments do not persist.
+
+The container's `/run` is part of that writable layer, so the stopped session's daemon runtime state survives too.
+Bootstrap therefore discards the previous run's dockerd pid file, daemon socket, and daemon runtime directory before
+starting the nested daemon; see
+[Go entrypoint supervision and shutdown](go-session-manager.md#6-go-entrypoint-supervision-and-shutdown).
 
 The option is creation-only and is deliberately not a fingerprint input. Whether an existing container persists is
 read from its inspected `HostConfig.AutoRemove`, so a one-off `--keep-container` does not make later plain launches

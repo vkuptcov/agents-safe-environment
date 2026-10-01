@@ -27,8 +27,9 @@ func TestSessionCreateRequestAlwaysCarriesExplicitSysboxRuntime(t *testing.T) {
 	if request.Runtime != sysboxRuntime {
 		t.Fatalf("session create request runtime = %q, want %q", request.Runtime, sysboxRuntime)
 	}
-	if request.NetworkMode != "" {
-		t.Errorf("the session container never shares a host namespace, got network mode %q", request.NetworkMode)
+	wantNetwork := "name=bridge,driver-opt=com.docker.network.endpoint.sysctls=net.ipv4.conf.IFNAME.route_localnet=1"
+	if request.NetworkMode != wantNetwork {
+		t.Errorf("session network = %q, want bridge-local route_localnet", request.NetworkMode)
 	}
 	if len(request.Command) != 0 {
 		t.Errorf("the session container supplies no command so the image default serve is used, got %#v",
@@ -41,6 +42,9 @@ func TestSessionCreateRequestAlwaysCarriesExplicitSysboxRuntime(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(args, " "), "--runtime="+sysboxRuntime) {
 		t.Fatalf("session argv must carry an explicit runtime: %#v", args)
+	}
+	if !strings.Contains(strings.Join(args, " "), "--network="+wantNetwork) {
+		t.Fatalf("session argv must enable endpoint-local route_localnet: %#v", args)
 	}
 }
 
