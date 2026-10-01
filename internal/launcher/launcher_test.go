@@ -427,11 +427,12 @@ func simplePlan() launchplan.Plan {
 func projectOnlyPlan(root string) launchplan.Plan {
 	worktree := launchplan.BindMount{Source: root, Target: root}
 	return launchplan.Plan{
-		DockerStorage: "branch", DockerStorageVolume: "agents-safe-docker-test",
-		ProjectRoot: root,
-		WorkingDir:  root,
-		Mounts:      []launchplan.BindMount{worktree},
-		Provenance:  []launchplan.MountProvenance{{Mount: worktree, Roles: []projectenv.MountRole{projectenv.RoleWorktree}}},
+		DockerStorage:       "branch",
+		DockerStorageVolume: "agents-safe-docker-test",
+		ProjectRoot:         root,
+		WorkingDir:          root,
+		Mounts:              []launchplan.BindMount{worktree},
+		Provenance:          []launchplan.MountProvenance{{Mount: worktree, Roles: []projectenv.MountRole{projectenv.RoleWorktree}}},
 	}
 }
 
@@ -441,10 +442,11 @@ func planWithCodex(root, workingDir, codexHome string) launchplan.Plan {
 	worktree := launchplan.BindMount{Source: root, Target: root}
 	codex := launchplan.BindMount{Source: codexHome, Target: "/home/developer/.codex"}
 	return launchplan.Plan{
-		DockerStorage: "branch", DockerStorageVolume: "agents-safe-docker-test",
-		ProjectRoot: root,
-		WorkingDir:  workingDir,
-		Mounts:      []launchplan.BindMount{primary, commonGit, worktree, codex},
+		DockerStorage:       "branch",
+		DockerStorageVolume: "agents-safe-docker-test",
+		ProjectRoot:         root,
+		WorkingDir:          workingDir,
+		Mounts:              []launchplan.BindMount{primary, commonGit, worktree, codex},
 		TmpfsMounts: []launchplan.TmpfsMount{{
 			Target: filepath.Join(root, ".venv"), Mode: projectenv.DefaultTmpfsMode,
 		}},
@@ -603,6 +605,8 @@ type commandResult struct {
 }
 
 type fakeCommandRunner struct {
+	volumeCalls   [][]string
+	volumeError   error
 	outputs       []commandResult
 	combinedCalls [][]string
 	runCalls      [][]string
@@ -610,6 +614,10 @@ type fakeCommandRunner struct {
 }
 
 func (runner *fakeCommandRunner) CombinedOutput(_ context.Context, name string, arguments ...string) ([]byte, error) {
+	if len(arguments) >= 2 && arguments[0] == "volume" && arguments[1] == "create" {
+		runner.volumeCalls = append(runner.volumeCalls, append([]string{name}, arguments...))
+		return nil, runner.volumeError
+	}
 	runner.combinedCalls = append(runner.combinedCalls, append([]string{name}, arguments...))
 	if len(runner.outputs) == 0 {
 		return nil, errors.New("unexpected CombinedOutput call")

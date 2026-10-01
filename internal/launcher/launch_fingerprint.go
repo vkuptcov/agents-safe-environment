@@ -104,16 +104,17 @@ func creationFingerprint(
 	}
 
 	encoded, err := json.Marshal(launchFingerprintInput{
-		DockerStorage: plan.DockerStorage, DockerStorageVolume: plan.DockerStorageVolume,
-		SchemaVersion:     launchConfigSchemaVersion,
-		ImageReference:    image,
-		ImageOverride:     imageOverride,
-		Mounts:            mounts,
-		NoHostMCP:         noHostMCP,
-		UseHostPythonVenv: useHostPythonVenv,
-		HostMCPEndpoints:  addresses,
-		DependencyCaches:  caches,
-		TmpfsMounts:       tmpfsMounts,
+		DockerStorage:       plan.DockerStorage,
+		DockerStorageVolume: plan.DockerStorageVolume,
+		SchemaVersion:       launchConfigSchemaVersion,
+		ImageReference:      image,
+		ImageOverride:       imageOverride,
+		Mounts:              mounts,
+		NoHostMCP:           noHostMCP,
+		UseHostPythonVenv:   useHostPythonVenv,
+		HostMCPEndpoints:    addresses,
+		DependencyCaches:    caches,
+		TmpfsMounts:         tmpfsMounts,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode launch fingerprint: %w", err)
@@ -130,7 +131,8 @@ type launchConfigMismatchError struct {
 	requested     string
 	// persistent marks a stopped container that Docker will not remove, so the hint can name the
 	// command that discards it and lets the next launch create a fresh one.
-	persistent bool
+	persistent        bool
+	storageDifference string
 }
 
 func (err *launchConfigMismatchError) Error() string {
@@ -141,6 +143,9 @@ func (err *launchConfigMismatchError) Error() string {
 			"to execute in the existing container with its current creation-time configuration",
 		err.containerName, err.containerID, err.projectRoot, err.running, err.requested,
 	)
+	if err.storageDifference != "" {
+		message += "; " + err.storageDifference
+	}
 	if err.persistent {
 		message += fmt.Sprintf(
 			"; the container is stopped and persistent, so `docker rm %s` discards it and lets this launch create a new one",

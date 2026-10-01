@@ -200,6 +200,9 @@ func (attempt *launchAttempt) createContainer(
 	if request.Runtime == "" {
 		return "", false, errors.New("session container must be created with an explicit runtime")
 	}
+	if err := attempt.cli.EnsureVolume(ctx, attempt.plan.DockerStorageVolume, attempt.storageVolumeLabels()); err != nil {
+		return "", false, err
+	}
 	return attempt.cli.Create(ctx, request)
 }
 
@@ -248,12 +251,13 @@ func (attempt *launchAttempt) validateRunningFingerprint(inspection dockercli.Co
 		return nil
 	}
 	return &launchConfigMismatchError{
-		containerName: attempt.containerName,
-		containerID:   inspection.ID,
-		projectRoot:   attempt.plan.ProjectRoot,
-		running:       inspection.Config.Labels[launchConfigLabel],
-		requested:     attempt.launchFingerprint,
-		persistent:    !inspection.State.Running && !inspection.HostConfig.AutoRemove,
+		containerName:     attempt.containerName,
+		containerID:       inspection.ID,
+		projectRoot:       attempt.plan.ProjectRoot,
+		running:           inspection.Config.Labels[launchConfigLabel],
+		requested:         attempt.launchFingerprint,
+		persistent:        !inspection.State.Running && !inspection.HostConfig.AutoRemove,
+		storageDifference: attempt.storageDifference(inspection),
 	}
 }
 
@@ -359,4 +363,25 @@ func (attempt *launchAttempt) restartContainer(
 		return "", err
 	}
 	return inspection.ID, nil
+}
+
+func (attempt *launchAttempt) storageVolumeLabels() map[string]string {
+	labels := map[string]string{managedLabel: managedLabelValue, "agents-safe.docker-storage": attempt.plan.DockerStorage}
+	if attempt.plan.DockerStorage != "shared" {
+		labels[projectPathLabel] = attempt.plan.DockerStorageProjectRoot
+		labels[hostUIDLabel] = strconv.Itoa(attempt.docker.HostUID)
+	}
+	if attempt.plan.DockerStorage == "branch" {
+		labels["agents-safe.git-branch"] = attempt.plan.DockerStorageBranch
+	}
+	return labels
+}
+
+func (attempt *launchAttempt) storageDifference(inspection dockercli.ContainerInspection) string {
+	for _, mount := range inspection.Mounts {
+		if mount.Destination == "/var/lib/docker" && mount.Name != attempt.plan.DockerStorageVolume {
+			return fmt.Sprintf("nested Docker storage volume changed from %q to %q (requested scope %q); branch switches change branch-scoped storage; --docker-storage=project keeps storage across branches for new containers", mount.Name, attempt.plan.DockerStorageVolume, attempt.plan.DockerStorage)
+		}
+	}
+	return ""
 }

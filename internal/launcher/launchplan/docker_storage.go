@@ -5,15 +5,16 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
-// dockerStorageVolume keeps names readable while hashing full original names to avoid
-// collisions introduced by normalization and truncation. Linked worktrees use the primary name.
-func dockerStorageVolume(project gitproject.Project, mode string) (string, error) {
+// dockerStorageVolume keeps names readable while hashing canonical project paths and host UIDs to avoid
+// collisions introduced by normalization and truncation. Linked worktrees use the primary checkout identity.
+func dockerStorageVolume(project gitproject.Project, mode string, hostUID int) (string, error) {
 	if err := projectenv.ValidateDockerStorage(mode); err != nil {
 		return "", err
 	}
@@ -22,7 +23,7 @@ func dockerStorageVolume(project gitproject.Project, mode string) (string, error
 		return prefix + "shared", nil
 	}
 	projectName := filepath.Base(project.PrimaryRoot)
-	identity := projectName
+	identity := strconv.Itoa(hostUID) + "\x00" + project.PrimaryRoot
 	readable := storageNamePart(projectName, 15)
 	if mode == "branch" {
 		if project.Branch == "" {

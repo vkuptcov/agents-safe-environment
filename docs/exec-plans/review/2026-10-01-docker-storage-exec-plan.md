@@ -24,9 +24,9 @@ Saved containers restart through `docker start` after fingerprint validation; mo
 
 ## Implementation Decisions
 
-- Use the primary checkout basename as project name so linked worktrees share project identity.
+- Use the primary checkout basename as the readable project name; hash the canonical primary path and host UID.
 - Discover the symbolic branch, including unborn branches; use full commit SHA for detached HEAD.
-- Hash full original names before normalization or truncation.
+- Hash complete project/user/branch identities before normalization or truncation.
 - Include scope and volume name in creation fingerprint schema 8.
 - Permit concurrent shared mounts without locks, as explicitly requested by the owner.
 - Preserve `--force-exec`: reuse original creation resources, including the volume.
@@ -60,6 +60,15 @@ Done when: docs match behavior and required gates have recorded results.
 2. Run gofmt, affected tests, make test, make lint, make check-docs, and make test-smoke-go.
 3. Move this plan to review after implementation and record results.
 
+### Phase 4: Implementation Review Fixes
+Purpose: Remove unintended scoped storage sharing and make persistent volumes discoverable.
+Status: done
+Done when: reviewed identity, volume labels, and mismatch diagnostics are verified and documented.
+
+1. Isolate scoped storage by canonical primary path and UID; retain the host-wide shared scope.
+2. Label volumes before cold creation and explain storage mismatches from Docker inspection.
+3. Clean up touched literals, update review responses, and repeat required gates.
+
 ## Validation Gates
 
 - Affected `go test` packages pass.
@@ -89,3 +98,6 @@ Done when: docs match behavior and required gates have recorded results.
   permissions for local sockets. Final checks were repeated after the Git tag-ambiguity fix.
 - 2026-10-01: Real `make test-smoke-go` remains blocked: host Docker has no registered `sysbox-runc` runtime.
   The smoke module compiles and passes its ordinary gate with Sysbox scenarios skipped. No real mount claim is made.
+- 2026-10-01: Addressed F-001 through F-005 from the implementation review: canonical path/UID hashing,
+  explicit labelled storage creation, inspected-volume mismatch diagnostics, and multiline literals.
+  Updated identity docs; existing volumes are not renamed or migrated. Real Sysbox gate remains blocked.

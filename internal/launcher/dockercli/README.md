@@ -13,3 +13,4 @@ only the Docker primitives the launcher composes, including bind/volume mount en
 - `inspect.go` — inspects containers and verifies the required runtime and image.
 - `run_attached.go` — runs one container in the foreground with streamed output and exit-code preservation.
 - `request.go` — defines Docker-specific request and response types, including separate bind and volume mounts.
+- `volume.go` — ensures a named volume exists with creation-time labels.

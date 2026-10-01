@@ -248,7 +248,8 @@ func typedDefaults(t *testing.T) ProjectConfig {
 	t.Helper()
 	source := t.TempDir()
 	return ProjectConfig{
-		Common: CommonConfig{DockerStorage: "branch",
+		Common: CommonConfig{
+			DockerStorage:     "branch",
 			Image:             "default:image",
 			NoHostMCP:         true,
 			UseHostPythonVenv: false,

@@ -505,16 +505,24 @@ volume, and its socket remains unavailable inside the session.
 | `project` | `agents-safe-docker-<project up to 15>-<hash 12>` |
 | `shared` | `agents-safe-docker-shared` |
 
-Project identity is the primary checkout basename, including for linked worktrees. Branch identity is its symbolic
-branch name, including unborn branches; detached HEAD uses `detached-<full commit SHA>`. Readable name components
-use lowercase ASCII letters, digits, and hyphens; other characters become hyphens. They are truncated and trimmed,
-with `unnamed` for an empty component. The hash is the first 12 hexadecimal characters of SHA-256 of the full original
-project name, plus a NUL separator and the full original branch identity for branch scope. Maximum lengths are 68
-characters for branch scope and 47 for project scope. Repositories with identical primary basenames intentionally
-share the project identity.
+Project identity is the canonical primary checkout path and invoking host UID, including for linked worktrees.
+Branch identity is its symbolic branch name, including unborn branches; detached HEAD uses `detached-<full commit
+SHA>`. Readable name components use lowercase ASCII letters, digits, and hyphens; other characters become hyphens.
+They are truncated and trimmed, with `unnamed` for an empty component. The hash is the first 12 hexadecimal
+characters of SHA-256 of the full original host UID, a NUL separator, and the full canonical primary path, plus
+another NUL separator and the full original branch identity for branch scope. The readable project component uses
+only the primary checkout basename. Maximum lengths are 68 characters for branch scope and 47 for project scope.
+Repositories with identical basenames at different paths and different host users have separate scoped storage.
 
-Docker creates the volume on first use; named volumes survive outer-container removal. No existing container-layer
-state is migrated and no automatic pruning runs. Scope and resolved volume name participate in fingerprint schema 8.
+The launcher explicitly creates the volume before creating the outer container. Volumes carry
+`agents-safe.managed=true` and `agents-safe.docker-storage=<scope>` labels; branch/project volumes also carry
+`agents-safe.project-path=<primary checkout>` and `agents-safe.host-uid=<UID>`. Shared volumes have no project or
+user owner. Branch volumes also carry the complete `agents-safe.git-branch` identity. Existing volumes retain their
+original labels. Named volumes survive outer-container removal. Use `docker volume ls --filter
+label=agents-safe.managed=true` and `docker volume inspect <name>` to discover and attribute retained storage;
+remove only confirmed unused volumes with `docker volume rm <name>`. No existing container-layer state is migrated
+and no automatic pruning runs. On a fingerprint mismatch, inspected `/var/lib/docker` mounts identify a changed
+volume in the error message. Scope and resolved volume name participate in fingerprint schema 8.
 A stopped persistent container resumes with its creation-time mount through `docker start`. A changed selection or
 branch fails fingerprint validation before start; remove the stopped container to create one with the new mount.
 `--force-exec` retains the original mount, including when restarting a stopped persistent container.

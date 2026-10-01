@@ -83,6 +83,9 @@ type Plan struct {
 	// DockerStorage and DockerStorageVolume are the immutable nested Docker storage selection.
 	DockerStorage       string
 	DockerStorageVolume string
+	// DockerStorageProjectRoot is the shared primary checkout used to label scoped storage.
+	DockerStorageProjectRoot string
+	DockerStorageBranch      string
 	// ProjectRoot is the canonical root of the selected Git worktree. The launcher uses it as the
 	// stable identity when it creates or reuses that worktree's managed container.
 	ProjectRoot string
@@ -354,7 +357,7 @@ func ResolveWithHostHome(
 		return Resolution{}, err
 	}
 
-	dockerVolume, err := dockerStorageVolume(project, config.Common.DockerStorage)
+	dockerVolume, err := dockerStorageVolume(project, config.Common.DockerStorage, os.Getuid())
 	if err != nil {
 		return Resolution{}, err
 	}
@@ -370,16 +373,18 @@ func ResolveWithHostHome(
 	}
 	return Resolution{
 		Plan: Plan{
-			DockerStorage:       config.Common.DockerStorage,
-			DockerStorageVolume: dockerVolume,
-			ProjectRoot:         project.WorktreeRoot,
-			WorkingDir:          project.RequestedDir,
-			Mounts:              physical,
-			Provenance:          provenance,
-			HostMCPChannel:      hostMCPChannel,
-			DependencyCaches:    caches,
-			TmpfsMounts:         tmpfsMounts,
-			WorktreeRegistryDir: worktreeRegistry,
+			DockerStorage:            config.Common.DockerStorage,
+			DockerStorageVolume:      dockerVolume,
+			DockerStorageProjectRoot: project.PrimaryRoot,
+			DockerStorageBranch:      project.Branch,
+			ProjectRoot:              project.WorktreeRoot,
+			WorkingDir:               project.RequestedDir,
+			Mounts:                   physical,
+			Provenance:               provenance,
+			HostMCPChannel:           hostMCPChannel,
+			DependencyCaches:         caches,
+			TmpfsMounts:              tmpfsMounts,
+			WorktreeRegistryDir:      worktreeRegistry,
 		},
 		Degradations: degradations,
 	}, nil

@@ -40,7 +40,8 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 	if err := os.WriteFile(claudeConfig, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	project := gitproject.Project{Branch: "main",
+	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: worktree,
 		WorktreeRoot: worktree,
 		PrimaryRoot:  primary,
@@ -209,7 +210,8 @@ func TestResolveProjectConfigSeedsDefaultCachesOnlyWhenConfigAbsent(t *testing.T
 	if err := os.Mkdir(filepath.Join(projectRoot, projectenv.Directory), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	project := gitproject.Project{Branch: "main",
+	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: projectRoot, WorktreeRoot: projectRoot, PrimaryRoot: projectRoot, CommonGitDir: gitDir,
 	}
 	host := HostEnvironment{HomeDir: home}
@@ -269,7 +271,8 @@ func TestResolveProjectConfigAppliesOnlyExplicitOverridesAfterTOML(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	project := gitproject.Project{Branch: "main",
+	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: projectRoot, WorktreeRoot: projectRoot, PrimaryRoot: projectRoot, CommonGitDir: gitDir,
 	}
 	if err := os.Mkdir(filepath.Join(projectRoot, projectenv.Directory), 0o755); err != nil {

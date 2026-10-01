@@ -18,7 +18,8 @@ func TestResolveRegularCheckoutNormalizesRequiredRoles(t *testing.T) {
 	if err := os.Mkdir(gitDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	project := gitproject.Project{Branch: "main",
+	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: root,
 		WorktreeRoot: root,
 		PrimaryRoot:  root,
@@ -88,7 +89,8 @@ func TestResolveLinkedWorktreePreservesNestedWritableGitMount(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	project := gitproject.Project{Branch: "main",
+	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: worktree,
 		WorktreeRoot: worktree,
 		PrimaryRoot:  primary,
@@ -163,7 +165,8 @@ func TestResolveRejectsUnexpectedLinkedGitDirTopology(t *testing.T) {
 			if err := test.setup(test.gitDir); err != nil {
 				t.Fatal(err)
 			}
-			project := gitproject.Project{Branch: "main",
+			project := gitproject.Project{
+				Branch:       "main",
 				RequestedDir: worktree,
 				WorktreeRoot: worktree,
 				GitDir:       test.gitDir,
@@ -590,7 +593,8 @@ func TestResolveRejectsOmittedRequiredRoleAndReportsOptionalDeletion(t *testing.
 	if err := os.WriteFile(gitConfig, []byte("[user]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	project := gitproject.Project{Branch: "main",
+	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: root,
 		WorktreeRoot: root,
 		PrimaryRoot:  root,
@@ -624,8 +628,9 @@ func TestResolveRejectsOmittedRequiredRoleAndReportsOptionalDeletion(t *testing.
 
 func resolvedConfig(project gitproject.Project, linked bool) projectenv.ProjectConfig {
 	return projectenv.ProjectConfig{
-		Common: projectenv.CommonConfig{DockerStorage: "branch",
-			Image: "test:image",
+		Common: projectenv.CommonConfig{
+			DockerStorage: "branch",
+			Image:         "test:image",
 			Mounts: []projectenv.MountConfig{
 				{
 					Role:     projectenv.RolePrimaryCheckout,
