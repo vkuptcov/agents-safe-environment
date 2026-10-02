@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,9 @@ arguments = ["--model", "opus"]
 	}
 	if config.Common.Image != "configured:image" {
 		t.Errorf("image = %q, want configured value", config.Common.Image)
+	}
+	if config.Common.DockerStorage != DockerStorageBranch {
+		t.Error("omitted DockerStorage must retain branch default")
 	}
 	if config.Common.NoHostMCP {
 		t.Error("no_host_mcp = true, want explicit false")
@@ -246,6 +250,7 @@ func typedDefaults(t *testing.T) ProjectConfig {
 	source := t.TempDir()
 	return ProjectConfig{
 		Common: CommonConfig{
+			DockerStorage:     DockerStorageBranch,
 			Image:             "default:image",
 			NoHostMCP:         true,
 			UseHostPythonVenv: false,
@@ -271,5 +276,24 @@ func writeConfig(t *testing.T, root string, content string) {
 	}
 	if err := os.WriteFile(filepath.Join(contextPath, ConfigName), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadDockerStorageModes(t *testing.T) {
+	for _, mode := range append(slices.Clone(DockerStorageModeOrder), "", "unknown") {
+		t.Run(string(mode), func(t *testing.T) {
+			root := t.TempDir()
+			writeConfig(t, root, "[common]\ndocker_storage = \""+string(mode)+"\"\n")
+			config, err := Load(root, typedDefaults(t))
+			if slices.Contains(DockerStorageModeOrder, mode) {
+				if err != nil || config.Common.DockerStorage != mode {
+					t.Fatalf("Load = %#v, %v", config, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("invalid mode accepted")
+			}
+		})
 	}
 }

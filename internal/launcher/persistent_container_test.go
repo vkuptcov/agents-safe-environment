@@ -12,6 +12,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 // runtimeDirLookup is an environment that names runtimeDir as XDG_RUNTIME_DIR and nothing else.
@@ -92,6 +93,7 @@ func TestDockerLaunchForceExecRestartsStoppedPersistentContainerDespiteMismatch(
 	plan := simplePlan()
 	labels := matchingLabels(t, plan, 1000)
 	labels[launchConfigLabel] = "stale"
+	plan.DockerStorage.Volume = "agents-safe-docker-requested-other"
 	runner := &fakeCommandRunner{outputs: []commandResult{
 		{output: stoppedInspectionJSON(t, containerID, false, labels)},
 		{output: stoppedInspectionJSON(t, containerID, false, labels)},
@@ -248,5 +250,31 @@ func TestPrepareHostMCPRestartRebuildsRecordedRelayForForcedMismatch(t *testing.
 	}
 	if len(runner.combinedCalls) != 1 || !containsSequence(runner.combinedCalls[0], "--endpoint", "127.0.0.1:64342") {
 		t.Fatalf("calls = %#v, want one sidecar create relaying the recorded endpoint", runner.combinedCalls)
+	}
+}
+
+func TestDockerStorageChangeRejectsStoppedContainerBeforeStart(t *testing.T) {
+	for _, change := range []string{"mode", "branch"} {
+		t.Run(change, func(t *testing.T) {
+			original := simplePlan()
+			requested := original
+			if change == "mode" {
+				requested.DockerStorage.Mode = projectenv.DockerStorageShared
+			} else {
+				requested.DockerStorage.Volume += "-other"
+			}
+			labels := matchingLabels(t, original, 1000)
+			stopped := stoppedInspectionJSON(t, strings.Repeat("a", 64), false, labels)
+			runner := &fakeCommandRunner{outputs: []commandResult{{output: stopped}, {output: stopped}}}
+			err := testDocker(runner).Launch(context.Background(), requested, "image", []string{"true"}, launchplan.Options{})
+			if err == nil || !strings.Contains(err.Error(), "creation fingerprint") {
+				t.Fatalf("Launch = %v", err)
+			}
+			for _, call := range runner.combinedCalls {
+				if call[1] != "container" {
+					t.Fatalf("must reject before start: %#v", runner.combinedCalls)
+				}
+			}
+		})
 	}
 }

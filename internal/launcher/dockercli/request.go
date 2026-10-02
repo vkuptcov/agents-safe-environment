@@ -109,7 +109,12 @@ type ImageInspection struct {
 
 // ContainerInspection is the subset of Docker inspect state used by launcher lifecycle policy.
 type ContainerInspection struct {
-	ID string `json:"Id"`
+	ID     string `json:"Id"`
+	Mounts []struct {
+		Type        string `json:"Type"`
+		Name        string `json:"Name"`
+		Destination string `json:"Destination"`
+	} `json:"Mounts"`
 	// Image is the immutable content ID this container was created from. On reuse it is
 	// authoritative: a replacement sidecar must match the already-running session rather than a
 	// mutable tag that may have moved since.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"strconv"
+	"slices"
 	"time"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
@@ -20,6 +20,8 @@ const (
 	projectPathLabel     = "agents-safe.project-path"
 	hostUIDLabel         = "agents-safe.host-uid"
 	managerProtocolLabel = "agents-safe.manager-protocol"
+	dockerStorageLabel   = "agents-safe.docker-storage"
+	gitBranchLabel       = "agents-safe.git-branch"
 	codexHomeLabel       = "agents-safe.codex-home"
 	claudeHomeLabel      = "agents-safe.claude-home"
 	claudeConfigLabel    = "agents-safe.claude-config"
@@ -85,6 +87,9 @@ func (attempt *launchAttempt) acquireContainer(
 		return "", err
 	}
 	if err := materializeTmpfsTargets(attempt.plan.TmpfsMounts); err != nil {
+		return "", err
+	}
+	if err := attempt.ensureDockerStorage(ctx); err != nil {
 		return "", err
 	}
 	for count := 0; count < containerCreateAttempts; count++ {
@@ -220,20 +225,19 @@ func (attempt *launchAttempt) inspectOwnedContainer(
 
 // validateOwnership checks labels that identify the deterministic container name's owner.
 func (attempt *launchAttempt) validateOwnership(inspection dockercli.ContainerInspection) error {
-	ownership := []struct{ name, want string }{
-		{managedLabel, managedLabelValue},
-		{projectPathLabel, attempt.plan.ProjectRoot},
-		{hostUIDLabel, strconv.Itoa(attempt.docker.HostUID)},
-		{managerProtocolLabel, session.ProtocolVersion},
-	}
+	ownership := slices.Concat(
+		[]dockercli.KeyValue{{Key: managedLabel, Value: managedLabelValue}},
+		attempt.docker.ownershipLabels(attempt.plan.ProjectRoot),
+		[]dockercli.KeyValue{{Key: managerProtocolLabel, Value: session.ProtocolVersion}},
+	)
 	for _, label := range ownership {
-		if got := inspection.Config.Labels[label.name]; got != label.want {
+		if got := inspection.Config.Labels[label.Key]; got != label.Value {
 			return fmt.Errorf(
 				"container %s has label %s=%q, expected %q; refusing deterministic-name reuse",
 				inspection.ID,
-				label.name,
+				label.Key,
 				got,
-				label.want,
+				label.Value,
 			)
 		}
 	}
@@ -248,12 +252,13 @@ func (attempt *launchAttempt) validateRunningFingerprint(inspection dockercli.Co
 		return nil
 	}
 	return &launchConfigMismatchError{
-		containerName: attempt.containerName,
-		containerID:   inspection.ID,
-		projectRoot:   attempt.plan.ProjectRoot,
-		running:       inspection.Config.Labels[launchConfigLabel],
-		requested:     attempt.launchFingerprint,
-		persistent:    !inspection.State.Running && !inspection.HostConfig.AutoRemove,
+		containerName:     attempt.containerName,
+		containerID:       inspection.ID,
+		projectRoot:       attempt.plan.ProjectRoot,
+		running:           inspection.Config.Labels[launchConfigLabel],
+		requested:         attempt.launchFingerprint,
+		persistent:        !inspection.State.Running && !inspection.HostConfig.AutoRemove,
+		storageDifference: attempt.storageDifference(inspection),
 	}
 }
 
@@ -359,4 +364,36 @@ func (attempt *launchAttempt) restartContainer(
 		return "", err
 	}
 	return inspection.ID, nil
+}
+
+// ensureDockerStorage creates the selected named volume before the first creation attempt. Docker would
+// create it implicitly with the mount, but only an explicit create carries the labels that keep retained
+// storage discoverable and attributable after its session is gone.
+func (attempt *launchAttempt) ensureDockerStorage(ctx context.Context) error {
+	return attempt.cli.EnsureVolume(ctx, attempt.plan.DockerStorage.Volume, attempt.storageVolumeLabels())
+}
+
+func (attempt *launchAttempt) storageVolumeLabels() []dockercli.KeyValue {
+	storage := attempt.plan.DockerStorage
+	labels := []dockercli.KeyValue{
+		{Key: managedLabel, Value: managedLabelValue},
+		{Key: dockerStorageLabel, Value: string(storage.Mode)},
+	}
+	// Host-wide storage has no project or user identity, so it is deliberately left unattributed.
+	if storage.ProjectRoot != "" {
+		labels = append(labels, attempt.docker.ownershipLabels(storage.ProjectRoot)...)
+	}
+	if storage.Branch != "" {
+		labels = append(labels, dockercli.KeyValue{Key: gitBranchLabel, Value: storage.Branch})
+	}
+	return labels
+}
+
+func (attempt *launchAttempt) storageDifference(inspection dockercli.ContainerInspection) string {
+	for _, mount := range inspection.Mounts {
+		if mount.Destination == launchplan.DockerDataRoot && mount.Name != attempt.plan.DockerStorage.Volume {
+			return attempt.plan.DockerStorage.Describe(mount.Name)
+		}
+	}
+	return ""
 }

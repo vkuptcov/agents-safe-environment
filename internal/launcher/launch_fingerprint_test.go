@@ -66,10 +66,10 @@ func TestCreationFingerprintCoversOnlyCreationTimeFields(t *testing.T) {
 	}
 }
 
-func TestCreationFingerprintIncludesSchemaVersionSeven(t *testing.T) {
+func TestCreationFingerprintIncludesSchemaVersionEight(t *testing.T) {
 	plan := testPlan()
 	got := mustCreationFingerprint(t, plan, "image", false, false, false, hostmcp.Set{})
-	if launchConfigSchemaVersion != 7 || got == "" {
+	if launchConfigSchemaVersion != 8 || got == "" {
 		t.Fatalf("schema/fingerprint = %d/%q", launchConfigSchemaVersion, got)
 	}
 }
@@ -157,20 +157,20 @@ func TestCreationFingerprintIgnoresWorktreeRegistryHostState(t *testing.T) {
 	assertFingerprint("host-pruned")
 }
 
-func TestCreationFingerprintKeepsVersionSevenBaselines(t *testing.T) {
+func TestCreationFingerprintKeepsVersionEightBaselines(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		plan launchplan.Plan
 		want string
 	}{
-		{name: "empty", plan: testPlan(), want: "bcba189149eb5c61046cd11807f57b72fbb942a89dd4d13bc725c6689fe6fe52"},
-		{name: "go only", plan: planWithCache(testPlan()), want: "566c67f80f378c3ac0eb32600af1d2f03e3ff93b79cc91f8c3c1fbc5265c6f3d"},
+		{name: "empty", plan: testPlan(), want: "e154350830d6789494fb77de0c217d9f4322b2ee87a9dbccbbee56452b556fe5"},
+		{name: "go only", plan: planWithCache(testPlan()), want: "1c02819c43aab60af9aa8b06958e35463944b05d7606c3a4d2e178f9367c49cc"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if got := mustCreationFingerprint(t, test.plan, "image", false, false, false, hostmcp.Set{}); got != test.want {
-				t.Fatalf("fingerprint = %q, want version-7 baseline %q", got, test.want)
+				t.Fatalf("fingerprint = %q, want version-8 baseline %q", got, test.want)
 			}
 		})
 	}

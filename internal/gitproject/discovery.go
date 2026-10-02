@@ -2,6 +2,7 @@ package gitproject
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,8 @@ import (
 
 // Project contains the canonical host paths needed to mount a Git working tree.
 type Project struct {
+	// Branch is the symbolic branch name, or detached- followed by the full HEAD commit ID.
+	Branch string
 	// RequestedDir is the user-selected directory and becomes the container working directory.
 	// It may be any directory inside WorktreeRoot.
 	RequestedDir string
@@ -56,7 +59,12 @@ func Discover(ctx context.Context, requestedPath string) (Project, error) {
 		return Project{}, fmt.Errorf("resolve common Git directory: %w", err)
 	}
 
+	branch, err := branchIdentity(ctx, requestedDir)
+	if err != nil {
+		return Project{}, fmt.Errorf("resolve Git branch identity: %w", err)
+	}
 	project := Project{
+		Branch:       branch,
 		RequestedDir: requestedDir,
 		WorktreeRoot: worktreeRoot,
 		GitDir:       gitDir,
@@ -188,4 +196,22 @@ func canonicalPath(path string) (string, error) {
 		return "", err
 	}
 	return filepath.Clean(canonical), nil
+}
+
+func branchIdentity(ctx context.Context, directory string) (string, error) {
+	// symbolic-ref also succeeds before the first commit. Exit 1 means detached HEAD.
+	command := exec.CommandContext(ctx, "git", "-C", directory, "symbolic-ref", "--quiet", "HEAD")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		return strings.TrimPrefix(strings.TrimSpace(string(output)), "refs/heads/"), nil
+	}
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		return "", fmt.Errorf("git symbolic-ref: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	commit, err := gitOutput(ctx, directory, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return "detached-" + commit, nil
 }

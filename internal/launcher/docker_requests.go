@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -34,6 +35,16 @@ type bootstrapTmpfsMount struct {
 // Host identity is validated once by validateConfiguration before a launch starts, so the request
 // builders below assume it and check only what is specific to the request they encode.
 
+// ownershipLabels marks a created resource as belonging to this user and project. Session containers,
+// the relay sidecar, persistent storage, and the reuse ownership check all read this one definition, so
+// ownership cannot be written one way and verified another.
+func (docker *DockerLauncher) ownershipLabels(projectRoot string) []dockercli.KeyValue {
+	return []dockercli.KeyValue{
+		{Key: projectPathLabel, Value: projectRoot},
+		{Key: hostUIDLabel, Value: strconv.Itoa(docker.HostUID)},
+	}
+}
+
 func (docker *DockerLauncher) buildCreateRequest(
 	plan launchplan.Plan,
 	image string,
@@ -53,23 +64,24 @@ func (docker *DockerLauncher) buildCreateRequest(
 		mounts = append(mounts, dockercli.Mount(mount))
 	}
 
-	labels := []dockercli.KeyValue{
-		{Key: managedLabel, Value: managedLabelValue},
-		{Key: projectPathLabel, Value: plan.ProjectRoot},
-		{Key: hostUIDLabel, Value: strconv.Itoa(docker.HostUID)},
-		{Key: managerProtocolLabel, Value: session.ProtocolVersion},
-		{Key: launchConfigLabel, Value: launchFingerprint},
-		// These unhashed values are retained for operator diagnostics. Creation-time reuse compares
-		// only launchConfigLabel after the ownership and protocol checks.
-		{Key: codexHomeLabel, Value: mountRoleLabel(plan, projectenv.RoleCodexHome)},
-		{Key: claudeHomeLabel, Value: mountRoleLabel(plan, projectenv.RoleClaudeHome)},
-		{Key: claudeConfigLabel, Value: mountRoleLabel(plan, projectenv.RoleClaudeConfig)},
-		{Key: personalSkillsLabel, Value: mountRoleLabel(plan, projectenv.RolePersonalSkills)},
-		{Key: hostMCPLabel, Value: forwarding.set.Label()},
-		{Key: goBuildCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheGoBuild)},
-		{Key: goModulesCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheGoModules)},
-		{Key: uvCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheUV)},
-	}
+	labels := slices.Concat(
+		[]dockercli.KeyValue{{Key: managedLabel, Value: managedLabelValue}},
+		docker.ownershipLabels(plan.ProjectRoot),
+		[]dockercli.KeyValue{
+			{Key: managerProtocolLabel, Value: session.ProtocolVersion},
+			{Key: launchConfigLabel, Value: launchFingerprint},
+			// These unhashed values are retained for operator diagnostics. Creation-time reuse compares
+			// only launchConfigLabel after the ownership and protocol checks.
+			{Key: codexHomeLabel, Value: mountRoleLabel(plan, projectenv.RoleCodexHome)},
+			{Key: claudeHomeLabel, Value: mountRoleLabel(plan, projectenv.RoleClaudeHome)},
+			{Key: claudeConfigLabel, Value: mountRoleLabel(plan, projectenv.RoleClaudeConfig)},
+			{Key: personalSkillsLabel, Value: mountRoleLabel(plan, projectenv.RolePersonalSkills)},
+			{Key: hostMCPLabel, Value: forwarding.set.Label()},
+			{Key: goBuildCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheGoBuild)},
+			{Key: goModulesCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheGoModules)},
+			{Key: uvCacheLabel, Value: dependencyCacheLabel(plan, projectenv.DependencyCacheUV)},
+		},
+	)
 	environment := []dockercli.KeyValue{
 		{Key: "CODEX_SAFE_HOST_UID", Value: strconv.Itoa(docker.HostUID)},
 		{Key: "CODEX_SAFE_HOST_GID", Value: strconv.Itoa(docker.HostGID)},
@@ -124,6 +136,7 @@ func (docker *DockerLauncher) buildCreateRequest(
 				Target:   ClaudeInstallationRoot,
 				ReadOnly: true,
 			},
+			{Source: plan.DockerStorage.Volume, Target: launchplan.DockerDataRoot},
 		},
 		Tmpfs:         dockerTmpfsMounts(plan.TmpfsMounts),
 		KeepContainer: keepContainer,

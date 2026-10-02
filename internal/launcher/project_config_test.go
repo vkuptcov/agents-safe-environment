@@ -41,6 +41,7 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: worktree,
 		WorktreeRoot: worktree,
 		PrimaryRoot:  primary,
@@ -85,6 +86,9 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 	}
 	if want := []string{"--permission-mode", "auto"}; !reflect.DeepEqual(config.Claude.Arguments, want) {
 		t.Errorf("Claude arguments = %#v, want %#v", config.Claude.Arguments, want)
+	}
+	if config.Common.DockerStorage != projectenv.DockerStorageBranch {
+		t.Error("DockerStorage must default to branch")
 	}
 	if config.Common.UseHostPythonVenv {
 		t.Error("UseHostPythonVenv = true, want safe default false")
@@ -207,6 +211,7 @@ func TestResolveProjectConfigSeedsDefaultCachesOnlyWhenConfigAbsent(t *testing.T
 		t.Fatal(err)
 	}
 	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: projectRoot, WorktreeRoot: projectRoot, PrimaryRoot: projectRoot, CommonGitDir: gitDir,
 	}
 	host := HostEnvironment{HomeDir: home}
@@ -267,6 +272,7 @@ func TestResolveProjectConfigAppliesOnlyExplicitOverridesAfterTOML(t *testing.T)
 		}
 	}
 	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: projectRoot, WorktreeRoot: projectRoot, PrimaryRoot: projectRoot, CommonGitDir: gitDir,
 	}
 	if err := os.Mkdir(filepath.Join(projectRoot, projectenv.Directory), 0o755); err != nil {
@@ -277,6 +283,7 @@ image = "configured:image"
 no_host_mcp = true
 use_host_python_venv = true
 keep_container = true
+docker_storage = "project"
 `
 	if err := os.WriteFile(filepath.Join(projectRoot, projectenv.Directory, projectenv.ConfigName), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -287,6 +294,9 @@ keep_container = true
 	if err != nil {
 		t.Fatal(err)
 	}
+	if withoutFlags.Resolution.Plan.DockerStorage.Mode != projectenv.DockerStorageProject {
+		t.Fatal("TOML storage ignored")
+	}
 	if withoutFlags.Config.Common.Image != "configured:image" || !withoutFlags.Options.NoHostMCP ||
 		!withoutFlags.Options.UseHostPythonVenv || !withoutFlags.Options.KeepContainer || withoutFlags.Options.ImageOverride {
 		t.Fatalf("file resolution = %#v", withoutFlags)
@@ -294,10 +304,13 @@ keep_container = true
 
 	withFlags, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{
 		Image: "flag:image", ImageOverride: true, NoHostMCPOverride: true, UseHostPythonVenvOverride: true,
-		KeepContainerOverride: true,
+		KeepContainerOverride: true, DockerStorage: "shared", DockerStorageOverride: true,
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if withFlags.Resolution.Plan.DockerStorage.Mode != projectenv.DockerStorageShared {
+		t.Fatal("CLI storage ignored")
 	}
 	if withFlags.Config.Common.Image != "flag:image" || withFlags.Options.NoHostMCP || withFlags.Options.UseHostPythonVenv ||
 		withFlags.Options.KeepContainer || !withFlags.Options.ImageOverride {

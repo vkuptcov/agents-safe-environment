@@ -26,6 +26,7 @@ func TestCreateRequestUsesOnlyResolvedPhysicalMounts(t *testing.T) {
 	wantVolume := []dockercli.VolumeMount{
 		{Source: CodexInstallationVolume, Target: CodexInstallationRoot, ReadOnly: true},
 		{Source: ClaudeInstallationVolume, Target: ClaudeInstallationRoot, ReadOnly: true},
+		{Source: plan.DockerStorage.Volume, Target: launchplan.DockerDataRoot},
 	}
 	if !reflect.DeepEqual(request.Volumes, wantVolume) {
 		t.Fatalf("volumes = %#v, want %#v", request.Volumes, wantVolume)

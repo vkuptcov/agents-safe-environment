@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -412,6 +413,17 @@ func (docker *DockerLauncher) buildSidecarRequest(
 	set hostmcp.Set,
 	projectRoot string,
 ) dockercli.CreateRequest {
+	labels := slices.Concat(
+		// A role marker distinct from agents-safe.managed, which stays reserved for session
+		// containers and their discovery filters.
+		[]dockercli.KeyValue{{Key: hostMCPSidecarLabel, Value: "true"}},
+		docker.ownershipLabels(projectRoot),
+		[]dockercli.KeyValue{
+			{Key: hostMCPLabel, Value: set.Label()},
+			{Key: hostMCPChannelLabel, Value: channel.Generation},
+			{Key: hostMCPImageLabel, Value: imageID},
+		},
+	)
 	return dockercli.CreateRequest{
 		Image:          imageID,
 		Name:           name,
@@ -422,16 +434,7 @@ func (docker *DockerLauncher) buildSidecarRequest(
 		SecurityOpt:    []string{"no-new-privileges"},
 		// No Runtime: the sidecar is the only container this project creates with the Docker
 		// default, because it runs no nested workload.
-		Labels: []dockercli.KeyValue{
-			// A role marker distinct from agents-safe.managed, which stays reserved for session
-			// containers and their discovery filters.
-			{Key: hostMCPSidecarLabel, Value: "true"},
-			{Key: projectPathLabel, Value: projectRoot},
-			{Key: hostUIDLabel, Value: strconv.Itoa(docker.HostUID)},
-			{Key: hostMCPLabel, Value: set.Label()},
-			{Key: hostMCPChannelLabel, Value: channel.Generation},
-			{Key: hostMCPImageLabel, Value: imageID},
-		},
+		Labels:  labels,
 		Mounts:  []dockercli.Mount{{Source: channel.Parent, Target: hostmcp.SidecarTarget}},
 		Command: set.RelayCommand(channel, sidecarInitialLeaseTimeout),
 	}

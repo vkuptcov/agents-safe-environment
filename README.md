@@ -273,9 +273,27 @@ want to use it.
 
 By default the session container is removed when it stops after the idle timeout. Set `keep_container = true` in the
 config, or pass `--keep-container`, to keep it: the next launch restarts the stopped container instead of creating a
-new one, so nested Docker images, installed packages, and other changes to the container filesystem survive. Masked
+new one, so installed packages and other changes to the container filesystem survive. Masked
 `.venv` directories still live on tmpfs and are recreated on every start. A kept container stays until you remove it
 with `docker rm`; the launcher prints a notice whenever it restarts one.
+
+Nested Docker state persists in a named volume even when the session container is removed. Choose its scope:
+
+```toml
+[common]
+docker_storage = "branch" # default; alternatives: "project", "shared"
+```
+
+Override it for one launch with `agents-safe --docker-storage=project bash`, or use the same flag with `codex-safe`
+or `claude-safe`. Branch volumes use the primary project name and current branch; project volumes share across
+branches; shared storage uses one volume for all agents on the host Docker daemon. Names retain up to 15 project and
+20 branch characters plus a 12-character hash. Project/shared scopes permit concurrent mounts at developer risk:
+independent Docker daemons cannot safely share their state directory. Stored state includes nested containers,
+networks, and volumes as well as images and build cache.
+
+Saved containers always retain their original volume mount on restart. A changed scope or branch volume refuses
+normal reuse; remove the stopped container and relaunch to apply the new selection. `--force-exec` uses the original
+mount. Existing private storage is not migrated; named volumes are not automatically deleted.
 
 For all config fields and precedence rules, see
 [Project launcher configuration](docs/design-docs/project-launcher-configuration.md).
@@ -290,8 +308,7 @@ For all config fields and precedence rules, see
 - Personal skills in `~/.agents/skills`, when present, are mounted read-only.
 - The host home, Docker socket, and host namespaces are not mounted. Host keychain-only credentials are not
   available.
-- Nested Docker images, containers, and storage live only for the active session unless `keep_container` is set,
-  in which case they persist in the stopped container between sessions.
+- Nested Docker images, containers, networks, and storage persist in named volumes selected by `docker_storage`.
 
 An active environment has a fixed creation contract. If you change its image or mount setup while it is running,
 finish the active commands and start again. `--force-exec` is an emergency way to run a command in the compatible

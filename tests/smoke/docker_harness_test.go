@@ -14,7 +14,9 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/stretchr/testify/require"
+	"github.com/vkuptcov/agents-safe-environment/internal/gitproject"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
 const (
@@ -30,13 +32,14 @@ type containerNames struct {
 }
 
 type dockerHarness struct {
-	t        *testing.T
-	ctx      context.Context
-	cancel   context.CancelFunc
-	client   *client.Client
-	project  string
-	daemonID string
-	names    containerNames
+	dockerVolumes map[string]bool
+	t             *testing.T
+	ctx           context.Context
+	cancel        context.CancelFunc
+	client        *client.Client
+	project       string
+	daemonID      string
+	names         containerNames
 }
 
 func newDockerHarness(t *testing.T, project projectLayout) *dockerHarness {
@@ -46,12 +49,24 @@ func newDockerHarness(t *testing.T, project projectLayout) *dockerHarness {
 	require.NoError(t, err, "Moby client must initialize from the Docker environment")
 	info, err := dockerClient.Info(ctx)
 	require.NoError(t, err, "Moby client must inspect the host Docker daemon")
+	volumes := map[string]bool{}
+	for _, directory := range []string{project.primary, project.worktree} {
+		if _, err := os.Stat(directory); os.IsNotExist(err) {
+			continue
+		}
+		discovered, err := gitproject.Discover(ctx, directory)
+		require.NoError(t, err)
+		resolved, err := launcher.ResolveProjectConfig(discovered, launcher.HostEnvironment{HomeDir: project.hostHome}, goSmokeImage, launchplan.Overrides{}, nil)
+		require.NoError(t, err)
+		volumes[resolved.Resolution.Plan.DockerStorage.Volume] = true
+	}
 	harness := &dockerHarness{
-		t:        t,
-		ctx:      ctx,
-		cancel:   cancel,
-		client:   dockerClient,
-		daemonID: info.ID,
+		dockerVolumes: volumes,
+		t:             t,
+		ctx:           ctx,
+		cancel:        cancel,
+		client:        dockerClient,
+		daemonID:      info.ID,
 	}
 	harness.selectProject(project.worktree)
 	return harness
@@ -75,6 +90,9 @@ func (docker *dockerHarness) close() {
 	defer cancel()
 	_ = docker.client.ContainerRemove(cleanupContext, docker.names.managed, container.RemoveOptions{Force: true})
 	_ = docker.client.ContainerRemove(cleanupContext, docker.names.sentinel, container.RemoveOptions{Force: true})
+	for name := range docker.dockerVolumes {
+		_ = docker.client.VolumeRemove(cleanupContext, name, false)
+	}
 	_ = docker.client.Close()
 }
 
@@ -98,6 +116,11 @@ func (docker *dockerHarness) inspectContainer() container.InspectResponse {
 	docker.t.Helper()
 	inspection, err := docker.client.ContainerInspect(docker.ctx, docker.names.managed)
 	require.NoError(docker.t, err, "Moby client must inspect deterministic container %q", docker.names.managed)
+	for _, mount := range inspection.Mounts {
+		if mount.Type == "volume" && mount.Destination == launchplan.DockerDataRoot {
+			docker.dockerVolumes[mount.Name] = true
+		}
+	}
 	return inspection
 }
 

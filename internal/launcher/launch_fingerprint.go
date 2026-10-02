@@ -9,26 +9,29 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 const (
 	launchConfigLabel = "agents-safe.launch-config"
-	// Version 7 enables endpoint-local route_localnet. Old sessions must not be reused without it.
-	launchConfigSchemaVersion = 7
+	// Version 8 persists nested Docker storage in the selected named volume.
+	launchConfigSchemaVersion = 8
 )
 
 // launchFingerprintInput is deliberately an ordered struct: maps and TOML bytes would make an
 // otherwise-identical creation contract depend on incidental encoding details.
 type launchFingerprintInput struct {
-	SchemaVersion     int                          `json:"schema_version"`
-	ImageReference    string                       `json:"image_reference"`
-	ImageOverride     bool                         `json:"image_override"`
-	Mounts            []fingerprintMount           `json:"mounts"`
-	NoHostMCP         bool                         `json:"no_host_mcp"`
-	UseHostPythonVenv bool                         `json:"use_host_python_venv"`
-	HostMCPEndpoints  []string                     `json:"host_mcp_endpoints"`
-	DependencyCaches  []fingerprintDependencyCache `json:"dependency_caches"`
-	TmpfsMounts       []fingerprintTmpfsMount      `json:"tmpfs_mounts"`
+	DockerStorage       projectenv.DockerStorageMode `json:"docker_storage"`
+	DockerStorageVolume string                       `json:"docker_storage_volume"`
+	SchemaVersion       int                          `json:"schema_version"`
+	ImageReference      string                       `json:"image_reference"`
+	ImageOverride       bool                         `json:"image_override"`
+	Mounts              []fingerprintMount           `json:"mounts"`
+	NoHostMCP           bool                         `json:"no_host_mcp"`
+	UseHostPythonVenv   bool                         `json:"use_host_python_venv"`
+	HostMCPEndpoints    []string                     `json:"host_mcp_endpoints"`
+	DependencyCaches    []fingerprintDependencyCache `json:"dependency_caches"`
+	TmpfsMounts         []fingerprintTmpfsMount      `json:"tmpfs_mounts"`
 }
 
 type fingerprintTmpfsMount struct {
@@ -102,15 +105,17 @@ func creationFingerprint(
 	}
 
 	encoded, err := json.Marshal(launchFingerprintInput{
-		SchemaVersion:     launchConfigSchemaVersion,
-		ImageReference:    image,
-		ImageOverride:     imageOverride,
-		Mounts:            mounts,
-		NoHostMCP:         noHostMCP,
-		UseHostPythonVenv: useHostPythonVenv,
-		HostMCPEndpoints:  addresses,
-		DependencyCaches:  caches,
-		TmpfsMounts:       tmpfsMounts,
+		DockerStorage:       plan.DockerStorage.Mode,
+		DockerStorageVolume: plan.DockerStorage.Volume,
+		SchemaVersion:       launchConfigSchemaVersion,
+		ImageReference:      image,
+		ImageOverride:       imageOverride,
+		Mounts:              mounts,
+		NoHostMCP:           noHostMCP,
+		UseHostPythonVenv:   useHostPythonVenv,
+		HostMCPEndpoints:    addresses,
+		DependencyCaches:    caches,
+		TmpfsMounts:         tmpfsMounts,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode launch fingerprint: %w", err)
@@ -127,7 +132,8 @@ type launchConfigMismatchError struct {
 	requested     string
 	// persistent marks a stopped container that Docker will not remove, so the hint can name the
 	// command that discards it and lets the next launch create a fresh one.
-	persistent bool
+	persistent        bool
+	storageDifference string
 }
 
 func (err *launchConfigMismatchError) Error() string {
@@ -138,6 +144,9 @@ func (err *launchConfigMismatchError) Error() string {
 			"to execute in the existing container with its current creation-time configuration",
 		err.containerName, err.containerID, err.projectRoot, err.running, err.requested,
 	)
+	if err.storageDifference != "" {
+		message += "; " + err.storageDifference
+	}
 	if err.persistent {
 		message += fmt.Sprintf(
 			"; the container is stopped and persistent, so `docker rm %s` discards it and lets this launch create a new one",

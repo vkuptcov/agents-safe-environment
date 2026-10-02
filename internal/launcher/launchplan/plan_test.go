@@ -19,6 +19,7 @@ func TestResolveRegularCheckoutNormalizesRequiredRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: root,
 		WorktreeRoot: root,
 		PrimaryRoot:  root,
@@ -89,6 +90,7 @@ func TestResolveLinkedWorktreePreservesNestedWritableGitMount(t *testing.T) {
 		}
 	}
 	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: worktree,
 		WorktreeRoot: worktree,
 		PrimaryRoot:  primary,
@@ -164,6 +166,7 @@ func TestResolveRejectsUnexpectedLinkedGitDirTopology(t *testing.T) {
 				t.Fatal(err)
 			}
 			project := gitproject.Project{
+				Branch:       "main",
 				RequestedDir: worktree,
 				WorktreeRoot: worktree,
 				GitDir:       test.gitDir,
@@ -198,7 +201,7 @@ func TestResolveDependencyCachesPreservesTargetAndUsesPhysicalSource(t *testing.
 	if err := os.Symlink(physical, alias); err != nil {
 		t.Fatal(err)
 	}
-	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	project := gitproject.Project{Branch: "main", RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
 	defaults := resolvedConfig(project, false)
 	config := defaults
 	config.Common.DependencyCaches = []projectenv.DependencyCacheConfig{
@@ -240,7 +243,7 @@ func TestResolvePythonVirtualEnvironmentsUsesDiscoveredTargetsUnlessHostUseIsEna
 			t.Fatal(err)
 		}
 	}
-	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	project := gitproject.Project{Branch: "main", RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
 	defaults := resolvedConfig(project, false)
 	defaults.Common.TmpfsMounts = []projectenv.TmpfsMountConfig{{
 		Target: environments[0], Mode: projectenv.DefaultTmpfsMode,
@@ -307,7 +310,7 @@ func TestResolveTmpfsMountsRejectsTargetsOutsideProject(t *testing.T) {
 	if err := os.Mkdir(gitDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	project := gitproject.Project{Branch: "main", RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
 	defaults := resolvedConfig(project, false)
 	config := defaults
 	config.Common.TmpfsMounts = []projectenv.TmpfsMountConfig{{
@@ -329,7 +332,7 @@ func TestResolveDependencyCachesRejectsProjectAndHomeOverlaps(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	project := gitproject.Project{Branch: "main", RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
 	defaults := resolvedConfig(project, false)
 	for _, source := range []string{home, root} {
 		config := defaults
@@ -361,7 +364,7 @@ func TestResolveProtectsWorktreeRegistryFromConfiguredMountBypasses(t *testing.T
 	if err := os.Symlink(registry, registryAlias); err != nil {
 		t.Fatal(err)
 	}
-	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	project := gitproject.Project{Branch: "main", RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
 	defaults := resolvedConfig(project, false)
 
 	t.Run("preserves safe source spelling", func(t *testing.T) {
@@ -416,7 +419,7 @@ func TestResolveRejectsDependencyCacheAndTmpfsRegistryOverlaps(t *testing.T) {
 	if err := os.Symlink(registry, cacheAlias); err != nil {
 		t.Fatal(err)
 	}
-	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	project := gitproject.Project{Branch: "main", RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
 	defaults := resolvedConfig(project, false)
 
 	cacheConfig := defaults
@@ -445,7 +448,7 @@ func TestResolveLegacyThreeRoleConfigReceivesDerivedGuard(t *testing.T) {
 	if err := os.Mkdir(gitDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	project := gitproject.Project{RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
+	project := gitproject.Project{Branch: "main", RequestedDir: root, WorktreeRoot: root, PrimaryRoot: root, CommonGitDir: gitDir}
 	defaults := resolvedConfig(project, false)
 	legacy := defaults
 	legacy.Common.Mounts = append([]projectenv.MountConfig(nil), defaults.Common.Mounts[:3]...)
@@ -591,6 +594,7 @@ func TestResolveRejectsOmittedRequiredRoleAndReportsOptionalDeletion(t *testing.
 		t.Fatal(err)
 	}
 	project := gitproject.Project{
+		Branch:       "main",
 		RequestedDir: root,
 		WorktreeRoot: root,
 		PrimaryRoot:  root,
@@ -625,7 +629,8 @@ func TestResolveRejectsOmittedRequiredRoleAndReportsOptionalDeletion(t *testing.
 func resolvedConfig(project gitproject.Project, linked bool) projectenv.ProjectConfig {
 	return projectenv.ProjectConfig{
 		Common: projectenv.CommonConfig{
-			Image: "test:image",
+			DockerStorage: projectenv.DockerStorageBranch,
+			Image:         "test:image",
 			Mounts: []projectenv.MountConfig{
 				{
 					Role:     projectenv.RolePrimaryCheckout,

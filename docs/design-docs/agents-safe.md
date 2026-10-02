@@ -105,9 +105,9 @@ This container isolates the host more strongly than conventional Docker-in-Docke
 Docker socket mount. It is not a secrecy boundary for allowed mounts. The agent can read, change, delete, or transmit
 project files and resolved Codex-home contents.
 
-Each container session starts with clean nested Docker storage. Commands routed into that live session reuse its
-images, containers, volumes, and build cache. A new session after the last managed command finishes starts clean again;
-persistent cross-session caching can be designed separately after measurement shows that it is needed.
+Nested Docker storage persists independently of the session container in a named volume. Branch scope is the default;
+project and shared scopes trade isolation for reuse across branches or projects. All scopes retain daemon state,
+including images, containers, networks, volumes, and build cache.
 
 ## Contract
 
@@ -493,9 +493,44 @@ container-local diagnostics and exits nonzero.
 
 ### 6. Inner Docker Contract
 
-The nested Docker daemon stores containers, images, layers, networks, and volumes in the container's private
-`/var/lib/docker`. Sysbox may control the physical placement, but the objects are logically separate from host Docker
-objects and objects belonging to other `codex-safe` sessions.
+The nested Docker daemon stores containers, images, layers, networks, and volumes in a host-Docker named volume
+mounted read-write at `/var/lib/docker`. These are inner-daemon objects; the host daemon manages only the backing
+volume, and its socket remains unavailable inside the session.
+
+`common.docker_storage`, overridden by `--docker-storage`, accepts exactly `branch`, `project`, or `shared`:
+
+| Scope | Named volume |
+| --- | --- |
+| `branch` (default) | `agents-safe-docker-<project up to 15>-<branch up to 20>-<hash 12>` |
+| `project` | `agents-safe-docker-<project up to 15>-<hash 12>` |
+| `shared` | `agents-safe-docker-shared` |
+
+Project identity is the canonical primary checkout path and invoking host UID, including for linked worktrees.
+Branch identity is its symbolic branch name, including unborn branches; detached HEAD uses `detached-<full commit
+SHA>`. Readable name components use lowercase ASCII letters, digits, and hyphens; other characters become hyphens.
+They are truncated and trimmed, with `unnamed` for an empty component. The hash is the first 12 hexadecimal
+characters of SHA-256 of the full original host UID, a NUL separator, and the full canonical primary path, plus
+another NUL separator and the full original branch identity for branch scope. The readable project component uses
+only the primary checkout basename. Maximum lengths are 68 characters for branch scope and 47 for project scope.
+Repositories with identical basenames at different paths and different host users have separate scoped storage.
+
+The launcher explicitly creates the volume before creating the outer container. Volumes carry
+`agents-safe.managed=true` and `agents-safe.docker-storage=<scope>` labels; branch/project volumes also carry
+`agents-safe.project-path=<primary checkout>` and `agents-safe.host-uid=<UID>`. Shared volumes have no project or
+user owner. Branch volumes also carry the complete `agents-safe.git-branch` identity. Existing volumes retain their
+original labels. Named volumes survive outer-container removal. Use `docker volume ls --filter
+label=agents-safe.managed=true` and `docker volume inspect <name>` to discover and attribute retained storage;
+remove only confirmed unused volumes with `docker volume rm <name>`. No existing container-layer state is migrated
+and no automatic pruning runs. On a fingerprint mismatch, inspected `/var/lib/docker` mounts identify a changed
+volume in the error message. Scope and resolved volume name participate in fingerprint schema 8.
+A stopped persistent container resumes with its creation-time mount through `docker start`. A changed selection or
+branch fails fingerprint validation before start; remove the stopped container to create one with the new mount.
+`--force-exec` retains the original mount, including when restarting a stopped persistent container.
+
+Project and shared scopes allow concurrent mounts without locks, as an explicit developer responsibility. Sharing a
+Docker data-root between independent daemons is unsupported and can corrupt metadata or prevent startup; this also
+applies to identical branch identities used by separate sessions. Data and nested workloads in a shared scope are
+accessible to each session that mounts it. See [Docker daemon storage](https://docs.docker.com/engine/daemon/).
 
 The inner `docker` CLI connects only to the nested daemon socket by default. The launcher and image do not configure a
 fallback to a host context or remote daemon.
@@ -669,8 +704,8 @@ documented procedure finds resources through the `codex-safe` labels and removes
 `common.keep_container = true`, or the invocation flag `--keep-container`, creates the session container without
 `--rm`. Everything else about creation, readiness, registration, and idle shutdown is unchanged: the manager still
 stops the nested daemon and exits, and Docker leaves the container in the `exited` state instead of removing it. The
-container's writable layer, including the nested daemon's `/var/lib/docker`, installed packages, and the recreated
-container-local home, therefore survives until the container is removed. Bootstrap seeds the image `.bashrc` only
+container's writable layer, including installed packages and the recreated container-local home, survives until the
+container is removed. The nested daemon's named volume persists independently of this setting. Bootstrap seeds the image `.bashrc` only
 into a home that has none, so shell configuration added inside a persistent container is kept across restarts. Session tmpfs masks are recreated empty on
 every start, so masked virtual environments do not persist.
 
@@ -777,7 +812,7 @@ The design intentionally does not promise:
 - linked worktrees attached to bare repositories or common Git directories outside a primary checkout;
 - automatic discovery and mounting of external Git submodules;
 - publishing nested-container ports on the host;
-- persistent nested Docker images, volumes, or build cache;
+- automatic migration or garbage collection of persistent nested Docker storage;
 - a portable disk quota for nested Docker storage.
 
 Rejected alternative: mount the host Docker socket. This would be faster and would reuse the host cache, but it would

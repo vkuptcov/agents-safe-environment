@@ -37,6 +37,8 @@ type Options struct {
 // Overrides records only launcher flags explicitly present in argv. The resolver applies these after loading the
 // project file, preserving a configured false value when --no-host-mcp is omitted.
 type Overrides struct {
+	DockerStorage             string
+	DockerStorageOverride     bool
 	Image                     string
 	ImageOverride             bool
 	NoHostMCP                 bool
@@ -78,6 +80,8 @@ type TmpfsMount struct {
 // It identifies the managed worktree, preserves the caller's working directory, and restricts the host
 // paths bind-mounted into the container.
 type Plan struct {
+	// DockerStorage is the immutable nested Docker storage selection for this launch.
+	DockerStorage DockerStorage
 	// ProjectRoot is the canonical root of the selected Git worktree. The launcher uses it as the
 	// stable identity when it creates or reuses that worktree's managed container.
 	ProjectRoot string
@@ -349,6 +353,10 @@ func ResolveWithHostHome(
 		return Resolution{}, err
 	}
 
+	dockerStorage, err := resolveDockerStorage(project, config.Common.DockerStorage, os.Getuid())
+	if err != nil {
+		return Resolution{}, err
+	}
 	_, hostMCPChannel := configRoles[projectenv.RoleHostMCPChannel]
 	degradations := make([]Degradation, 0, len(degradableRoleOrder))
 	for _, role := range degradableRoleOrder {
@@ -361,6 +369,7 @@ func ResolveWithHostHome(
 	}
 	return Resolution{
 		Plan: Plan{
+			DockerStorage:       dockerStorage,
 			ProjectRoot:         project.WorktreeRoot,
 			WorkingDir:          project.RequestedDir,
 			Mounts:              physical,

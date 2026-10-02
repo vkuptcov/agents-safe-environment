@@ -75,6 +75,9 @@ func ResolveProjectConfig(
 	if overrides.UseHostPythonVenvOverride {
 		config.Common.UseHostPythonVenv = overrides.UseHostPythonVenv
 	}
+	if overrides.DockerStorageOverride {
+		config.Common.DockerStorage = projectenv.DockerStorageMode(overrides.DockerStorage)
+	}
 	if overrides.KeepContainerOverride {
 		config.Common.KeepContainer = overrides.KeepContainer
 	}
@@ -194,8 +197,9 @@ func DefaultProjectConfig(
 
 	config := projectenv.ProjectConfig{
 		Common: projectenv.CommonConfig{
-			Image:  image,
-			Mounts: mounts,
+			DockerStorage: projectenv.DefaultDockerStorage,
+			Image:         image,
+			Mounts:        mounts,
 		},
 		Codex:  projectenv.CodexConfig{Arguments: append([]string(nil), codexDefaultSandboxArgs...)},
 		Claude: projectenv.ClaudeConfig{Arguments: append([]string(nil), claudeDefaultPermissionArgs...)},

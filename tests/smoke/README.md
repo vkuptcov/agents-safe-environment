@@ -201,6 +201,7 @@ immediately and includes the command's captured stdout and stderr instead of wai
 
 - `sysbox_linked_worktree_test.go` contains the scenario and domain assertions.
 - `sysbox_agents_test.go` covers direct public-launcher behavior and configured local mounts.
+- `sysbox_docker_storage_test.go` proves nested image and volume persistence through restart and outer replacement.
 - `sysbox_claude_test.go` covers Claude state, managed installation, and coexistence with Codex in one session.
 - `sysbox_project_environment_test.go` covers automatic project-image builds and active-session lifecycle.
 - `sysbox_fixture_test.go` composes the harness, starts embedded probes, and implements marker synchronization.

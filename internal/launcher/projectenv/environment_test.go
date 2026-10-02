@@ -184,7 +184,8 @@ func initializationConfig(t *testing.T) ProjectConfig {
 	t.Helper()
 	source := t.TempDir()
 	return ProjectConfig{Common: CommonConfig{
-		Image:  "test:image",
-		Mounts: []MountConfig{{Role: RoleAdditional, Source: source, Target: source}},
+		DockerStorage: DockerStorageBranch,
+		Image:         "test:image",
+		Mounts:        []MountConfig{{Role: RoleAdditional, Source: source, Target: source}},
 	}}
 }
