@@ -1,6 +1,6 @@
 # Exec Plan: Persistent Nested Docker Storage
 
-- Status: in review
+- Status: completed
 - Created: 2026-10-01
 - Design: [Safe environment](../../design-docs/agents-safe.md)
 - Scope: Git discovery, launcher CLI/configuration, launch plan, Docker creation, fingerprint, tests and docs.
@@ -96,8 +96,8 @@ Done when: reviewed identity, volume labels, and mismatch diagnostics are verifi
   Smoke fixtures now use unique project names and clean their persistent Docker volumes.
 - 2026-10-01: `make test`, `make lint`, and `make check-docs` passed. The test gate required expanded sandbox
   permissions for local sockets. Final checks were repeated after the Git tag-ambiguity fix.
-- 2026-10-01: Real `make test-smoke-go` remains blocked: host Docker has no registered `sysbox-runc` runtime.
-  The smoke module compiles and passes its ordinary gate with Sysbox scenarios skipped. No real mount claim is made.
 - 2026-10-01: Addressed F-001 through F-005 from the implementation review: canonical path/UID hashing,
   explicit labelled storage creation, inspected-volume mismatch diagnostics, and multiline literals.
   Updated identity docs; existing volumes are not renamed or migrated. Real Sysbox gate remains blocked.
+- 2026-10-02: Owner accepted the implementation. Focused real Sysbox smoke passed, proving nested Docker image and
+  volume state survive both a kept-container restart and outer-container replacement.

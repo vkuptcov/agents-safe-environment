@@ -8,7 +8,6 @@ None.
 
 ## Review
 
-- [Persistent Nested Docker Storage](review/2026-10-01-docker-storage-exec-plan.md)
 - [Host Access to Session Services](review/2026-09-25-session-service-access-exec-plan.md)
 - [Config-less Launch Cache Parity](review/2026-07-24-config-less-launch-cache-parity-exec-plan.md)
 - [Venv tmpfs exec permission](review/2026-07-23-venv-tmpfs-exec-permission-exec-plan.md)
@@ -32,6 +31,7 @@ None.
 
 ## Completed
 
+- [Persistent Nested Docker Storage](completed/2026-10-01-docker-storage-exec-plan.md)
 - [Persistent Session Containers](completed/2026-09-10-persistent-containers-exec-plan.md)
 - [Linked Worktree Git Metadata Guard](completed/2026-08-07-linked-worktree-git-metadata-guard-exec-plan.md)
 - [GolangCI-Lint Integration](completed/2026-07-17-golangci-lint-exec-plan.md)
