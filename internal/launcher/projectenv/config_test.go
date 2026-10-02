@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -34,7 +35,7 @@ arguments = ["--model", "opus"]
 	if config.Common.Image != "configured:image" {
 		t.Errorf("image = %q, want configured value", config.Common.Image)
 	}
-	if config.Common.DockerStorage != "branch" {
+	if config.Common.DockerStorage != DockerStorageBranch {
 		t.Error("omitted DockerStorage must retain branch default")
 	}
 	if config.Common.NoHostMCP {
@@ -249,7 +250,7 @@ func typedDefaults(t *testing.T) ProjectConfig {
 	source := t.TempDir()
 	return ProjectConfig{
 		Common: CommonConfig{
-			DockerStorage:     "branch",
+			DockerStorage:     DockerStorageBranch,
 			Image:             "default:image",
 			NoHostMCP:         true,
 			UseHostPythonVenv: false,
@@ -279,16 +280,18 @@ func writeConfig(t *testing.T, root string, content string) {
 }
 
 func TestLoadDockerStorageModes(t *testing.T) {
-	for _, mode := range []string{"branch", "project", "shared", "", "unknown"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range append(slices.Clone(DockerStorageModeOrder), "", "unknown") {
+		t.Run(string(mode), func(t *testing.T) {
 			root := t.TempDir()
-			writeConfig(t, root, "[common]\ndocker_storage = \""+mode+"\"\n")
+			writeConfig(t, root, "[common]\ndocker_storage = \""+string(mode)+"\"\n")
 			config, err := Load(root, typedDefaults(t))
-			valid := mode == "branch" || mode == "project" || mode == "shared"
-			if valid && (err != nil || config.Common.DockerStorage != mode) {
-				t.Fatalf("Load = %#v, %v", config, err)
+			if slices.Contains(DockerStorageModeOrder, mode) {
+				if err != nil || config.Common.DockerStorage != mode {
+					t.Fatalf("Load = %#v, %v", config, err)
+				}
+				return
 			}
-			if !valid && err == nil {
+			if err == nil {
 				t.Fatal("invalid mode accepted")
 			}
 		})

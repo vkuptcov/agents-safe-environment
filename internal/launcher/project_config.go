@@ -76,7 +76,7 @@ func ResolveProjectConfig(
 		config.Common.UseHostPythonVenv = overrides.UseHostPythonVenv
 	}
 	if overrides.DockerStorageOverride {
-		config.Common.DockerStorage = overrides.DockerStorage
+		config.Common.DockerStorage = projectenv.DockerStorageMode(overrides.DockerStorage)
 	}
 	if overrides.KeepContainerOverride {
 		config.Common.KeepContainer = overrides.KeepContainer
@@ -197,7 +197,7 @@ func DefaultProjectConfig(
 
 	config := projectenv.ProjectConfig{
 		Common: projectenv.CommonConfig{
-			DockerStorage: "branch",
+			DockerStorage: projectenv.DefaultDockerStorage,
 			Image:         image,
 			Mounts:        mounts,
 		},

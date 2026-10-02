@@ -44,7 +44,7 @@ type ProjectConfig struct {
 
 // CommonConfig contains settings that affect every public launcher.
 type CommonConfig struct {
-	DockerStorage     string                  `toml:"docker_storage"`
+	DockerStorage     DockerStorageMode       `toml:"docker_storage"`
 	Image             string                  `toml:"image"`
 	NoHostMCP         bool                    `toml:"no_host_mcp"`
 	UseHostPythonVenv bool                    `toml:"use_host_python_venv"`
@@ -60,6 +60,26 @@ type TmpfsMountConfig struct {
 	Mode    string `toml:"mode"`
 	Comment string `toml:"comment"`
 }
+
+// DockerStorageMode selects which identity owns the nested Docker daemon's persistent named volume.
+type DockerStorageMode string
+
+const (
+	DockerStorageBranch  DockerStorageMode = "branch"
+	DockerStorageProject DockerStorageMode = "project"
+	DockerStorageShared  DockerStorageMode = "shared"
+)
+
+// DockerStorageModeOrder is the single source of truth for the supported scopes. Validation, the default
+// configuration, and launcher help text all derive from it, so the vocabulary cannot drift.
+var DockerStorageModeOrder = []DockerStorageMode{
+	DockerStorageBranch,
+	DockerStorageProject,
+	DockerStorageShared,
+}
+
+// DefaultDockerStorage is the isolating scope every launch selects unless configuration or a flag overrides it.
+const DefaultDockerStorage = DockerStorageBranch
 
 // DependencyCacheKind identifies a host dependency cache whose tool routing is owned by the launcher.
 type DependencyCacheKind string
@@ -115,7 +135,7 @@ type configOverlay struct {
 }
 
 type commonOverlay struct {
-	DockerStorage     *string                  `toml:"docker_storage"`
+	DockerStorage     *DockerStorageMode       `toml:"docker_storage"`
 	Image             *string                  `toml:"image"`
 	NoHostMCP         *bool                    `toml:"no_host_mcp"`
 	UseHostPythonVenv *bool                    `toml:"use_host_python_venv"`
@@ -375,12 +395,10 @@ func ValidatePath(label string, path string, source bool) error {
 	return nil
 }
 
-// ValidateDockerStorage checks the three supported nested-daemon storage scopes.
-func ValidateDockerStorage(mode string) error {
-	switch mode {
-	case "branch", "project", "shared":
+// ValidateDockerStorage checks the supported nested-daemon storage scopes.
+func ValidateDockerStorage(mode DockerStorageMode) error {
+	if slices.Contains(DockerStorageModeOrder, mode) {
 		return nil
-	default:
-		return fmt.Errorf("common.docker_storage must be branch, project, or shared; got %q", mode)
 	}
+	return fmt.Errorf("common.docker_storage must be branch, project, or shared; got %q", mode)
 }

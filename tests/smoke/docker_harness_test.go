@@ -58,7 +58,7 @@ func newDockerHarness(t *testing.T, project projectLayout) *dockerHarness {
 		require.NoError(t, err)
 		resolved, err := launcher.ResolveProjectConfig(discovered, launcher.HostEnvironment{HomeDir: project.hostHome}, goSmokeImage, launchplan.Overrides{}, nil)
 		require.NoError(t, err)
-		volumes[resolved.Resolution.Plan.DockerStorageVolume] = true
+		volumes[resolved.Resolution.Plan.DockerStorage.Volume] = true
 	}
 	harness := &dockerHarness{
 		dockerVolumes: volumes,
@@ -117,7 +117,7 @@ func (docker *dockerHarness) inspectContainer() container.InspectResponse {
 	inspection, err := docker.client.ContainerInspect(docker.ctx, docker.names.managed)
 	require.NoError(docker.t, err, "Moby client must inspect deterministic container %q", docker.names.managed)
 	for _, mount := range inspection.Mounts {
-		if mount.Type == "volume" && mount.Destination == "/var/lib/docker" {
+		if mount.Type == "volume" && mount.Destination == launchplan.DockerDataRoot {
 			docker.dockerVolumes[mount.Name] = true
 		}
 	}

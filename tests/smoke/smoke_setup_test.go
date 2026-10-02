@@ -2,8 +2,6 @@ package smoke_test
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
@@ -39,10 +37,9 @@ func newPrimaryProjectLayout(t *testing.T, createCodexHome bool) projectLayout {
 func newProjectLayoutWithWorktree(t *testing.T, createCodexHome bool, createWorktree bool) projectLayout {
 	t.Helper()
 	root := t.TempDir()
-	projectIdentity := sha256.Sum256([]byte(root))
 	layout := projectLayout{
 		root:     root,
-		primary:  filepath.Join(root, fmt.Sprintf("primary repo %x", projectIdentity[:6])),
+		primary:  filepath.Join(root, "primary repo"),
 		worktree: filepath.Join(root, "feature worktree"),
 		hostHome: filepath.Join(root, "host home"),
 	}

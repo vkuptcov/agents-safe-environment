@@ -12,6 +12,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 // runtimeDirLookup is an environment that names runtimeDir as XDG_RUNTIME_DIR and nothing else.
@@ -92,7 +93,7 @@ func TestDockerLaunchForceExecRestartsStoppedPersistentContainerDespiteMismatch(
 	plan := simplePlan()
 	labels := matchingLabels(t, plan, 1000)
 	labels[launchConfigLabel] = "stale"
-	plan.DockerStorageVolume = "agents-safe-docker-requested-other"
+	plan.DockerStorage.Volume = "agents-safe-docker-requested-other"
 	runner := &fakeCommandRunner{outputs: []commandResult{
 		{output: stoppedInspectionJSON(t, containerID, false, labels)},
 		{output: stoppedInspectionJSON(t, containerID, false, labels)},
@@ -258,9 +259,9 @@ func TestDockerStorageChangeRejectsStoppedContainerBeforeStart(t *testing.T) {
 			original := simplePlan()
 			requested := original
 			if change == "mode" {
-				requested.DockerStorage = "shared"
+				requested.DockerStorage.Mode = projectenv.DockerStorageShared
 			} else {
-				requested.DockerStorageVolume += "-other"
+				requested.DockerStorage.Volume += "-other"
 			}
 			labels := matchingLabels(t, original, 1000)
 			stopped := stoppedInspectionJSON(t, strings.Repeat("a", 64), false, labels)

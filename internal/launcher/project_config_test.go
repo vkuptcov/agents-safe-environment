@@ -87,7 +87,7 @@ func TestDefaultProjectConfigUsesHostAndGitTopology(t *testing.T) {
 	if want := []string{"--permission-mode", "auto"}; !reflect.DeepEqual(config.Claude.Arguments, want) {
 		t.Errorf("Claude arguments = %#v, want %#v", config.Claude.Arguments, want)
 	}
-	if config.Common.DockerStorage != "branch" {
+	if config.Common.DockerStorage != projectenv.DockerStorageBranch {
 		t.Error("DockerStorage must default to branch")
 	}
 	if config.Common.UseHostPythonVenv {
@@ -294,7 +294,7 @@ docker_storage = "project"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withoutFlags.Resolution.Plan.DockerStorage != "project" {
+	if withoutFlags.Resolution.Plan.DockerStorage.Mode != projectenv.DockerStorageProject {
 		t.Fatal("TOML storage ignored")
 	}
 	if withoutFlags.Config.Common.Image != "configured:image" || !withoutFlags.Options.NoHostMCP ||
@@ -309,7 +309,7 @@ docker_storage = "project"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withFlags.Resolution.Plan.DockerStorage != "shared" {
+	if withFlags.Resolution.Plan.DockerStorage.Mode != projectenv.DockerStorageShared {
 		t.Fatal("CLI storage ignored")
 	}
 	if withFlags.Config.Common.Image != "flag:image" || withFlags.Options.NoHostMCP || withFlags.Options.UseHostPythonVenv ||

@@ -9,6 +9,7 @@ import (
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/hostmcp"
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/projectenv"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 // launchFingerprintInput is deliberately an ordered struct: maps and TOML bytes would make an
 // otherwise-identical creation contract depend on incidental encoding details.
 type launchFingerprintInput struct {
-	DockerStorage       string                       `json:"docker_storage"`
+	DockerStorage       projectenv.DockerStorageMode `json:"docker_storage"`
 	DockerStorageVolume string                       `json:"docker_storage_volume"`
 	SchemaVersion       int                          `json:"schema_version"`
 	ImageReference      string                       `json:"image_reference"`
@@ -104,8 +105,8 @@ func creationFingerprint(
 	}
 
 	encoded, err := json.Marshal(launchFingerprintInput{
-		DockerStorage:       plan.DockerStorage,
-		DockerStorageVolume: plan.DockerStorageVolume,
+		DockerStorage:       plan.DockerStorage.Mode,
+		DockerStorageVolume: plan.DockerStorage.Volume,
 		SchemaVersion:       launchConfigSchemaVersion,
 		ImageReference:      image,
 		ImageOverride:       imageOverride,

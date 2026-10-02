@@ -235,7 +235,7 @@ type ProjectConfig struct {
 }
 
 type CommonConfig struct {
- DockerStorage     string                  `toml:"docker_storage"`
+ DockerStorage     DockerStorageMode       `toml:"docker_storage"`
 	Image     string        `toml:"image"`
 	NoHostMCP bool          `toml:"no_host_mcp"`
 	Mounts    []MountConfig `toml:"mounts"`
@@ -272,7 +272,7 @@ The implemented Go and uv cache contract of [Host-Backed Dependency Caches](host
 
 ```go
 type CommonConfig struct {
- DockerStorage     string                  `toml:"docker_storage"`
+ DockerStorage     DockerStorageMode       `toml:"docker_storage"`
 	Image             string                  `toml:"image"`
 	NoHostMCP         bool                    `toml:"no_host_mcp"`
 	UseHostPythonVenv bool                    `toml:"use_host_python_venv"`
@@ -302,7 +302,8 @@ privileged container bootstrap reapplies the mask; otherwise startup fails close
 reservation below is the only target the launcher may materialize. Comments are serialized documentation and do not
 affect creation.
 
-`docker_storage` defaults to `"branch"` and accepts only `"branch"`, `"project"`, and `"shared"`. Explicit
+`docker_storage` is the typed `DockerStorageMode`; it defaults to `"branch"` and accepts only `"branch"`,
+`"project"`, and `"shared"`, validated against the single `DockerStorageModeOrder` vocabulary. Explicit
 `--docker-storage MODE` overrides TOML for all three public launchers; omitted config retains the default.
 `agents-safe init` writes this default explicitly. Empty and unknown values fail configuration validation before
 Docker access. The selection is resolved dynamically on launch, so changing branch affects branch storage even

@@ -629,7 +629,7 @@ func TestResolveRejectsOmittedRequiredRoleAndReportsOptionalDeletion(t *testing.
 func resolvedConfig(project gitproject.Project, linked bool) projectenv.ProjectConfig {
 	return projectenv.ProjectConfig{
 		Common: projectenv.CommonConfig{
-			DockerStorage: "branch",
+			DockerStorage: projectenv.DockerStorageBranch,
 			Image:         "test:image",
 			Mounts: []projectenv.MountConfig{
 				{

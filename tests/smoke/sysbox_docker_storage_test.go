@@ -6,6 +6,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/stretchr/testify/require"
+	"github.com/vkuptcov/agents-safe-environment/internal/launcher/launchplan"
 )
 
 // TestSysboxDockerStorageSurvivesReplacement proves persistence across both a kept
@@ -19,15 +20,8 @@ func TestSysboxDockerStorageSurvivesReplacement(t *testing.T) {
 		`docker pull "$1" && docker volume create storage-proof && docker run --rm -v storage-proof:/proof "$1" sh -c 'echo persisted > /proof/marker'`, "bash", nestedImage)
 	first.requireExit(t, "seed persistent Docker storage")
 	stopped := fixture.docker.waitForContainerStop()
-	var storageName string
-	for _, mount := range stopped.Mounts {
-		if mount.Destination == "/var/lib/docker" {
-			require.EqualValues(t, "volume", mount.Type)
-			require.True(t, mount.RW)
-			storageName = mount.Name
-		}
-	}
-	require.NotEmpty(t, storageName)
+	storageName := dockerStorageVolumeName(t, stopped)
+	requireVolumeMount(t, stopped, storageName, launchplan.DockerDataRoot, true)
 	check := `docker image inspect "$1" >/dev/null && docker run --pull=never --rm -v storage-proof:/proof "$1" cat /proof/marker`
 	second := fixture.launcher.start(fixture.project.worktree, "bash", "-c", check, "bash", nestedImage)
 	second.requireExit(t, "read Docker storage after kept restart")
@@ -40,10 +34,19 @@ func TestSysboxDockerStorageSurvivesReplacement(t *testing.T) {
 	require.Equal(t, "persisted\n", third.stdout.String())
 	replaced := fixture.docker.inspectContainer()
 	require.NotEqual(t, stopped.ID, replaced.ID)
-	for _, mount := range replaced.Mounts {
-		if mount.Destination == "/var/lib/docker" {
-			require.Equal(t, storageName, mount.Name)
+	requireVolumeMount(t, replaced, storageName, launchplan.DockerDataRoot, true)
+	fixture.docker.waitForContainerRemoval()
+}
+
+// dockerStorageVolumeName reports the persistent nested-Docker volume the launcher actually mounted.
+func dockerStorageVolumeName(t *testing.T, inspection container.InspectResponse) string {
+	t.Helper()
+	for _, mount := range inspection.Mounts {
+		if mount.Destination == launchplan.DockerDataRoot {
+			require.EqualValues(t, "volume", mount.Type)
+			return mount.Name
 		}
 	}
-	fixture.docker.waitForContainerRemoval()
+	t.Fatalf("no nested Docker storage volume mounted at %q", launchplan.DockerDataRoot)
+	return ""
 }

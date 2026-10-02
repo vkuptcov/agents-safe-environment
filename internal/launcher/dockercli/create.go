@@ -80,9 +80,7 @@ func buildRunArgs(head []string, request CreateRequest) ([]string, error) {
 	for _, option := range request.SecurityOpt {
 		args = append(args, "--security-opt="+option)
 	}
-	for _, label := range request.Labels {
-		args = append(args, "--label", label.Key+"="+label.Value)
-	}
+	args = append(args, labelArgs(request.Labels)...)
 	for _, environment := range request.Environment {
 		args = append(args, "--env", environment.Key+"="+environment.Value)
 	}
@@ -132,6 +130,14 @@ func (client *Client) Start(ctx context.Context, name string) error {
 		return commandFailure(fmt.Sprintf("start container %q", name), output, err)
 	}
 	return nil
+}
+
+func labelArgs(labels []KeyValue) []string {
+	args := make([]string, 0, 2*len(labels))
+	for _, label := range labels {
+		args = append(args, "--label", label.Key+"="+label.Value)
+	}
+	return args
 }
 
 func bindMountArg(mount Mount) string {
