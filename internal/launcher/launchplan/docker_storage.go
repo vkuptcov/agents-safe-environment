@@ -16,6 +16,10 @@ import (
 // recognizes an existing session's storage by the same target, so both must name one path.
 const DockerDataRoot = "/var/lib/docker"
 
+// DockerStorageFormat versions the nested daemon's data-root layout and suffixes every volume name, so a new format
+// starts on fresh volumes while older images keep theirs. Unsuffixed volumes are format 1 (containerd image store).
+const DockerStorageFormat = 2
+
 // DockerStorage is the resolved nested Docker storage selection for one launch. It is immutable for the
 // lifetime of a container: creation mounts Volume, and a saved container keeps its creation-time mount.
 type DockerStorage struct {
@@ -31,7 +35,7 @@ type DockerStorage struct {
 // Describe explains a storage selection that no longer matches an existing container's mount.
 func (storage DockerStorage) Describe(existingVolume string) string {
 	const hint = "nested Docker storage volume changed from %q to %q (requested scope %q); " +
-		"branch switches change branch-scoped storage; " +
+		"branch switches change branch-scoped storage, and a newer image's storage format changes every scope; " +
 		"--docker-storage=project keeps storage across branches for new containers"
 	return fmt.Sprintf(hint, existingVolume, storage.Volume, storage.Mode)
 }
@@ -44,10 +48,11 @@ func resolveDockerStorage(
 	hostUID int,
 ) (DockerStorage, error) {
 	const prefix = "agents-safe-docker-"
+	suffix := "-v" + strconv.Itoa(DockerStorageFormat)
 	storage := DockerStorage{Mode: mode}
 	switch mode {
 	case projectenv.DockerStorageShared:
-		storage.Volume = prefix + "shared"
+		storage.Volume = prefix + "shared" + suffix
 		return storage, nil
 	case projectenv.DockerStorageBranch:
 		if project.Branch == "" {
@@ -66,7 +71,7 @@ func resolveDockerStorage(
 		readable += "-" + storageNamePart(storage.Branch, 20)
 	}
 	digest := sha256.Sum256([]byte(identity))
-	storage.Volume = prefix + readable + "-" + hex.EncodeToString(digest[:6])
+	storage.Volume = prefix + readable + "-" + hex.EncodeToString(digest[:6]) + suffix
 	return storage, nil
 }
 

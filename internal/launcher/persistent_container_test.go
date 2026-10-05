@@ -25,13 +25,23 @@ func runtimeDirLookup(runtimeDir string) func(string) (string, bool) {
 	}
 }
 
-// stoppedInspectionJSON encodes an exited container whose removal policy is autoRemove.
-func stoppedInspectionJSON(t *testing.T, containerID string, autoRemove bool, labels map[string]string) []byte {
-	t.Helper()
+// stoppedInspection is an exited container whose removal policy is autoRemove.
+func stoppedInspection(containerID string, autoRemove bool, labels map[string]string) dockercli.ContainerInspection {
 	inspection := dockercli.ContainerInspection{ID: containerID, Image: "sha256:" + strings.Repeat("1", 64)}
 	inspection.Config.Labels = labels
 	inspection.HostConfig.AutoRemove = autoRemove
 	inspection.State.Status = "exited"
+	return inspection
+}
+
+// stoppedInspectionJSON encodes stoppedInspection as `docker container inspect` output.
+func stoppedInspectionJSON(t *testing.T, containerID string, autoRemove bool, labels map[string]string) []byte {
+	t.Helper()
+	return encodeInspection(t, stoppedInspection(containerID, autoRemove, labels))
+}
+
+func encodeInspection(t *testing.T, inspection dockercli.ContainerInspection) []byte {
+	t.Helper()
 	data, err := json.Marshal([]dockercli.ContainerInspection{inspection})
 	if err != nil {
 		t.Fatalf("marshal inspection: %v", err)

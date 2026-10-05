@@ -159,12 +159,16 @@ func clearStaleDaemonRuntime(paths containerPaths) error {
 	return nil
 }
 
+// dockerDaemonArguments selects overlay2 to save disk: Docker's default containerd image store keeps every image both
+// compressed and unpacked, and sessions do not need its multi-platform images or kept attestations. Changing storage
+// options requires bumping launchplan.DockerStorageFormat.
 func dockerDaemonArguments(paths containerPaths) []string {
 	return []string{
 		"--add-runtime=crun=" + paths.crunBinary,
 		"--data-root=" + paths.dockerDataRoot,
 		"--default-runtime=crun",
 		"--host=unix://" + paths.dockerSocket,
+		"--storage-driver=overlay2",
 	}
 }
 

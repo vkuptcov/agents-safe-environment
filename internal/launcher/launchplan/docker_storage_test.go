@@ -12,8 +12,8 @@ import (
 const testHostUID = 1000
 
 var (
-	branchVolumePattern  = regexp.MustCompile(`^agents-safe-docker-[a-z0-9-]{15}-[a-z0-9-]{20}-[0-9a-f]{12}$`)
-	projectVolumePattern = regexp.MustCompile(`^agents-safe-docker-[a-z0-9-]{15}-[0-9a-f]{12}$`)
+	branchVolumePattern  = regexp.MustCompile(`^agents-safe-docker-[a-z0-9-]{15}-[a-z0-9-]{20}-[0-9a-f]{12}-v2$`)
+	projectVolumePattern = regexp.MustCompile(`^agents-safe-docker-[a-z0-9-]{15}-[0-9a-f]{12}-v2$`)
 )
 
 func mustResolveStorage(t *testing.T, project gitproject.Project, mode projectenv.DockerStorageMode) DockerStorage {
@@ -43,7 +43,7 @@ func TestDockerStorageVolumeNamesStayBounded(t *testing.T) {
 		t.Fatalf("project volume = %q", scoped.Volume)
 	}
 	shared := mustResolveStorage(t, project, projectenv.DockerStorageShared)
-	if shared.Volume != "agents-safe-docker-shared" {
+	if shared.Volume != "agents-safe-docker-shared-v2" {
 		t.Fatalf("shared volume = %q", shared.Volume)
 	}
 }
