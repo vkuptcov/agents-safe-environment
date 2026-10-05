@@ -501,9 +501,15 @@ volume, and its socket remains unavailable inside the session.
 
 | Scope | Named volume |
 | --- | --- |
-| `branch` (default) | `agents-safe-docker-<project up to 15>-<branch up to 20>-<hash 12>` |
-| `project` | `agents-safe-docker-<project up to 15>-<hash 12>` |
-| `shared` | `agents-safe-docker-shared` |
+| `branch` (default) | `agents-safe-docker-<project up to 15>-<branch up to 20>-<hash 12>-v<format>` |
+| `project` | `agents-safe-docker-<project up to 15>-<hash 12>-v<format>` |
+| `shared` | `agents-safe-docker-shared-v<format>` |
+
+`<format>` is the storage format version of the nested daemon's data-root, currently `2` (`overlay2`). It changes
+only with the daemon's storage options, so a new format starts on fresh volumes while containers on an older image
+keep using theirs; both can run at the same time. Unsuffixed volumes are format 1 (containerd image store). Nothing
+migrates between formats, including nested named-volume data; an old volume is removed with `docker volume rm` once
+no session needs it.
 
 Project identity is the canonical primary checkout path and invoking host UID, including for linked worktrees.
 Branch identity is its symbolic branch name, including unborn branches; detached HEAD uses `detached-<full commit
@@ -511,7 +517,7 @@ SHA>`. Readable name components use lowercase ASCII letters, digits, and hyphens
 They are truncated and trimmed, with `unnamed` for an empty component. The hash is the first 12 hexadecimal
 characters of SHA-256 of the full original host UID, a NUL separator, and the full canonical primary path, plus
 another NUL separator and the full original branch identity for branch scope. The readable project component uses
-only the primary checkout basename. Maximum lengths are 68 characters for branch scope and 47 for project scope.
+only the primary checkout basename. Maximum lengths are 71 characters for branch scope and 50 for project scope.
 Repositories with identical basenames at different paths and different host users have separate scoped storage.
 
 The launcher explicitly creates the volume before creating the outer container. Volumes carry
@@ -529,8 +535,14 @@ branch fails fingerprint validation before start; remove the stopped container t
 
 Project and shared scopes allow concurrent mounts without locks, as an explicit developer responsibility. Sharing a
 Docker data-root between independent daemons is unsupported and can corrupt metadata or prevent startup; this also
-applies to identical branch identities used by separate sessions. Data and nested workloads in a shared scope are
-accessible to each session that mounts it. See [Docker daemon storage](https://docs.docker.com/engine/daemon/).
+applies to identical branch identities used by separate sessions. Before a cold create or a persistent restart, the
+launcher warns on stderr when other running containers mount the storage volume; the launch continues.
+Data and nested workloads in a shared scope are accessible to each session that mounts it. See
+[Docker daemon storage](https://docs.docker.com/engine/daemon/).
+
+The nested daemon runs with `--storage-driver=overlay2` instead of Docker's default containerd image store, which keeps
+each image twice: compressed and unpacked. Sessions run development workloads that do not need what only that store
+provides, multi-platform images in the local store and kept BuildKit attestations.
 
 The inner `docker` CLI connects only to the nested daemon socket by default. The launcher and image do not configure a
 fallback to a host context or remote daemon.
@@ -820,6 +832,13 @@ give the agent control over host containers, mounts, and privileges, defeating t
 
 Rejected alternative: run the container with `--privileged`. This is common for Docker-in-Docker but greatly
 expands container privileges. Sysbox is selected specifically to run system workloads without this flag.
+
+Rejected alternative: share image layers between concurrently running nested daemons. containerd and dockerd hold
+exclusive locks on their metadata in the data-root, and each daemon's garbage collection deletes snapshots its own
+index does not reference, so a second daemon either fails to start or removes the first one's layers. Partitioning
+snapshot IDs cannot change either effect. One daemon shared by all sessions would share layers, but nested bind
+sources and published ports would resolve in that daemon's container instead of the session. Saving disk across
+concurrent sessions is therefore left to separate data-roots plus host filesystem deduplication, outside this project.
 
 Rejected alternative: mount only the linked worktree at `/workspace`. Its absolute `.git` reference would lose its
 target, and absolute project bind paths inside nested Docker would differ from host paths.

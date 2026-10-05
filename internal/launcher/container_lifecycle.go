@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/vkuptcov/agents-safe-environment/internal/launcher/dockercli"
@@ -90,6 +92,9 @@ func (attempt *launchAttempt) acquireContainer(
 		return "", err
 	}
 	if err := attempt.ensureDockerStorage(ctx); err != nil {
+		return "", err
+	}
+	if err := attempt.warnConcurrentDockerStorage(ctx, attempt.plan.DockerStorage.Volume); err != nil {
 		return "", err
 	}
 	for count := 0; count < containerCreateAttempts; count++ {
@@ -357,6 +362,9 @@ func (attempt *launchAttempt) restartContainer(
 			"persists until `docker rm %s`\n",
 		attempt.containerName, inspection.ID, attempt.containerName,
 	)
+	if err := attempt.warnConcurrentDockerStorage(ctx, dockerStorageVolume(inspection)); err != nil {
+		return "", err
+	}
 	if err := attempt.prepareHostMCPRestart(ctx, inspection); err != nil {
 		return "", err
 	}
@@ -371,6 +379,45 @@ func (attempt *launchAttempt) restartContainer(
 // storage discoverable and attributable after its session is gone.
 func (attempt *launchAttempt) ensureDockerStorage(ctx context.Context) error {
 	return attempt.cli.EnsureVolume(ctx, attempt.plan.DockerStorage.Volume, attempt.storageVolumeLabels())
+}
+
+// warnConcurrentDockerStorage names other running containers that mount the storage volume this launch is about to
+// start a daemon on. A second daemon on one data-root blocks on the first one's metadata locks and the session fails
+// with only an exec exit status; concurrent use is the developer's call, so the launch is never refused.
+func (attempt *launchAttempt) warnConcurrentDockerStorage(ctx context.Context, volume string) error {
+	if volume == "" {
+		return nil
+	}
+	names, err := attempt.cli.RunningContainersUsingVolume(ctx, volume)
+	if err != nil {
+		return err
+	}
+	var others []string
+	for _, name := range names {
+		if name != attempt.containerName {
+			others = append(others, strconv.Quote(name))
+		}
+	}
+	if len(others) == 0 {
+		return nil
+	}
+	fmt.Fprintf(
+		attempt.docker.Stderr,
+		"warning: nested Docker storage volume %q is already used by running container(s) %s; independent "+
+			"daemons sharing one data-root are unsupported and may fail to start or corrupt its metadata\n",
+		volume, strings.Join(others, ", "),
+	)
+	return nil
+}
+
+// dockerStorageVolume names the volume an inspected session mounts at the nested Docker data-root.
+func dockerStorageVolume(inspection dockercli.ContainerInspection) string {
+	for _, mount := range inspection.Mounts {
+		if mount.Destination == launchplan.DockerDataRoot {
+			return mount.Name
+		}
+	}
+	return ""
 }
 
 func (attempt *launchAttempt) storageVolumeLabels() []dockercli.KeyValue {
@@ -390,10 +437,8 @@ func (attempt *launchAttempt) storageVolumeLabels() []dockercli.KeyValue {
 }
 
 func (attempt *launchAttempt) storageDifference(inspection dockercli.ContainerInspection) string {
-	for _, mount := range inspection.Mounts {
-		if mount.Destination == launchplan.DockerDataRoot && mount.Name != attempt.plan.DockerStorage.Volume {
-			return attempt.plan.DockerStorage.Describe(mount.Name)
-		}
+	if volume := dockerStorageVolume(inspection); volume != "" && volume != attempt.plan.DockerStorage.Volume {
+		return attempt.plan.DockerStorage.Describe(volume)
 	}
 	return ""
 }

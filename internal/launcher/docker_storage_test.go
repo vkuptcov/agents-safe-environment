@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -96,5 +97,119 @@ func TestStorageMismatchNamesExistingAndRequestedVolumes(t *testing.T) {
 	attempt.plan.DockerStorage.Volume = "old-volume"
 	if got := attempt.storageDifference(inspection); got != "" {
 		t.Fatalf("matching storage diagnosed: %s", got)
+	}
+}
+
+// capturedDocker is testDocker with its stderr captured.
+func capturedDocker(runner *fakeCommandRunner) (*DockerLauncher, *bytes.Buffer) {
+	stderr := new(bytes.Buffer)
+	docker := testDocker(runner)
+	docker.Stderr = stderr
+	return docker, stderr
+}
+
+// storageWarningAttempt is a launch attempt for the session container "session" whose stderr is captured.
+func storageWarningAttempt(runner *fakeCommandRunner) (*launchAttempt, *bytes.Buffer) {
+	docker, stderr := capturedDocker(runner)
+	return &launchAttempt{docker: docker, cli: dockercli.New("docker", runner), containerName: "session"}, stderr
+}
+
+func TestConcurrentDockerStorageWarningNamesOtherRunningContainers(t *testing.T) {
+	runner := &fakeCommandRunner{psOutput: "other-a\nsession\nother-b\n"}
+	attempt, stderr := storageWarningAttempt(runner)
+	if err := attempt.warnConcurrentDockerStorage(context.Background(), "agents-safe-docker-shared"); err != nil {
+		t.Fatalf("warnConcurrentDockerStorage() error = %v", err)
+	}
+	want := [][]string{{"docker", "ps", "--filter", "volume=agents-safe-docker-shared", "--format", "{{.Names}}"}}
+	if !reflect.DeepEqual(runner.psCalls, want) {
+		t.Fatalf("ps calls = %v, want %v", runner.psCalls, want)
+	}
+	got := stderr.String()
+	if !strings.Contains(got, "warning:") || !strings.Contains(got, `"agents-safe-docker-shared"`) ||
+		!strings.Contains(got, `"other-a", "other-b"`) || strings.Contains(got, `"session"`) {
+		t.Fatalf("stderr = %q, want a warning naming the volume and only the other containers", got)
+	}
+}
+
+func TestConcurrentDockerStorageWarningSilentWithoutOtherContainers(t *testing.T) {
+	for name, output := range map[string]string{"none": "", "own only": "session\n"} {
+		t.Run(name, func(t *testing.T) {
+			attempt, stderr := storageWarningAttempt(&fakeCommandRunner{psOutput: output})
+			if err := attempt.warnConcurrentDockerStorage(context.Background(), "agents-safe-docker-test"); err != nil {
+				t.Fatalf("warnConcurrentDockerStorage() error = %v", err)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr = %q, want no warning", stderr.String())
+			}
+		})
+	}
+}
+
+func TestConcurrentDockerStorageListingFailureStopsLaunch(t *testing.T) {
+	attempt, _ := storageWarningAttempt(&fakeCommandRunner{psError: errors.New("daemon unavailable")})
+	err := attempt.warnConcurrentDockerStorage(context.Background(), "agents-safe-docker-test")
+	if err == nil || !strings.Contains(err.Error(), "daemon unavailable") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDockerLaunchColdCreateWarnsAboutConcurrentDockerStorage(t *testing.T) {
+	runner := &fakeCommandRunner{psOutput: "other-session\n", outputs: []commandResult{
+		containerNotFound(),
+		{output: []byte(`{"runc":{},"sysbox-runc":{}}`)},
+		{output: []byte(`[]`)},
+		{output: []byte(strings.Repeat("c", 64) + "\n")},
+	}}
+	plan := simplePlan()
+	docker, stderr := capturedDocker(runner)
+	if err := docker.Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if len(runner.psCalls) != 1 || !containsSequence(runner.psCalls[0], "--filter", "volume="+plan.DockerStorage.Volume) {
+		t.Fatalf("ps calls = %v, want one listing of %q", runner.psCalls, plan.DockerStorage.Volume)
+	}
+	if !strings.Contains(stderr.String(), `"other-session"`) {
+		t.Fatalf("stderr = %q, want a concurrent-storage warning", stderr.String())
+	}
+}
+
+func TestDockerLaunchRestartWarnsAboutConcurrentDockerStorageOfCreationMount(t *testing.T) {
+	containerID := strings.Repeat("d", 64)
+	plan := simplePlan()
+	plan.DockerStorage.Volume = "agents-safe-docker-requested"
+	stopped := stoppedInspection(containerID, false, matchingLabels(t, plan, 1000))
+	mounts := `[{"Type":"volume","Name":"agents-safe-docker-shared","Destination":"` + launchplan.DockerDataRoot + `"}]`
+	if err := json.Unmarshal([]byte(mounts), &stopped.Mounts); err != nil {
+		t.Fatalf("unmarshal mounts: %v", err)
+	}
+	data := encodeInspection(t, stopped)
+	runner := &fakeCommandRunner{psOutput: "other-session\n", outputs: []commandResult{
+		{output: data}, {output: data}, {output: []byte("name\n")},
+		{output: inspectionJSON(t, containerID, true, "running", stopped.Config.Labels)}, // post-wait force-exec warning
+	}}
+	docker, stderr := capturedDocker(runner)
+	err := docker.Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{ForceExec: true})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if len(runner.psCalls) != 1 || !containsSequence(runner.psCalls[0], "--filter", "volume=agents-safe-docker-shared") {
+		t.Fatalf("ps calls = %v, want one listing of the creation-time mount", runner.psCalls)
+	}
+	if !strings.Contains(stderr.String(), `"other-session"`) {
+		t.Fatalf("stderr = %q, want a concurrent-storage warning", stderr.String())
+	}
+}
+
+func TestDockerLaunchReusingRunningSessionDoesNotListStorageUsers(t *testing.T) {
+	containerID := strings.Repeat("b", 64)
+	plan := simplePlan()
+	runner := &fakeCommandRunner{psOutput: "other-session\n", outputs: []commandResult{
+		{output: inspectionJSON(t, containerID, true, "running", matchingLabels(t, plan, 1000))},
+	}}
+	if err := testDocker(runner).Launch(context.Background(), plan, "image", []string{"true"}, launchplan.Options{}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if len(runner.psCalls) != 0 {
+		t.Fatalf("ps calls = %v, want none for a running session", runner.psCalls)
 	}
 }

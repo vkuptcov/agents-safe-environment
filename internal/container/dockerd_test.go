@@ -51,6 +51,7 @@ func TestStartDockerDaemonUsesFixedArgvAndSocketOwnership(t *testing.T) {
 		"--data-root=" + paths.dockerDataRoot,
 		"--default-runtime=crun",
 		"--host=unix://" + paths.dockerSocket,
+		"--storage-driver=overlay2",
 	}
 	if starter.name != paths.dockerdCommand || !reflect.DeepEqual(starter.arguments, wantArguments) {
 		t.Fatalf("start = %q %#v, want %q %#v", starter.name, starter.arguments, paths.dockerdCommand, wantArguments)

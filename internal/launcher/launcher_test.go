@@ -526,11 +526,7 @@ func inspectionJSON(t *testing.T, containerID string, running bool, status strin
 	inspection.Config.Labels = labels
 	inspection.State.Running = running
 	inspection.State.Status = status
-	data, err := json.Marshal([]dockercli.ContainerInspection{inspection})
-	if err != nil {
-		t.Fatalf("marshal inspection: %v", err)
-	}
-	return data
+	return encodeInspection(t, inspection)
 }
 
 func imageInspectionJSON(t *testing.T, imageID string) []byte {
@@ -612,6 +608,9 @@ type commandResult struct {
 type fakeCommandRunner struct {
 	volumeCalls   [][]string
 	volumeError   error
+	psCalls       [][]string
+	psOutput      string
+	psError       error
 	outputs       []commandResult
 	combinedCalls [][]string
 	runCalls      [][]string
@@ -622,6 +621,10 @@ func (runner *fakeCommandRunner) CombinedOutput(_ context.Context, name string, 
 	if len(arguments) >= 2 && arguments[0] == "volume" && arguments[1] == "create" {
 		runner.volumeCalls = append(runner.volumeCalls, append([]string{name}, arguments...))
 		return nil, runner.volumeError
+	}
+	if len(arguments) >= 1 && arguments[0] == "ps" {
+		runner.psCalls = append(runner.psCalls, append([]string{name}, arguments...))
+		return []byte(runner.psOutput), runner.psError
 	}
 	runner.combinedCalls = append(runner.combinedCalls, append([]string{name}, arguments...))
 	if len(runner.outputs) == 0 {

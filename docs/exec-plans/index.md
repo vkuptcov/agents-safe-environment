@@ -31,6 +31,9 @@ None.
 
 ## Completed
 
+- [Versioned Nested Docker Storage Volumes](completed/2026-10-05-docker-storage-format-exec-plan.md)
+- [Nested Docker overlay2 Graph Driver](completed/2026-10-05-nested-docker-overlay2-exec-plan.md)
+- [Docker Storage Concurrent-Use Warning](completed/2026-10-05-docker-storage-concurrent-use-warning-exec-plan.md)
 - [Persistent Nested Docker Storage](completed/2026-10-01-docker-storage-exec-plan.md)
 - [Persistent Session Containers](completed/2026-09-10-persistent-containers-exec-plan.md)
 - [Linked Worktree Git Metadata Guard](completed/2026-08-07-linked-worktree-git-metadata-guard-exec-plan.md)
