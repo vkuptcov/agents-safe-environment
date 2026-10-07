@@ -1,6 +1,6 @@
 # Exec Plan: Shared Project Config (`common.toml`)
 
-- Status: in review
+- Status: completed
 - Created: 2026-10-07
 - Design: `docs/design-docs/project-launcher-configuration.md`
 - Scope:
@@ -133,3 +133,4 @@ Done when: the design doc describes both files, the order, the warning, and init
   (`docs/reviews/feature-review/2026-10-07-shared-common-config-implementation-review.md`): both layers now reject
   keys not spelled in lowercase schema form, so case-insensitive decoder matching can no longer bypass the
   `common.toml` host-key rule or split override-warning keys.
+- 2026-10-07: Accepted by the owner; moved to completed.
