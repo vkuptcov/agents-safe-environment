@@ -49,7 +49,7 @@ func ResolveConfig(
 		CodexArguments:       resolved.Config.Codex.Arguments,
 		ClaudeArguments:      resolved.Config.Claude.Arguments,
 		Degradations:         resolved.Resolution.Degradations,
-		Warnings:             warnings,
+		Warnings:             append(warnings, resolved.Warnings...),
 		DefaultCodexHomeSet:  resolved.DefaultCodexHomeSet,
 		DefaultClaudeHomeSet: resolved.DefaultClaudeHomeSet,
 		HostHome:             host.HomeDir,

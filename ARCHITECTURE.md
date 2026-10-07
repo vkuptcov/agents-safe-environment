@@ -71,6 +71,8 @@ both the module paths and document links.
 - The selected worktree is mounted read-write at the same absolute path.
 - Local `.agents-safe/config.toml` serializes the validated host-specific mount plan and may add explicit project
   mounts for new containers.
+- Tracked `.agents-safe/common.toml` carries portable launcher settings shared by every worktree; it cannot declare
+  host paths, and local `config.toml` may override any of its values.
 - Git-topology roles are required and fail before Docker access when omitted. Host Git config, Codex home, Claude
   state, personal skills, and host MCP are degradable roles: omission keeps them absent and emits an explicit startup
   warning.

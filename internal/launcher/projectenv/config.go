@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,7 +35,7 @@ const (
 	DefaultTmpfsMode     = "1777"
 )
 
-// ProjectConfig is the local, host-specific launcher configuration serialized by agents-safe init.
+// ProjectConfig is the resolved launcher configuration: defaults overlaid by common.toml and config.toml.
 type ProjectConfig struct {
 	Common CommonConfig `toml:"common"`
 	Codex  CodexConfig  `toml:"codex"`
@@ -42,16 +43,28 @@ type ProjectConfig struct {
 	Agents AgentsConfig `toml:"agents"`
 }
 
-// CommonConfig contains settings that affect every public launcher.
+// CommonConfig contains settings that affect every public launcher. Its two embedded halves are the single
+// classification of which keys are portable (common.toml) and which name host paths (config.toml only); TOML
+// flattens them into one [common] table.
 type CommonConfig struct {
-	DockerStorage     DockerStorageMode       `toml:"docker_storage"`
-	Image             string                  `toml:"image"`
-	NoHostMCP         bool                    `toml:"no_host_mcp"`
-	UseHostPythonVenv bool                    `toml:"use_host_python_venv"`
-	KeepContainer     bool                    `toml:"keep_container"`
-	Mounts            []MountConfig           `toml:"mounts"`
-	TmpfsMounts       []TmpfsMountConfig      `toml:"tmpfs_mounts"`
-	DependencyCaches  []DependencyCacheConfig `toml:"dependency_caches"`
+	PortableCommonConfig
+	HostCommonConfig
+}
+
+// PortableCommonConfig holds the [common] scalars that may be shared through the tracked common.toml.
+type PortableCommonConfig struct {
+	DockerStorage     DockerStorageMode `toml:"docker_storage"`
+	Image             string            `toml:"image"`
+	NoHostMCP         bool              `toml:"no_host_mcp"`
+	UseHostPythonVenv bool              `toml:"use_host_python_venv"`
+	KeepContainer     bool              `toml:"keep_container"`
+}
+
+// HostCommonConfig holds the [common] lists that name host or worktree paths; only config.toml may set them.
+type HostCommonConfig struct {
+	Mounts           []MountConfig           `toml:"mounts"`
+	TmpfsMounts      []TmpfsMountConfig      `toml:"tmpfs_mounts,omitempty"`
+	DependencyCaches []DependencyCacheConfig `toml:"dependency_caches"`
 }
 
 // TmpfsMountConfig describes one container-local writable filesystem. It has no host source.
@@ -155,77 +168,201 @@ type claudeOverlay struct {
 
 type agentsOverlay struct{}
 
-// ConfigFileExists reports whether projectRoot carries a persisted launcher config file. It applies the
-// same presence test as Load, so callers can decide whether to seed config-less defaults (for example
-// auto-discovered dependency caches) that a written config would otherwise own.
+// ConfigFileExists reports whether projectRoot carries a persisted local config.toml. It applies the same
+// presence test as LoadLayers, so callers can decide whether to seed config-less defaults (for example
+// auto-discovered dependency caches) that a written config would otherwise own. A tracked common.toml never
+// counts: it cannot declare caches, so its presence must not suppress discovery.
 func ConfigFileExists(projectRoot string) (bool, error) {
-	_, exists, err := locateConfigFile(projectRoot)
+	_, exists, err := locateConfigFile(projectRoot, ConfigName)
 	return exists, err
 }
 
-// locateConfigFile resolves the launcher config path under projectRoot and reports whether it is a
-// usable regular file. A missing project-environment directory or config file is a non-error absence;
-// only an unreadable or non-regular entry is an error.
-func locateConfigFile(projectRoot string) (string, bool, error) {
+// locateConfigFile resolves one launcher config file under projectRoot and reports whether it is a usable
+// regular file. A missing project-environment directory or config file is a non-error absence; only an
+// unreadable or non-regular entry is an error.
+func locateConfigFile(projectRoot string, name string) (string, bool, error) {
 	contextPath, exists, err := inspectContextDirectory(projectRoot)
 	if err != nil || !exists {
 		return "", false, err
 	}
-	path := filepath.Join(contextPath, ConfigName)
-	info, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("inspect project launcher config %q: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", false, fmt.Errorf("project launcher config %q is not a regular file", path)
-	}
-	return path, true, nil
+	path := filepath.Join(contextPath, name)
+	exists, err = existingRegularFile(path, "project launcher config")
+	return path, exists, err
 }
 
-// Load overlays a regular local config file on a complete default configuration. Omitted fields retain the
-// corresponding default while a present mounts array replaces the full list.
-func Load(projectRoot string, defaults ProjectConfig) (ProjectConfig, error) {
-	config := cloneConfig(defaults)
+// existingRegularFile reports whether path is a regular file. Absence is not an error; any other entry kind is.
+func existingRegularFile(path string, label string) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect %s %q: %w", label, path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("%s %q is not a regular file", label, path)
+	}
+	return true, nil
+}
+
+// configLayer is one optional config file, applied in configLayers order over the base configuration.
+type configLayer struct {
+	name string
+	// portable layers are shared across hosts and therefore must not set HostCommonConfig keys.
+	portable bool
+}
+
+var configLayers = []configLayer{
+	{name: CommonConfigName, portable: true},
+	{name: ConfigName},
+}
+
+// LoadLayers overlays every config layer on a complete base configuration. Omitted fields retain the lower
+// layer's value while a present list replaces the full list. It also returns one sorted warning per key whose
+// value in a higher layer differs from the value a lower layer set.
+func LoadLayers(projectRoot string, base ProjectConfig) (ProjectConfig, []string, error) {
+	config := cloneConfig(base)
 	if err := Validate(config); err != nil {
-		return ProjectConfig{}, fmt.Errorf("validate project configuration defaults: %w", err)
+		return ProjectConfig{}, nil, fmt.Errorf("validate project configuration defaults: %w", err)
 	}
 
-	path, exists, err := locateConfigFile(projectRoot)
-	if err != nil {
-		return ProjectConfig{}, err
+	values := make([]map[string]any, len(configLayers))
+	for index, layer := range configLayers {
+		layerValues, err := decodeLayer(projectRoot, layer, &config)
+		if err != nil {
+			return ProjectConfig{}, nil, err
+		}
+		values[index] = layerValues
 	}
-	if !exists {
-		return config, nil
+	var warnings []string
+	for upper := range configLayers {
+		for lower := range upper {
+			for _, key := range shadowedKeys(values[lower], values[upper]) {
+				warnings = append(warnings, fmt.Sprintf("%s overrides %s for %q",
+					configLayers[upper].name, configLayers[lower].name, key))
+			}
+		}
+	}
+	return config, warnings, nil
+}
+
+// decodeLayer overlays one optional config file on config, validates the result, and returns the file's
+// values keyed by dotted TOML key. An absent file returns no values and leaves config unchanged.
+func decodeLayer(projectRoot string, layer configLayer, config *ProjectConfig) (map[string]any, error) {
+	path, exists, err := locateConfigFile(projectRoot, layer.name)
+	if err != nil || !exists {
+		return nil, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ProjectConfig{}, fmt.Errorf("read project launcher config %q: %w", path, err)
+		return nil, fmt.Errorf("read project launcher config %q: %w", path, err)
 	}
 
 	var overlay configOverlay
 	metadata, err := toml.Decode(string(data), &overlay)
 	if err != nil {
-		return ProjectConfig{}, fmt.Errorf("parse project launcher config %q: %w", path, err)
+		return nil, fmt.Errorf("parse project launcher config %q: %w", path, err)
 	}
 	if unknown := metadata.Undecoded(); len(unknown) != 0 {
-		return ProjectConfig{}, fmt.Errorf("project launcher config %q contains unknown setting %q", path, unknown[0])
+		return nil, fmt.Errorf("project launcher config %q contains unknown setting %q", path, unknown[0])
 	}
-	applyOverlay(&config, overlay)
-	if err := Validate(config); err != nil {
-		return ProjectConfig{}, fmt.Errorf("validate project launcher config %q: %w", path, err)
+	if key, found := nonCanonicalKey(metadata); found {
+		return nil, fmt.Errorf("project launcher config %q spells setting %q in non-canonical case; use lowercase",
+			path, key)
 	}
-	return config, nil
+	if layer.portable {
+		for _, key := range hostCommonKeys() {
+			if metadata.IsDefined("common", key) {
+				return nil, fmt.Errorf(
+					"project common config %q must not set common.%s; host-specific paths belong in %s",
+					path, key, ConfigName)
+			}
+		}
+	}
+	applyOverlay(config, overlay)
+	if err := Validate(*config); err != nil {
+		return nil, fmt.Errorf("validate project launcher config %q: %w", path, err)
+	}
+	var tables map[string]map[string]any
+	if _, err := toml.Decode(string(data), &tables); err != nil {
+		return nil, fmt.Errorf("parse project launcher config %q: %w", path, err)
+	}
+	values := make(map[string]any)
+	for table, entries := range tables {
+		for key, value := range entries {
+			values[table+"."+key] = value
+		}
+	}
+	return values, nil
 }
 
-// Encode writes the canonical typed TOML representation used by agents-safe init.
+// nonCanonicalKey reports the first key that the decoder matched only case-insensitively. Every TOML tag is
+// lowercase ASCII, and ASCII lowercase names fold-match only themselves, so this check makes decoding exact and
+// keeps the portable-layer rule and override warnings in step with the settings the decoder applied.
+func nonCanonicalKey(metadata toml.MetaData) (toml.Key, bool) {
+	for _, key := range metadata.Keys() {
+		for _, part := range key {
+			if strings.IndexFunc(part, func(r rune) bool {
+				return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_'
+			}) >= 0 {
+				return key, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// hostCommonKeys returns the TOML keys of HostCommonConfig, so the portable-layer rule follows the struct.
+func hostCommonKeys() []string {
+	fields := reflect.VisibleFields(reflect.TypeFor[HostCommonConfig]())
+	keys := make([]string, 0, len(fields))
+	for _, field := range fields {
+		key, _, _ := strings.Cut(field.Tag.Get("toml"), ",")
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// shadowedKeys lists, sorted, the keys present in both layers whose decoded values differ.
+func shadowedKeys(lower map[string]any, upper map[string]any) []string {
+	var keys []string
+	for key, value := range upper {
+		if lowerValue, found := lower[key]; found && !reflect.DeepEqual(lowerValue, value) {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// Encode writes the complete canonical typed TOML representation, which config.toml may always contain.
 func Encode(config ProjectConfig, writer io.Writer) error {
+	return encodeValidated(config, config, writer)
+}
+
+// EncodeCommon writes the portable settings of config in the tracked common.toml shape.
+func EncodeCommon(config ProjectConfig, writer io.Writer) error {
+	return encodeValidated(config, struct {
+		Common PortableCommonConfig `toml:"common"`
+		Codex  CodexConfig          `toml:"codex"`
+		Claude ClaudeConfig         `toml:"claude"`
+		Agents AgentsConfig         `toml:"agents"`
+	}{config.Common.PortableCommonConfig, config.Codex, config.Claude, config.Agents}, writer)
+}
+
+// EncodeLocal writes the host-specific lists of config in the config.toml shape produced by init, so a new
+// worktree never shadows the shared portable values.
+func EncodeLocal(config ProjectConfig, writer io.Writer) error {
+	return encodeValidated(config, struct {
+		Common HostCommonConfig `toml:"common"`
+	}{config.Common.HostCommonConfig}, writer)
+}
+
+func encodeValidated(config ProjectConfig, value any, writer io.Writer) error {
 	if err := Validate(config); err != nil {
 		return err
 	}
-	if err := toml.NewEncoder(writer).Encode(config); err != nil {
+	if err := toml.NewEncoder(writer).Encode(value); err != nil {
 		return fmt.Errorf("encode project launcher config: %w", err)
 	}
 	return nil

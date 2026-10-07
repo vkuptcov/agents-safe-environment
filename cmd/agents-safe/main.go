@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/spf13/pflag"
 
@@ -39,13 +40,14 @@ Use agents-safe -- init to execute a container command named init.
 
 const initUsage = `Usage: agents-safe init [--project PATH] [--host-caches=auto|none|go_build,go_modules,uv]
 
-Create local .agents-safe/Dockerfile.sample, .agents-safe/config.toml, and .agents-safe/.gitignore files at the
-selected Git worktree root. --host-caches defaults to auto and snapshots existing host Go and uv caches only for a
-newly created config.toml. Initialization does not construct a Docker launcher or modify the root .gitignore.`
+Create missing .agents-safe/Dockerfile.sample, .agents-safe/common.toml, .agents-safe/config.toml, and
+.agents-safe/.gitignore files at the selected Git worktree root. common.toml holds portable settings shared by every
+worktree and is trackable; config.toml holds host-specific mounts and caches and may override any common.toml value.
+--host-caches defaults to auto and snapshots existing host Go and uv caches only for a newly created config.toml.
+Initialization does not construct a Docker launcher or modify the root .gitignore.`
 
 type initializationResult struct {
-	Path        string
-	Created     bool
+	projectenv.Initialization
 	Caches      []projectenv.DependencyCacheConfig
 	Diagnostics []string
 	Warnings    []string
@@ -87,8 +89,18 @@ func productionDependencies() commandDependencies {
 		resolveConfig: launchcli.ResolveConfig,
 		initialize: func(ctx context.Context, project gitproject.Project, selection launchcli.HostCacheSelection) (initializationResult, error) {
 			result := initializationResult{}
-			path, created, err := projectenv.InitializeLazy(project.WorktreeRoot, func() (projectenv.ProjectConfig, error) {
-				host, err := launcher.ResolveHostEnvironment()
+			// Each provider runs only for its missing file and shares one host snapshot; cache discovery runs
+			// solely for a missing config.toml.
+			resolveHost := sync.OnceValues(launcher.ResolveHostEnvironment)
+			portable := func() (projectenv.ProjectConfig, error) {
+				host, err := resolveHost()
+				if err != nil {
+					return projectenv.ProjectConfig{}, err
+				}
+				return launcher.DefaultProjectConfig(project, host, defaultImage)
+			}
+			local := func() (projectenv.ProjectConfig, error) {
+				host, err := resolveHost()
 				if err != nil {
 					return projectenv.ProjectConfig{}, err
 				}
@@ -100,12 +112,12 @@ func productionDependencies() commandDependencies {
 				result.Diagnostics = resolution.Diagnostics
 				result.Warnings = resolution.Warnings
 				return config, nil
-			})
+			}
+			initialization, err := projectenv.InitializeLazy(project.WorktreeRoot, portable, local)
 			if err != nil {
 				return initializationResult{}, err
 			}
-			result.Path = path
-			result.Created = created
+			result.Initialization = initialization
 			return result, nil
 		},
 		newLauncher: func(hostHome string) (cli.Launcher, error) {
@@ -182,7 +194,12 @@ func runInit(
 		return 1
 	}
 	fmt.Fprintf(stdout, "Initialized %s\n", result.Path)
-	if !result.Created {
+	if result.CreatedCommon {
+		fmt.Fprintln(stdout, "Created common.toml with portable defaults; commit it to share them across worktrees.")
+	} else {
+		fmt.Fprintln(stdout, "Existing common.toml preserved.")
+	}
+	if !result.CreatedConfig {
 		fmt.Fprintln(stdout, "Existing config.toml preserved; host cache snapshot unchanged.")
 		return 0
 	}

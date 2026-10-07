@@ -27,6 +27,9 @@ type ResolvedProjectConfig struct {
 	Options              launchplan.Options
 	DefaultCodexHomeSet  bool
 	DefaultClaudeHomeSet bool
+	// Warnings are operator-facing notices about the config layers, such as a config.toml value
+	// shadowing a different common.toml value. They apply to every launch path.
+	Warnings []string
 }
 
 // ConfiglessConfigGenerator produces the complete in-memory configuration for a project that carries no
@@ -39,9 +42,10 @@ type ConfiglessConfigGenerator func(
 	host HostEnvironment,
 ) (projectenv.ProjectConfig, error)
 
-// ResolveProjectConfig applies the documented defaults -> TOML -> explicit-flags order for one discovered project.
-// Configuration follows exactly two paths: a persisted config.toml is read as-is, or, when absent, the project
-// generates the same default `agents-safe init` would have written. Explicit CLI flags override either result.
+// ResolveProjectConfig applies the documented defaults -> common.toml -> config.toml -> explicit-flags order for
+// one discovered project. The base follows exactly two paths: with a persisted config.toml it is the plain
+// defaults, and without one it is the same default `agents-safe init` would have written, including discovered
+// caches. Both config layers then overlay that base, and explicit CLI flags override the result.
 func ResolveProjectConfig(
 	project gitproject.Project,
 	host HostEnvironment,
@@ -57,12 +61,14 @@ func ResolveProjectConfig(
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	var config projectenv.ProjectConfig
+	base := defaults
 	if !configExists && generateConfigless != nil {
-		config, err = generateConfigless(project, host)
-	} else {
-		config, err = projectenv.Load(project.WorktreeRoot, defaults)
+		base, err = generateConfigless(project, host)
+		if err != nil {
+			return ResolvedProjectConfig{}, err
+		}
 	}
+	config, warnings, err := projectenv.LoadLayers(project.WorktreeRoot, base)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
@@ -99,6 +105,7 @@ func ResolveProjectConfig(
 		},
 		DefaultCodexHomeSet:  defaultCodexHomeSet,
 		DefaultClaudeHomeSet: defaultClaudeHomeSet,
+		Warnings:             warnings,
 	}, nil
 }
 
@@ -197,9 +204,8 @@ func DefaultProjectConfig(
 
 	config := projectenv.ProjectConfig{
 		Common: projectenv.CommonConfig{
-			DockerStorage: projectenv.DefaultDockerStorage,
-			Image:         image,
-			Mounts:        mounts,
+			PortableCommonConfig: projectenv.PortableCommonConfig{DockerStorage: projectenv.DefaultDockerStorage, Image: image},
+			HostCommonConfig:     projectenv.HostCommonConfig{Mounts: mounts},
 		},
 		Codex:  projectenv.CodexConfig{Arguments: append([]string(nil), codexDefaultSandboxArgs...)},
 		Claude: projectenv.ClaudeConfig{Arguments: append([]string(nil), claudeDefaultPermissionArgs...)},

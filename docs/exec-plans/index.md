@@ -31,6 +31,7 @@ None.
 
 ## Completed
 
+- [Shared Project Config (`common.toml`)](completed/2026-10-07-shared-common-config-exec-plan.md)
 - [Versioned Nested Docker Storage Volumes](completed/2026-10-05-docker-storage-format-exec-plan.md)
 - [Nested Docker overlay2 Graph Driver](completed/2026-10-05-nested-docker-overlay2-exec-plan.md)
 - [Docker Storage Concurrent-Use Warning](completed/2026-10-05-docker-storage-concurrent-use-warning-exec-plan.md)
