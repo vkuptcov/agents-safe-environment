@@ -266,6 +266,10 @@ func decodeLayer(projectRoot string, layer configLayer, config *ProjectConfig) (
 	if unknown := metadata.Undecoded(); len(unknown) != 0 {
 		return nil, fmt.Errorf("project launcher config %q contains unknown setting %q", path, unknown[0])
 	}
+	if key, found := nonCanonicalKey(metadata); found {
+		return nil, fmt.Errorf("project launcher config %q spells setting %q in non-canonical case; use lowercase",
+			path, key)
+	}
 	if layer.portable {
 		for _, key := range hostCommonKeys() {
 			if metadata.IsDefined("common", key) {
@@ -290,6 +294,22 @@ func decodeLayer(projectRoot string, layer configLayer, config *ProjectConfig) (
 		}
 	}
 	return values, nil
+}
+
+// nonCanonicalKey reports the first key that the decoder matched only case-insensitively. Every TOML tag is
+// lowercase ASCII, and ASCII lowercase names fold-match only themselves, so this check makes decoding exact and
+// keeps the portable-layer rule and override warnings in step with the settings the decoder applied.
+func nonCanonicalKey(metadata toml.MetaData) (toml.Key, bool) {
+	for _, key := range metadata.Keys() {
+		for _, part := range key {
+			if strings.IndexFunc(part, func(r rune) bool {
+				return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_'
+			}) >= 0 {
+				return key, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // hostCommonKeys returns the TOML keys of HostCommonConfig, so the portable-layer rule follows the struct.

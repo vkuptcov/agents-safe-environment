@@ -419,6 +419,31 @@ func TestLoadLayersRejectsHostSpecificKeysInCommonConfig(t *testing.T) {
 	}
 }
 
+func TestLoadLayersRejectsNonCanonicalKeySpelling(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		layer   string
+		content string
+	}{
+		{name: "common mounts table", layer: CommonConfigName, content: "[[Common.Mounts]]\nrole = \"additional\"\n"},
+		{name: "common tmpfs key", layer: CommonConfigName, content: "[common]\nTmpfs_Mounts = []\n"},
+		{name: "common caches table", layer: CommonConfigName, content: "[[COMMON.dependency_caches]]\nkind = \"go\"\n"},
+		{name: "common folded mounts", layer: CommonConfigName, content: "[common]\n\"mount\u017f\" = []\n"},
+		{name: "local setting", layer: ConfigName, content: "[Common]\nImage = \"local:image\"\n"},
+		{name: "nested field", layer: ConfigName, content: "[[common.mounts]]\nSource = \"/tmp\"\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeLayer(t, root, test.layer, test.content)
+			_, _, err := LoadLayers(root, typedDefaults(t))
+			if err == nil || !strings.Contains(err.Error(), "non-canonical") || !strings.Contains(err.Error(), test.layer) {
+				t.Fatalf("LoadLayers() error = %v, want non-canonical spelling rejected in %s", err, test.layer)
+			}
+		})
+	}
+}
+
 func TestLoadLayersNamesInvalidCommonConfig(t *testing.T) {
 	t.Parallel()
 	for _, content := range []string{"[common]\nunknown = true\n", "[common]\ndocker_storage = \"bogus\"\n"} {

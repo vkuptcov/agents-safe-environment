@@ -129,3 +129,7 @@ Done when: the design doc describes both files, the order, the warning, and init
 - 2026-10-07: Simplification pass: `CommonConfig` now embeds `PortableCommonConfig` and `HostCommonConfig`, the
   single source for the common.toml key rule and both init encoders; override warnings are derived generically
   from decoded values and sorted; exported `Load` removed in favor of `LoadLayers`.
+- 2026-10-07: Addressed implementation review F-001/F-002
+  (`docs/reviews/feature-review/2026-10-07-shared-common-config-implementation-review.md`): both layers now reject
+  keys not spelled in lowercase schema form, so case-insensitive decoder matching can no longer bypass the
+  `common.toml` host-key rule or split override-warning keys.

@@ -373,8 +373,9 @@ Two optional files overlay it in fixed order, each with the same presence-aware 
 1. `.agents-safe/common.toml` — tracked, portable layer;
 2. `.agents-safe/config.toml` — ignored, host-specific layer.
 
-Both files must be regular, non-symlink files, reject unknown keys, and are validated after their overlay; errors
-name the file. `common.toml` accepts every key except the path-bearing `common.mounts`, `common.tmpfs_mounts`, and
+Both files must be regular, non-symlink files, reject unknown keys and keys not spelled in the schema's lowercase
+form (the TOML decoder otherwise matches names case-insensitively, which would let `[[Common.Mounts]]` slip past
+the rule below and hide overrides from the warnings), and are validated after their overlay; errors name the file. `common.toml` accepts every key except the path-bearing `common.mounts`, `common.tmpfs_mounts`, and
 `common.dependency_caches`, which fail with an error pointing to `config.toml`. The embedded `HostCommonConfig` half
 of `CommonConfig` is the single source of that rule and of the `config.toml` shape `init` writes. `config.toml` accepts every key and may
 override any value set by `common.toml`.
@@ -649,7 +650,7 @@ creation-time fingerprint mismatch while the previous container is running.
 
 ### 7. Validation and Failure Behavior
 
-The config must be a regular, non-symlink TOML file. Unknown keys, invalid types, an empty image, unsafe product argv,
+The config must be a regular, non-symlink TOML file. Unknown or non-lowercase keys, invalid types, an empty image, unsafe product argv,
 missing required mount roles, and invalid present mounts fail before Docker launch. Missing degradable roles emit
 warnings and remain absent. All launchers validate the complete file, including the other products' sections.
 
