@@ -28,7 +28,7 @@ arguments = ["exec", "--model", "gpt-5"]
 arguments = ["--model", "opus"]
 `)
 
-	config, err := Load(root, defaults)
+	config, err := loadConfig(root, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestLoadTypedConfigReplacesTmpfsMounts(t *testing.T) {
 	defaults := typedDefaults(t)
 	writeConfig(t, root, "[[common.tmpfs_mounts]]\ntarget = \""+configured+"\"\nmode = \"0755\"\ncomment = \"service environment\"\n")
 
-	config, err := Load(root, defaults)
+	config, err := loadConfig(root, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestLoadTypedConfigReplacesMountsAndClonesDefaults(t *testing.T) {
 mounts = []
 `)
 
-	config, err := Load(root, defaults)
+	config, err := loadConfig(root, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,13 +118,13 @@ func TestLoadTypedConfigReplacesDependencyCachesAndRejectsUnsupportedEntries(t *
 	defaults := typedDefaults(t)
 	defaults.Common.DependencyCaches = []DependencyCacheConfig{{Kind: DependencyCacheGoBuild, Source: cache}}
 	writeConfig(t, root, "[common]\ndependency_caches = []\n")
-	config, err := Load(root, defaults)
+	config, err := loadConfig(root, defaults)
 	if err != nil || len(config.Common.DependencyCaches) != 0 {
 		t.Fatalf("Load() = %#v, %v", config.Common.DependencyCaches, err)
 	}
 
 	writeConfig(t, root, "[[common.dependency_caches]]\nkind = \"uv\"\nsource = \""+cache+"\"\n")
-	config, err = Load(root, defaults)
+	config, err = loadConfig(root, defaults)
 	if err != nil || !reflect.DeepEqual(config.Common.DependencyCaches, []DependencyCacheConfig{{
 		Kind: DependencyCacheUV, Source: cache,
 	}}) {
@@ -137,7 +137,7 @@ func TestLoadTypedConfigReplacesDependencyCachesAndRejectsUnsupportedEntries(t *
 		"[[common.dependency_caches]]\nkind = \"go_build\"\nsource = \"" + cache + "\"\n[[common.dependency_caches]]\nkind = \"go_build\"\nsource = \"" + cache + "\"\n",
 	} {
 		writeConfig(t, root, content)
-		if _, err := Load(root, defaults); err == nil {
+		if _, err := loadConfig(root, defaults); err == nil {
 			t.Fatalf("Load() accepted %q", content)
 		}
 	}
@@ -208,7 +208,7 @@ mode = "1777"
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeConfig(t, root, test.content)
-			_, err := Load(root, typedDefaults(t))
+			_, err := loadConfig(root, typedDefaults(t))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Load() error = %v, want %q", err, test.want)
 			}
@@ -250,18 +250,17 @@ func typedDefaults(t *testing.T) ProjectConfig {
 	source := t.TempDir()
 	return ProjectConfig{
 		Common: CommonConfig{
-			DockerStorage:     DockerStorageBranch,
-			Image:             "default:image",
-			NoHostMCP:         true,
-			UseHostPythonVenv: false,
-			Mounts: []MountConfig{{
-				Role:   RoleAdditional,
-				Source: source,
-				Target: source,
-			}},
-			TmpfsMounts: []TmpfsMountConfig{{
-				Target: filepath.Join(source, ".venv"), Mode: DefaultTmpfsMode,
-			}},
+			PortableCommonConfig: PortableCommonConfig{
+				DockerStorage: DockerStorageBranch,
+				Image:         "default:image",
+				NoHostMCP:     true,
+			},
+			HostCommonConfig: HostCommonConfig{
+				Mounts: []MountConfig{{Role: RoleAdditional, Source: source, Target: source}},
+				TmpfsMounts: []TmpfsMountConfig{{
+					Target: filepath.Join(source, ".venv"), Mode: DefaultTmpfsMode,
+				}},
+			},
 		},
 		Codex:  CodexConfig{Arguments: []string{"--sandbox", "danger-full-access"}},
 		Claude: ClaudeConfig{Arguments: []string{"--permission-mode", "auto"}},
@@ -270,13 +269,7 @@ func typedDefaults(t *testing.T) ProjectConfig {
 
 func writeConfig(t *testing.T, root string, content string) {
 	t.Helper()
-	contextPath := filepath.Join(root, Directory)
-	if err := os.MkdirAll(contextPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(contextPath, ConfigName), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeLayer(t, root, ConfigName, content)
 }
 
 func TestLoadDockerStorageModes(t *testing.T) {
@@ -284,7 +277,7 @@ func TestLoadDockerStorageModes(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			root := t.TempDir()
 			writeConfig(t, root, "[common]\ndocker_storage = \""+string(mode)+"\"\n")
-			config, err := Load(root, typedDefaults(t))
+			config, err := loadConfig(root, typedDefaults(t))
 			if slices.Contains(DockerStorageModeOrder, mode) {
 				if err != nil || config.Common.DockerStorage != mode {
 					t.Fatalf("Load = %#v, %v", config, err)
@@ -296,4 +289,185 @@ func TestLoadDockerStorageModes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadLayersAppliesCommonThenLocalConfig(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	defaults := typedDefaults(t)
+	writeCommonConfig(t, root, `
+[common]
+docker_storage = "project"
+keep_container = true
+image = "common:image"
+
+[claude]
+arguments = ["--model", "opus"]
+`)
+	writeConfig(t, root, `
+[common]
+image = "local:image"
+keep_container = true
+`)
+
+	config, shadowed, err := LoadLayers(root, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Common.DockerStorage != DockerStorageProject {
+		t.Errorf("docker_storage = %q, want common.toml value", config.Common.DockerStorage)
+	}
+	if config.Common.Image != "local:image" {
+		t.Errorf("image = %q, want config.toml override", config.Common.Image)
+	}
+	if !config.Common.KeepContainer {
+		t.Error("keep_container = false, want true")
+	}
+	if want := []string{"--model", "opus"}; !reflect.DeepEqual(config.Claude.Arguments, want) {
+		t.Errorf("Claude arguments = %#v, want %#v", config.Claude.Arguments, want)
+	}
+	if !reflect.DeepEqual(config.Common.Mounts, defaults.Common.Mounts) {
+		t.Errorf("mounts = %#v, want base mounts", config.Common.Mounts)
+	}
+	if want := []string{`config.toml overrides common.toml for "common.image"`}; !reflect.DeepEqual(shadowed, want) {
+		t.Fatalf("shadowed = %#v, want only the differing key %#v", shadowed, want)
+	}
+}
+
+func TestLoadLayersReportsEveryDifferingKeySorted(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeCommonConfig(t, root, `
+[common]
+docker_storage = "project"
+image = "common:image"
+no_host_mcp = true
+use_host_python_venv = true
+keep_container = true
+
+[codex]
+arguments = ["--sandbox", "workspace-write"]
+
+[claude]
+arguments = ["--model", "opus"]
+`)
+	writeConfig(t, root, `
+[common]
+docker_storage = "branch"
+image = "local:image"
+no_host_mcp = false
+use_host_python_venv = false
+keep_container = false
+
+[codex]
+arguments = []
+
+[claude]
+arguments = ["--model", "sonnet"]
+`)
+	_, shadowed, err := LoadLayers(root, typedDefaults(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for _, key := range []string{
+		"claude.arguments", "codex.arguments", "common.docker_storage", "common.image", "common.keep_container",
+		"common.no_host_mcp", "common.use_host_python_venv",
+	} {
+		want = append(want, `config.toml overrides common.toml for "`+key+`"`)
+	}
+	if !reflect.DeepEqual(shadowed, want) {
+		t.Fatalf("shadowed = %#v, want %#v", shadowed, want)
+	}
+}
+
+func TestLoadLayersAppliesCommonConfigWithoutLocalConfig(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	cache := t.TempDir()
+	base := typedDefaults(t)
+	base.Common.DependencyCaches = []DependencyCacheConfig{{Kind: DependencyCacheUV, Source: cache}}
+	writeCommonConfig(t, root, "[common]\nkeep_container = true\n")
+	config, shadowed, err := LoadLayers(root, base)
+	if err != nil || len(shadowed) != 0 {
+		t.Fatalf("LoadLayers() shadowed = %#v, err = %v", shadowed, err)
+	}
+	if !config.Common.KeepContainer || !reflect.DeepEqual(config.Common.DependencyCaches, base.Common.DependencyCaches) {
+		t.Fatalf("config = %#v, want common value over the generated base", config.Common)
+	}
+}
+
+func TestLoadLayersRejectsHostSpecificKeysInCommonConfig(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		content string
+		key     string
+	}{
+		{name: "mounts", content: "[common]\nmounts = []\n", key: "common.mounts"},
+		{name: "tmpfs", content: "[common]\ntmpfs_mounts = []\n", key: "common.tmpfs_mounts"},
+		{name: "caches", content: "[common]\ndependency_caches = []\n", key: "common.dependency_caches"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeCommonConfig(t, root, test.content)
+			_, _, err := LoadLayers(root, typedDefaults(t))
+			if err == nil || !strings.Contains(err.Error(), test.key) || !strings.Contains(err.Error(), ConfigName) {
+				t.Fatalf("LoadLayers() error = %v, want rejection of %s pointing to %s", err, test.key, ConfigName)
+			}
+		})
+	}
+}
+
+func TestLoadLayersNamesInvalidCommonConfig(t *testing.T) {
+	t.Parallel()
+	for _, content := range []string{"[common]\nunknown = true\n", "[common]\ndocker_storage = \"bogus\"\n"} {
+		root := t.TempDir()
+		writeCommonConfig(t, root, content)
+		_, _, err := LoadLayers(root, typedDefaults(t))
+		if err == nil || !strings.Contains(err.Error(), CommonConfigName) {
+			t.Fatalf("LoadLayers(%q) error = %v, want it to name %s", content, err, CommonConfigName)
+		}
+	}
+}
+
+func TestLoadLayersRejectsSymlinkCommonConfig(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	contextPath := filepath.Join(root, Directory)
+	if err := os.Mkdir(contextPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "common.toml")
+	if err := os.WriteFile(target, []byte("[common]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(contextPath, CommonConfigName)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadLayers(root, typedDefaults(t)); err == nil {
+		t.Fatal("LoadLayers() accepted a symlink common.toml")
+	}
+}
+
+func writeCommonConfig(t *testing.T, root string, content string) {
+	t.Helper()
+	writeLayer(t, root, CommonConfigName, content)
+}
+
+func writeLayer(t *testing.T, root string, name string, content string) {
+	t.Helper()
+	contextPath := filepath.Join(root, Directory)
+	if err := os.MkdirAll(contextPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(contextPath, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// loadConfig resolves both layers over defaults when a test does not inspect the override warnings.
+func loadConfig(root string, defaults ProjectConfig) (ProjectConfig, error) {
+	config, _, err := LoadLayers(root, defaults)
+	return config, err
 }

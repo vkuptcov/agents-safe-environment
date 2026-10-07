@@ -14,6 +14,7 @@ const (
 	DockerfileName       = "Dockerfile"
 	DockerfileSampleName = "Dockerfile.sample"
 	ConfigName           = "config.toml"
+	CommonConfigName     = "common.toml"
 )
 
 // Discover returns an empty path when the project has no .agents-safe/Dockerfile. The project root must be

@@ -325,3 +325,72 @@ docker_storage = "project"
 		t.Fatal("ResolveProjectConfig() accepted an invalid explicit image")
 	}
 }
+
+func TestResolveProjectConfigLayersCommonConfigOnBothPaths(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	projectRoot := filepath.Join(base, "project")
+	gitDir := filepath.Join(projectRoot, ".git")
+	cacheDir := filepath.Join(base, "uv-cache")
+	contextPath := filepath.Join(projectRoot, projectenv.Directory)
+	for _, path := range []string{home, gitDir, cacheDir, contextPath} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := gitproject.Project{
+		Branch:       "main",
+		RequestedDir: projectRoot, WorktreeRoot: projectRoot, PrimaryRoot: projectRoot, CommonGitDir: gitDir,
+	}
+	host := HostEnvironment{HomeDir: home}
+	if err := os.WriteFile(filepath.Join(contextPath, projectenv.CommonConfigName),
+		[]byte("[common]\nkeep_container = true\ndocker_storage = \"project\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	discovered := []projectenv.DependencyCacheConfig{{Kind: projectenv.DependencyCacheUV, Source: cacheDir}}
+	calls := 0
+	generateConfigless := func(p gitproject.Project, h HostEnvironment) (projectenv.ProjectConfig, error) {
+		calls++
+		config, err := DefaultProjectConfig(p, h, "default:image")
+		config.Common.DependencyCaches = discovered
+		return config, err
+	}
+
+	// common.toml alone keeps the config-less path: shared values and discovered caches both survive.
+	shared, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{}, generateConfigless)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || !shared.Options.KeepContainer ||
+		shared.Resolution.Plan.DockerStorage.Mode != projectenv.DockerStorageProject ||
+		len(shared.Config.Common.DependencyCaches) != 1 || len(shared.Warnings) != 0 {
+		t.Fatalf("common-only resolution: calls = %d, config = %#v, warnings = %#v",
+			calls, shared.Config.Common, shared.Warnings)
+	}
+
+	// config.toml overrides common.toml and reports the differing key; an equal key stays silent.
+	if err := os.WriteFile(filepath.Join(contextPath, projectenv.ConfigName),
+		[]byte("[common]\nkeep_container = false\ndocker_storage = \"project\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	local, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{}, generateConfigless)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{`config.toml overrides common.toml for "common.keep_container"`}
+	if local.Options.KeepContainer || !reflect.DeepEqual(local.Warnings, want) {
+		t.Fatalf("local override: keep = %t, warnings = %#v, want %#v", local.Options.KeepContainer, local.Warnings, want)
+	}
+
+	// Explicit flags still win over both files.
+	flagged, err := ResolveProjectConfig(project, host, "default:image", launchplan.Overrides{
+		KeepContainer: true, KeepContainerOverride: true, DockerStorage: "branch", DockerStorageOverride: true,
+	}, generateConfigless)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !flagged.Options.KeepContainer || flagged.Resolution.Plan.DockerStorage.Mode != projectenv.DockerStorageBranch {
+		t.Fatalf("flag override ignored: %#v", flagged.Options)
+	}
+}

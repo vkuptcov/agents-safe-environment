@@ -60,7 +60,9 @@ func TestRunInitInitializesWithoutConstructingLauncher(t *testing.T) {
 	var initialized gitproject.Project
 	deps.initialize = func(_ context.Context, got gitproject.Project, _ launchcli.HostCacheSelection) (initializationResult, error) {
 		initialized = got
-		return initializationResult{Path: "/project/.agents-safe", Created: true}, nil
+		return initializationResult{Initialization: projectenv.Initialization{
+			Path: "/project/.agents-safe", CreatedCommon: true, CreatedConfig: true,
+		}}, nil
 	}
 	deps.newLauncher = func(string) (cli.Launcher, error) { panic("launcher must not be constructed") }
 	stdout := new(bytes.Buffer)
@@ -78,7 +80,9 @@ func TestRunInitPassesUVSelectionToInitializer(t *testing.T) {
 	var selection launchcli.HostCacheSelection
 	deps.initialize = func(_ context.Context, _ gitproject.Project, got launchcli.HostCacheSelection) (initializationResult, error) {
 		selection = got
-		return initializationResult{Path: "/project/.agents-safe", Created: true}, nil
+		return initializationResult{Initialization: projectenv.Initialization{
+			Path: "/project/.agents-safe", CreatedCommon: true, CreatedConfig: true,
+		}}, nil
 	}
 	if exit := run(context.Background(), []string{"init", "--host-caches=uv"}, new(bytes.Buffer), new(bytes.Buffer), deps); exit != 0 {
 		t.Fatalf("run() = %d", exit)
@@ -137,8 +141,41 @@ func testCommandDependencies(launcher cli.Launcher) commandDependencies {
 			if project.WorktreeRoot == "" {
 				return initializationResult{}, errors.New("missing worktree")
 			}
-			return initializationResult{Path: "/project/.agents-safe", Created: true}, nil
+			return initializationResult{Initialization: projectenv.Initialization{
+				Path: "/project/.agents-safe", CreatedCommon: true, CreatedConfig: true,
+			}}, nil
 		},
 		newLauncher: func(string) (cli.Launcher, error) { return launcher, nil },
+	}
+}
+
+func TestRunInitReportsEachConfigFile(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		result initializationResult
+		want   []string
+	}{
+		{
+			result: initializationResult{Initialization: projectenv.Initialization{Path: "/p", CreatedCommon: true}},
+			want:   []string{"Created common.toml", "Existing config.toml preserved"},
+		},
+		{
+			result: initializationResult{Initialization: projectenv.Initialization{Path: "/p", CreatedConfig: true}},
+			want:   []string{"Existing common.toml preserved", "No existing shared read-write host dependency caches"},
+		},
+	} {
+		deps := testCommandDependencies(&clitest.RecordingLauncher{})
+		deps.initialize = func(context.Context, gitproject.Project, launchcli.HostCacheSelection) (initializationResult, error) {
+			return test.result, nil
+		}
+		stdout := new(bytes.Buffer)
+		if exit := run(context.Background(), []string{"init"}, stdout, new(bytes.Buffer), deps); exit != 0 {
+			t.Fatalf("run() = %d", exit)
+		}
+		for _, want := range test.want {
+			if !strings.Contains(stdout.String(), want) {
+				t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+			}
+		}
 	}
 }

@@ -8,6 +8,7 @@ None.
 
 ## Review
 
+- [Shared Project Config (`common.toml`)](review/2026-10-07-shared-common-config-exec-plan.md)
 - [Host Access to Session Services](review/2026-09-25-session-service-access-exec-plan.md)
 - [Config-less Launch Cache Parity](review/2026-07-24-config-less-launch-cache-parity-exec-plan.md)
 - [Venv tmpfs exec permission](review/2026-07-23-venv-tmpfs-exec-permission-exec-plan.md)

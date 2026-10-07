@@ -5,6 +5,7 @@ Status: Implemented
 Scope:
 
 - the generated `.agents-safe/config.toml` schema;
+- the tracked, portable `.agents-safe/common.toml` layer;
 - project-config and CLI precedence for `codex-safe`, `claude-safe`, and `agents-safe`;
 - `.agents-safe/.gitignore` creation.
 
@@ -16,13 +17,16 @@ document and [Safe Claude Code Integration](claude-safe.md).
 
 ### Proposal
 
-`agents-safe init` writes one typed project config containing the effective launcher defaults. Later invocations read
-that file, apply only explicitly supplied CLI overrides, validate the result, and launch with the resolved values.
+`agents-safe init` writes two typed project config files: a tracked `common.toml` with the portable launcher settings
+shared by every worktree and clone, and an ignored `config.toml` with the host-specific mount and cache snapshot.
+Later invocations read both files, `config.toml` over `common.toml`, apply only explicitly supplied CLI overrides,
+validate the result, and launch with the resolved values.
 
 This gives the user two things immediately:
 
 - visibility: the project file shows the image, mount plan, host-MCP choice, and launcher-specific arguments;
-- persistence: editing a value once replaces the need to pass the same flag on every invocation.
+- persistence: editing a value once replaces the need to pass the same flag on every invocation;
+- sharing: a value committed in `common.toml` applies to every worktree of the project without re-initialization.
 
 Parameters have three lifecycle classes:
 
@@ -56,8 +60,9 @@ resolution begins.
 flowchart TD
     Project["1. Resolve --project<br/>and discover the worktree"]
     Defaults["2. Build typed defaults<br/>for this project and host"]
-    File{"3. config.toml exists?"}
-    Overlay["Overlay TOML<br/>mounts replace the whole list"]
+    Common["3a. Overlay common.toml<br/>portable keys only"]
+    File{"3b. config.toml exists?"}
+    Overlay["Overlay config.toml<br/>mounts replace the whole list"]
     Flags["4. Apply explicitly supplied<br/>launcher flags"]
     Validate["5. Validate and classify<br/>the resolved parameters"]
     Normalize["6. Normalize logical roles<br/>to physical mounts"]
@@ -68,7 +73,7 @@ flowchart TD
     Create["Create container with<br/>creation-time parameters"]
     Command["8. Apply command-time parameters<br/>through docker exec"]
 
-    Project --> Defaults --> File
+    Project --> Defaults --> Common --> File
     File -->|yes| Overlay --> Flags
     File -->|no| Flags
     Flags --> Validate --> Normalize --> Running
@@ -94,16 +99,28 @@ snapshot without repeating Git-config discovery.
 
 ### Worked Example
 
-For this repository, `agents-safe init` generates:
+For this repository, `agents-safe init` generates the tracked `common.toml`:
 
 ```toml
 [common]
+docker_storage = "branch"
 image = "agents-safe-mvp:local"
 no_host_mcp = false
 use_host_python_venv = false
 keep_container = false
-docker_storage = "branch"
 
+[codex]
+arguments = ["--sandbox", "danger-full-access"]
+
+[claude]
+arguments = ["--permission-mode", "auto"]
+
+[agents]
+```
+
+and the ignored `config.toml`, which contains only host-specific lists:
+
+```toml
 [[common.mounts]]
 role = "host_git_config"
 source = "/home/alex/.gitconfig"
@@ -166,19 +183,9 @@ source = "runtime://host-mcp-channel"
 target = "/run/agents-safe-host-mcp"
 read_only = false
 comment = "Optional: forward eligible host MCP endpoints."
-
-[codex]
-arguments = [
-    '--sandbox', 'danger-full-access'
-]
-
-[claude]
-arguments = [
-    '--permission-mode', 'auto'
-]
-
-[agents]
 ```
+
+Detected dependency caches are appended to `config.toml` as `[[common.dependency_caches]]` entries.
 
 ### Success Criteria
 
@@ -186,6 +193,7 @@ arguments = [
 - The generated file always contains the three required project/Git roles; Docker also receives the non-configurable
   derived registry guard and, for a linked checkout, its active-GitDir override.
 - Project values persist until the user edits the file; explicit CLI values affect one invocation.
+- A committed `common.toml` value applies to every worktree that has no differing `config.toml` value.
 - Removing a required mount fails before Docker access; removing a degradable mount starts with an explicit warning.
 - A running container is reused only when all creation-time parameters match, unless that invocation explicitly uses
   `--force-exec`.
@@ -206,12 +214,20 @@ but a host-path change requires the user to update the file rather than silently
 
 ```text
 <worktree>/.agents-safe/Dockerfile.sample
+<worktree>/.agents-safe/common.toml
 <worktree>/.agents-safe/config.toml
 <worktree>/.agents-safe/.gitignore
 ```
 
-`Dockerfile.sample` is an embedded text resource. `config.toml` is the TOML serialization of the resolved typed
-defaults. Initialization reads project and host filesystem state but does not contact Docker or start a container.
+`Dockerfile.sample` is an embedded text resource. `common.toml` is the TOML serialization of the portable typed
+defaults: every `[common]` scalar plus the `[codex]`, `[claude]`, and `[agents]` sections. `config.toml` is the TOML
+serialization of only the host-specific lists: `common.mounts`, the discovered `common.dependency_caches`, and
+`common.tmpfs_mounts` when set; init never writes portable keys into it, so a new worktree cannot shadow the shared values by default. Each file is created only when missing; an
+existing `common.toml` (for example one checked out from Git) is never rewritten. The two files are handled
+independently: a missing `common.toml` in an already initialized worktree is created from the portable defaults
+without cache discovery, and cache discovery runs only when `config.toml` itself is missing. Init reports each
+created file separately. Initialization reads project and host filesystem state but does not contact Docker or start
+a container.
 
 `.agents-safe/.gitignore` contains:
 
@@ -219,10 +235,12 @@ defaults. Initialization reads project and host filesystem state but does not co
 *
 !.gitignore
 !Dockerfile
+!common.toml
 ```
 
-The worktree-root `.gitignore` is not modified. Only `.agents-safe/.gitignore` and an activated `Dockerfile` are
-trackable by default.
+The worktree-root `.gitignore` is not modified. Only `.agents-safe/.gitignore`, `common.toml`, and an activated
+`Dockerfile` are trackable by default. An existing `.agents-safe/.gitignore` is not rewritten; projects initialized
+before `common.toml` existed add the `!common.toml` line manually.
 
 ### 2. Typed Schema
 
@@ -272,14 +290,22 @@ The implemented Go and uv cache contract of [Host-Backed Dependency Caches](host
 
 ```go
 type CommonConfig struct {
- DockerStorage     DockerStorageMode       `toml:"docker_storage"`
-	Image             string                  `toml:"image"`
-	NoHostMCP         bool                    `toml:"no_host_mcp"`
-	UseHostPythonVenv bool                    `toml:"use_host_python_venv"`
-	KeepContainer     bool                    `toml:"keep_container"`
-	Mounts            []MountConfig           `toml:"mounts"`
-	TmpfsMounts       []TmpfsMountConfig      `toml:"tmpfs_mounts"`
-	DependencyCaches  []DependencyCacheConfig `toml:"dependency_caches"`
+	PortableCommonConfig // may appear in common.toml
+	HostCommonConfig     // host paths; config.toml only
+}
+
+type PortableCommonConfig struct {
+	DockerStorage     DockerStorageMode `toml:"docker_storage"`
+	Image             string            `toml:"image"`
+	NoHostMCP         bool              `toml:"no_host_mcp"`
+	UseHostPythonVenv bool              `toml:"use_host_python_venv"`
+	KeepContainer     bool              `toml:"keep_container"`
+}
+
+type HostCommonConfig struct {
+	Mounts           []MountConfig           `toml:"mounts"`
+	TmpfsMounts      []TmpfsMountConfig      `toml:"tmpfs_mounts,omitempty"`
+	DependencyCaches []DependencyCacheConfig `toml:"dependency_caches"`
 }
 
 type TmpfsMountConfig struct {
@@ -338,10 +364,37 @@ override the file for one invocation. Reusable Python downloads remain a separat
 
 ### 3. File Layering
 
-The decoder starts from a complete default `ProjectConfig` and overlays the TOML file:
+The base is the complete default `ProjectConfig`, or the config-less generator output when `config.toml` is absent.
+Only local `config.toml` presence selects the base: a worktree with just `common.toml` still uses the generator and
+keeps its auto-discovered dependency caches, while an existing `config.toml` suppresses discovery even when it omits
+`dependency_caches`.
+Two optional files overlay it in fixed order, each with the same presence-aware decoder:
 
-- omitted scalar or section: retain the typed default;
-- present scalar: replace the typed default;
+1. `.agents-safe/common.toml` — tracked, portable layer;
+2. `.agents-safe/config.toml` — ignored, host-specific layer.
+
+Both files must be regular, non-symlink files, reject unknown keys, and are validated after their overlay; errors
+name the file. `common.toml` accepts every key except the path-bearing `common.mounts`, `common.tmpfs_mounts`, and
+`common.dependency_caches`, which fail with an error pointing to `config.toml`. The embedded `HostCommonConfig` half
+of `CommonConfig` is the single source of that rule and of the `config.toml` shape `init` writes. `config.toml` accepts every key and may
+override any value set by `common.toml`.
+
+When `config.toml` sets a key to a value different from the one `common.toml` sets, the launcher emits one warning per
+key on `stderr`, in the same pre-Docker diagnostic phase as mount-role warnings. The warnings are part of the
+resolved config and are emitted on every launch path, not only config-less ones:
+
+```text
+<binary>: warning: config.toml overrides common.toml for "common.keep_container"
+```
+
+Warnings are sorted by key. Identical duplicate values and keys present in only one file produce no warning. The
+warning compares decoded values generically for every key, never TOML bytes, and does not affect the creation-time fingerprint: only the resolved config is
+fingerprinted, so schema version 8 is unchanged.
+
+Within each overlay:
+
+- omitted scalar or section: retain the value from the lower layer;
+- present scalar: replace the lower-layer value;
 - omitted `common.mounts`: retain the resolved default mount snapshot;
 - present `common.mounts`: replace the entire list; mounts are never merged by index, role, source, or target.
 - omitted `common.tmpfs_mounts`: retain the empty default base;
@@ -354,8 +407,9 @@ path and mode validation.
 
 The dependency-cache configuration extension adds presence-aware cache-list layering:
 
-- in-memory `common.dependency_caches` defaults are always empty;
-- omitted `common.dependency_caches` and a present empty list both resolve to no caches;
+- in-memory `common.dependency_caches` defaults are always empty; the config-less generator base is the only source
+  of discovered caches;
+- with `config.toml` present, omitted `common.dependency_caches` and a present empty list both resolve to no caches;
 - a present non-empty list replaces the whole list and is never merged by kind or index;
 - the decoding overlay uses `*[]DependencyCacheConfig` to represent presence without retaining or creating a default
   cache snapshot.
@@ -599,22 +653,27 @@ The config must be a regular, non-symlink TOML file. Unknown keys, invalid types
 missing required mount roles, and invalid present mounts fail before Docker launch. Missing degradable roles emit
 warnings and remain absent. All launchers validate the complete file, including the other products' sections.
 
-The file is loaded on every invocation. Creation-time changes require a matching container or a cold create;
+Both files are loaded on every invocation. Creation-time changes require a matching container or a cold create;
 command-time changes apply to the current command.
 
-The file is local machine state and remains ignored. Project code can edit it through the writable worktree and
-affect a later launch, so every writable source in the file must be treated as accessible to project code.
+`config.toml` is local machine state and remains ignored. `common.toml` is project-controlled input, like the tracked
+`Dockerfile`: it can only select values the launcher already validates and cannot add host paths. Project code can
+edit either file through the writable worktree and affect a later launch, so every writable source in `config.toml`
+must be treated as accessible to project code.
 
 ## Boundaries and Non-Goals
 
 - Internal Docker runtime, timeout, naming, relay, and lifecycle constants are not user configuration.
 - `--project`, positional agent commands, and one-invocation product arguments are not serialized.
 - Config changes do not mutate a running container.
-- The config is host-specific and must not contain credentials.
+- Neither file may contain credentials; `config.toml` is host-specific, `common.toml` is portable.
 
 ## Test Plan
 
-- Initialization serializes the exact typed config and creates the exact local ignore file.
+- Initialization serializes the exact portable `common.toml`, the mounts/caches-only `config.toml`, and the exact
+  local ignore file, and preserves an existing `common.toml`.
+- Layering tests cover defaults -> `common.toml` -> `config.toml` -> CLI on persisted and config-less paths,
+  rejected path-bearing keys in `common.toml`, and the differing-value shadowing warning.
 - The resolution-order tests distinguish omitted flags from explicit boolean values.
 - Scalar overlay, omitted mounts, whole-list mount replacement, and validation of all three required project/Git
   roles are covered.

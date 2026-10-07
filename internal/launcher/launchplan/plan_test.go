@@ -629,9 +629,11 @@ func TestResolveRejectsOmittedRequiredRoleAndReportsOptionalDeletion(t *testing.
 func resolvedConfig(project gitproject.Project, linked bool) projectenv.ProjectConfig {
 	return projectenv.ProjectConfig{
 		Common: projectenv.CommonConfig{
-			DockerStorage: projectenv.DockerStorageBranch,
-			Image:         "test:image",
-			Mounts: []projectenv.MountConfig{
+			PortableCommonConfig: projectenv.PortableCommonConfig{
+				DockerStorage: projectenv.DockerStorageBranch,
+				Image:         "test:image",
+			},
+			HostCommonConfig: projectenv.HostCommonConfig{Mounts: []projectenv.MountConfig{
 				{
 					Role:     projectenv.RolePrimaryCheckout,
 					Source:   project.PrimaryRoot,
@@ -653,7 +655,7 @@ func resolvedConfig(project gitproject.Project, linked bool) projectenv.ProjectC
 					Source: projectenv.HostMCPChannelSource,
 					Target: projectenv.HostMCPChannelTarget,
 				},
-			},
+			}},
 		},
 	}
 }
